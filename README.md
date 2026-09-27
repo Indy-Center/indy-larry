@@ -1,25 +1,37 @@
-# vNAS Online ATC Discord Bot
+# vNAS Discord Bot
 
-Posts one embed per facility (e.g. "Indianapolis TRACON is online") listing each controller,
-their position and frequency. Embeds are edited in place as controllers come and go, and deleted
-when the facility goes offline. Data: https://docs.virtualnas.net/data-admin/controller-feed/
+A Discord bot for Indy Center (ZID) that shows which facilities are staffed on vNAS. It posts one
+embed per facility (e.g. "Indianapolis ATCT/TRACON is online") listing each controller, their
+position and frequency, and edits it in place as controllers come and go.
+
+Facility and position names come straight from vNAS, so they match what controllers see in CRC.
+
+Data sources:
+- [vNAS controller feed](https://docs.virtualnas.net/data-admin/controller-feed/): who is online
+- vNAS ARTCC data API: the facility and position list for each ARTCC
+- [VATSIM ATC bookings](https://atc-bookings.vatsim.net/): planned and closing times
 
 ## Setup
-1. Create an app + bot at https://discord.com/developers/applications and copy the token.
-2. Invite it with the `bot` scope and View Channel, Send Messages, Embed Links,
-   and Read Message History permissions.
-3. `cp .env.example .env`, then fill in DISCORD_TOKEN, CHANNEL_ID and ARTCC_IDS.
-4. `npm install` and `npm start`.
+1. Create an application and bot at https://discord.com/developers/applications and copy the token.
+2. Invite it with the `bot` scope and the View Channel, Send Messages, Embed Links and
+   Read Message History permissions.
+3. Copy `.env.example` to `.env`, then fill in `DISCORD_TOKEN`, `CHANNEL_ID` and `ARTCC_IDS`.
+4. Run `npm install`, then `npm start` (`npm.cmd start` in Windows PowerShell).
 
-Use a dedicated channel: the bot owns its messages there and cleans them up on restart.
+Give the bot its own channel. It owns its messages there and removes any of its old ones on startup.
 
-## Embed colours
-- 🟢 Online: at least one controller is on.
-- 🟡 Closing: every controller on is closing within `CLOSING_MINUTES` (default 15).
-- 🔵 Planned: nobody's on yet, but a VATSIM ATC booking starts within `PLANNED_HOURS` (default 3).
-- 🔴 Offline: the facility just closed. The embed is removed after `OFFLINE_MINUTES` (default 30).
+`state.json` is created automatically on first run. It records which message belongs to which
+facility so restarts edit the same messages. It's specific to your server, so it isn't committed.
 
-## SOP: announcing you're closing
+## Embed colors
+- 🟢 **Online**: at least one controller is on.
+- 🟡 **Closing**: every controller on is closing within `CLOSING_MINUTES` (default 15).
+- 🔵 **Planned**: nobody's on yet, but a VATSIM ATC booking starts within `PLANNED_HOURS` (default 3).
+- 🔴 **Offline**: the facility just closed. The embed is removed after `OFFLINE_MINUTES` (default 30).
+
+Within each embed, positions are listed TRACON first, then Tower, Ground and Clearance.
+
+## SOP: "Online until"
 Add this line to your controller info, with the Eastern time and the zulu time in brackets:
 
     Online until 8pm ET (2400z)
