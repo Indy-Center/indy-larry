@@ -1,0 +1,18 @@
+services:
+  vnas-discord-bot:
+    build: .
+    image: vnas-discord-bot
+    container_name: vnas-discord-bot
+    restart: unless-stopped
+    init: true # forwards stop signals so the container shuts down promptly
+    env_file: .env
+    volumes:
+      - bot-state:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  bot-state:

@@ -39,3 +39,19 @@ Add this line to your controller info, with the Eastern time and the zulu time i
 The bot marks your position as closing 15 minutes before that time. If both times are given,
 the zulu one is used. A booked position is also marked closing 15 minutes before its booking
 ends, even without this line.
+
+## Running with Docker
+1. Create `.env` as above.
+2. Start it:
+
+       docker compose up -d --build
+
+3. Check it logged in with `docker compose logs -f`.
+
+The container restarts on its own after a crash or reboot. `state.json` is kept in the
+`bot-state` volume, so rebuilds edit the same Discord messages. Use `docker compose down` to stop
+it (not `down -v`, which also deletes the saved state). To update: `git pull`, then
+`docker compose up -d --build`.
+
+Only run one copy of the bot per channel. Two copies with the same token will keep deleting each
+other's embeds.
