@@ -69,7 +69,7 @@ The bot runs on the Vanderbilt VPS, following the [VPS apps pattern](https://tec
 
 Secrets:
 
-- **Deploy credentials**: the `VANDERBILT_HOST`, `VANDERBILT_DEPLOY_USER`, `VANDERBILT_DEPLOY_SSH_KEY` and `VANDERBILT_KNOWN_HOSTS` organization secrets. An org admin adds this repository to their repository access.
+- **Deploy credentials**: the `VANDERBILT_HOST` and `VANDERBILT_DEPLOY_USER` organization variables and the `VANDERBILT_DEPLOY_SSH_KEY` and `VANDERBILT_KNOWN_HOSTS` organization secrets. An org admin adds this repository to the repository access of all four.
 - **Runtime settings**: one repository secret or variable per setting in [`deploy/.env.example`](deploy/.env.example), named `ENV_<NAME>`. Every deploy writes them to `/home/deploy/apps/vnas-discord-bot/.env` as `NAME='value'`, readable only by `deploy`. A secret wins over a variable with the same name. A value can't contain a single quote or a newline; the deploy fails with the setting's name before anything reaches the VPS.
 
 | Name | Kind | Value |
