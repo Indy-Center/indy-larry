@@ -1,0 +1,27 @@
+# The bot's deploy/docker-compose.yml. build-and-deploy.yml rsyncs deploy/ to
+# /home/deploy/apps/vnas-discord-bot/ on the Vanderbilt VPS, so the compose project is named after the repo.
+# Renaming the repo renames the project and its volumes; the old volumes stay behind.
+# The bot only makes outbound calls (Discord, vNAS, VATSIM), so it has no Traefik labels,
+# doesn't join traefik-shared and publishes no ports.
+services:
+  bot:
+    # Built and pushed by build-and-deploy.yml.
+    image: ghcr.io/indy-center/vnas-discord-bot:latest
+    restart: unless-stopped
+    init: true # forwards stop signals so the container shuts down promptly
+    # Runtime secrets (DISCORD_TOKEN, CHANNEL_ID, ...) live in deploy/.env on the VPS only.
+    # It's never in git, and the deploy never touches it.
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      # Named volume: the deploy rsyncs with --delete, so state.json can't live under deploy/.
+      - bot-state:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+volumes:
+  bot-state:

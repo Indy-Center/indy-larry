@@ -5,4 +5,7 @@ state.json
 .gitignore
 *.md
 Dockerfile
-compose.yaml
+deploy
+.github
+test
+.gitattributes
