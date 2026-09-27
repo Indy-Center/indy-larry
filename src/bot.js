@@ -59,14 +59,15 @@ let channel;
 let running = false;
 const board = new StatusBoard(config);
 
-// Bookings need the ARTCC's position list to map callsigns to facilities, so they
-// only work when ARTCC_IDS is set. Both are cached since they change slowly.
+// Bookings and top-down coverage need the ARTCC's facility data, so they only work when
+// ARTCC_IDS is set. Both are cached since they change slowly.
 const BOOKINGS_TTL = 5 * 60_000;
 const INDEX_TTL = 6 * 60 * 60_000;
 const cache = { index: null, indexAt: 0, bookings: [], bookingsAt: 0 };
 
-async function getBookings() {
-  if (!config.artccIds.length) return [];
+/** @returns {{ bookings: object[], facilityTree: Map|null }} */
+async function getReferenceData() {
+  if (!config.artccIds.length) return { bookings: [], facilityTree: null };
   const now = Date.now();
   try {
     if (!cache.index || now - cache.indexAt > INDEX_TTL) {
@@ -81,7 +82,7 @@ async function getBookings() {
     // Keep going with whatever we had; online/offline still works without bookings.
     console.error(`[${new Date().toISOString()}] Bookings update failed:`, err.message);
   }
-  return cache.bookings;
+  return { bookings: cache.bookings, facilityTree: cache.index?.facilities ?? null };
 }
 
 /**
@@ -139,7 +140,8 @@ async function refresh() {
     if (trackActivations(feed, activeSince, new Date(), firstRefresh, config.artccIds)) saveState();
     firstRefresh = false;
     const facilities = groupByFacility(feed, { ...config, activeSince });
-    const entries = board.update(facilities, await getBookings());
+    const { bookings, facilityTree } = await getReferenceData();
+    const entries = board.update(facilities, bookings, new Date(), facilityTree);
 
     const wanted = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
     if (wanted.size === 0) wanted.set('__none__', noneOnlineEmbed(config.artccIds));

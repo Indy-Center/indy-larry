@@ -78,6 +78,77 @@ test('groupByFacility puts positions in one embed, TRACON first and Clearance la
   );
 });
 
+test('only active secondary positions count as also covering', () => {
+  const center = controller('1', 'IND_83_CTR', 'Center', { facilityId: 'ZID' });
+  const display = (callsign, isActive) => ({
+    isPrimary: false,
+    isActive,
+    facilityId: callsign.split('_')[0],
+    facilityName: 'TRACON',
+    positionType: 'Tracon',
+    positionName: callsign,
+    defaultCallsign: callsign,
+    frequency: 1,
+  });
+  // As IND_83_CTR appeared live: STARS displays open in the profile, not signed in.
+  center.positions.push(display('SDF_D_APP', false), display('CVG_W_APP', false));
+  let [facility] = groupByFacility({ controllers: [center] });
+  assert.deepEqual(facility.controllers[0].extraPositions, []);
+
+  center.positions.push(display('IND_E_APP', true));
+  [facility] = groupByFacility({ controllers: [center] });
+  assert.deepEqual(facility.controllers[0].extraPositions.map((p) => p.callsign), ['IND_E_APP']);
+});
+
+test('top-down coverage lists only unstaffed TRACONs directly underneath', () => {
+  const node = (id, positionType, childIds = []) => [
+    `ZID:${id}`,
+    { key: `ZID:${id}`, id, name: id, positionType, childKeys: childIds.map((c) => `ZID:${c}`) },
+  ];
+  const tree = new Map([
+    node('ZID', 'Artcc', ['SDF', 'EVV', 'HUF', 'PKB']),
+    node('SDF', 'Tracon', ['LOU', 'FTK']),
+    node('EVV', 'Tracon', ['OWB']),
+    node('HUF', 'Tracon', ['BMG']),
+    node('PKB', 'Atct'),
+    node('LOU', 'Atct'),
+    node('FTK', 'Atct'),
+    node('OWB', 'Atct'),
+    node('BMG', 'Atct'),
+  ]);
+  const center = controller('1', 'IND_83_CTR', 'Center', { facilityId: 'ZID' });
+  center.positions[0].positionType = 'Artcc';
+  const feed = {
+    controllers: [
+      center,
+      controller('2', 'SDF_D_APP', 'ApproachDeparture', { facilityId: 'SDF' }),
+      controller('3', 'EVV_TWR', 'Tower', { facilityId: 'EVV' }),
+      controller('4', 'LOU_TWR', 'Tower', { facilityId: 'LOU' }),
+    ],
+  };
+  const topDown = (f, id) =>
+    new StatusBoard({}).update(groupByFacility(f, { includeInactive: true }), [], new Date(), tree)
+      .find((e) => e.key === `ZID:${id}`).topDown.map((t) => t.id);
+
+  // SDF has radar, so it's not listed. EVV has only its tower on, so center still covers its radar.
+  // PKB is a tower, never listed; TRACONs never list their towers.
+  assert.deepEqual(topDown(feed, 'ZID'), ['EVV', 'HUF']);
+  assert.deepEqual(topDown(feed, 'SDF'), []);
+  assert.deepEqual(topDown(feed, 'EVV'), []);
+
+  // An inactive radar controller doesn't count as staffing the TRACON.
+  feed.controllers[1].isActive = false;
+  assert.deepEqual(topDown(feed, 'ZID'), ['EVV', 'HUF', 'SDF']);
+
+  // An inactive center covers nothing.
+  center.isActive = false;
+  assert.deepEqual(topDown(feed, 'ZID'), []);
+
+  // Without the ARTCC data (ARTCC_IDS unset) there's no top-down line.
+  center.isActive = true;
+  assert.deepEqual(new StatusBoard().update(groupByFacility(feed), [], new Date())[0].topDown, []);
+});
+
 test('facility only turns yellow when every controller is closing', () => {
   const now = new Date('2026-09-27T23:50:00Z');
   const feed = {
