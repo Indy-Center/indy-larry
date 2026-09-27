@@ -20,9 +20,10 @@ Use a dedicated channel: the bot owns its messages there and cleans them up on r
 - 🔴 Offline: the facility just closed. The embed is removed after `OFFLINE_MINUTES` (default 30).
 
 ## SOP: announcing you're closing
-Add this line to your controller info, using a four-digit UTC time:
+Add this line to your controller info, with the Eastern time and the zulu time in brackets:
 
-    Closing at 0200z
+    Online until 8pm ET (2400z)
 
-The bot marks your position as closing 15 minutes before that time. A booked position is also
-marked closing 15 minutes before its booking ends, even without this line.
+The bot marks your position as closing 15 minutes before that time. If both times are given,
+the zulu one is used. A booked position is also marked closing 15 minutes before its booking
+ends, even without this line.

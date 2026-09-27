@@ -1,7 +1,9 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings } = require('./feed');
-const { statusEmbed, noneOnlineEmbed, FOOTER_PREFIX } = require('./embeds');
+const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
 
 const config = {
@@ -25,6 +27,27 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 // facility key -> { message, signature }
 const posted = new Map();
+
+// Which message belongs to which facility, so a restart edits the same messages.
+const STATE_FILE = path.join(__dirname, '..', 'state.json');
+
+function saveState() {
+  const messages = Object.fromEntries([...posted].map(([key, { message }]) => [key, message.id]));
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ channelId: config.channelId, messages }, null, 2));
+  } catch (err) {
+    console.error('Could not save state.json:', err.message);
+  }
+}
+
+function readState() {
+  try {
+    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    return state.channelId === config.channelId ? state.messages ?? {} : {};
+  } catch {
+    return {};
+  }
+}
 let channel;
 let running = false;
 const board = new StatusBoard(config);
@@ -54,19 +77,18 @@ async function getBookings() {
   return cache.bookings;
 }
 
-/** Re-adopt the bot's own status messages after a restart so we don't post duplicates. */
+/**
+ * Re-adopt the bot's own status messages after a restart so we don't post duplicates.
+ * Any other message the bot posted in the channel is stale and gets cleaned up.
+ */
 async function loadExistingMessages() {
+  const known = new Map(Object.entries(readState()).map(([key, id]) => [id, key]));
   const messages = await channel.messages.fetch({ limit: 100 });
   for (const msg of messages.values()) {
     if (msg.author.id !== client.user.id) continue;
-    const footer = msg.embeds[0]?.footer?.text ?? '';
-    if (!footer.startsWith(FOOTER_PREFIX)) continue;
-    const key = footer.slice(FOOTER_PREFIX.length);
-    if (posted.has(key)) {
-      await msg.delete().catch(() => {}); // duplicate from an earlier crash
-    } else {
-      posted.set(key, { message: msg, signature: null });
-    }
+    const key = known.get(msg.id);
+    if (key) posted.set(key, { message: msg, signature: null });
+    else await msg.delete().catch(() => {});
   }
   console.log(`Adopted ${posted.size} existing status message(s).`);
 }
@@ -88,11 +110,13 @@ async function upsert(key, embed) {
   }
   const message = await channel.send({ embeds: [embed] });
   posted.set(key, { message, signature });
+  saveState();
 }
 
 async function remove(key) {
   const existing = posted.get(key);
   posted.delete(key);
+  saveState();
   await existing?.message.delete().catch((err) => {
     if (err.code !== 10008) console.error(`Failed to delete message for ${key}:`, err.message);
   });

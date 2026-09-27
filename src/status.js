@@ -110,14 +110,19 @@ function currentBookingEnd(bookings, key, cid, now) {
 
 // Phrases that mean the controller is leaving. Deliberately strict: controller info
 // is full of things like "RWY 27 closed" or "solo cert valid until 11/10".
+// SOP format is "Online until 8pm ET (2400z)"; the older "Closing at 0200z" style still works.
 const CLOSING_PHRASE =
-  /\b(closing|close at|signing off|signing out|logging off|logging out|log(ging)? ?off|going offline|offline (at|in)|off at|leaving (at|in))\b/i;
+  /\b(online until|on until|closing|close at|signing off|logging off|going offline|offline at|off at|leaving at)\b/i;
 
 /**
  * Looks for a closing announcement in controller info text.
- *   "Closing at 0200z" / "closing 02:00Z" -> that time (today, or tomorrow if it has passed)
- *   "Closing in 15 min"                   -> now + 15 min
- *   "Closing soon" / "Closing shortly"    -> { at: null }
+ *   "Online until 8pm ET (2400z)" -> 0000z (the zulu time wins when both are given)
+ *   "Online until 8:30pm ET"      -> converted from Eastern time
+ *   "Closing at 0200z"            -> 0200z
+ *   "Closing in 15 min"           -> now + 15 min
+ *   "Closing soon"                -> { at: null }
+ * Times that have passed today are read as tomorrow, unless they're under an hour ago
+ * (the controller is running over).
  * @returns {{ at: Date|null } | null}
  */
 function parseClosing(info, now = new Date()) {
@@ -127,13 +132,18 @@ function parseClosing(info, now = new Date()) {
     if (!phrase) continue;
     const rest = line.slice(phrase.index);
 
-    const zulu = rest.match(/\b([01]\d|2[0-3]):?([0-5]\d)\s*(z|zulu|utc)\b/i);
-    if (zulu) {
-      const at = new Date(now);
-      at.setUTCHours(Number(zulu[1]), Number(zulu[2]), 0, 0);
-      // "0200z" said at 2330z means tomorrow; a time up to an hour ago means they're running over.
-      if (now - at > 60 * MINUTE) at.setUTCDate(at.getUTCDate() + 1);
-      return { at };
+    // 0000-2400, with optional colon, followed by z/zulu/utc
+    const zulu = rest.match(/\b([01]\d|2[0-4]):?([0-5]\d)\s*(z|zulu|utc)\b/i);
+    if (zulu) return { at: nextOccurrence(Number(zulu[1]) % 24, Number(zulu[2]), 0, now) };
+
+    // 8pm ET / 8:30 pm EST / 20:00 EDT
+    const eastern = rest.match(/\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)?\s*(et|est|edt|eastern)\b/i);
+    if (eastern) {
+      let hour = Number(eastern[1]);
+      const ampm = eastern[3]?.toLowerCase();
+      if (ampm === 'pm' && hour < 12) hour += 12;
+      if (ampm === 'am' && hour === 12) hour = 0;
+      if (hour <= 24) return { at: nextOccurrence(hour % 24, Number(eastern[2] ?? 0), easternOffsetHours(now), now) };
     }
 
     const rel = rest.match(/\bin\s+(\d{1,3})\s*(m|min|mins|minutes?|h|hr|hrs|hours?)\b/i);
@@ -145,6 +155,23 @@ function parseClosing(info, now = new Date()) {
     return { at: null };
   }
   return null;
+}
+
+/** Next time the clock reads hour:minute in a zone offsetHours from UTC (e.g. -4 for EDT). */
+function nextOccurrence(hour, minute, offsetHours, now) {
+  const at = new Date(now);
+  at.setUTCHours(hour - offsetHours, minute, 0, 0);
+  while (now - at > 60 * MINUTE) at.setUTCDate(at.getUTCDate() + 1);
+  while (at - now > 23 * 60 * MINUTE) at.setUTCDate(at.getUTCDate() - 1);
+  return at;
+}
+
+/** Current US Eastern offset from UTC: -4 in summer (EDT), -5 in winter (EST). */
+function easternOffsetHours(now) {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' })
+    .formatToParts(now)
+    .find((p) => p.type === 'timeZoneName').value; // e.g. "GMT-4"
+  return Number(name.replace('GMT', '')) || 0;
 }
 
 module.exports = { StatusBoard, parseClosing };

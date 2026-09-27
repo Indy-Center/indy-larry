@@ -9,9 +9,6 @@ const STATUS = {
 };
 const TYPE_LABELS = { Artcc: 'Center', Tracon: 'TRACON', Atct: 'Tower' };
 
-// Footer marker lets the bot find its own messages again after a restart.
-const FOOTER_PREFIX = 'vNAS facility ';
-
 const unix = (date) => Math.floor(date.getTime() / 1000);
 
 function controllerLine(c, { showNames }) {
@@ -40,8 +37,7 @@ function statusEmbed(entry, opts = {}) {
   const s = STATUS[entry.status];
   const embed = new EmbedBuilder()
     .setColor(s.color)
-    .setTitle(`${s.icon} ${entry.facilityName} ${s.verb}`)
-    .setFooter({ text: `${FOOTER_PREFIX}${entry.key}` });
+    .setTitle(`${s.icon} ${entry.facilityName} ${s.verb}`);
   const type = { name: 'Type', value: TYPE_LABELS[entry.positionType] ?? entry.positionType ?? '—', inline: true };
 
   if (entry.status === 'online' || entry.status === 'closing') {
@@ -74,8 +70,7 @@ function noneOnlineEmbed(artccIds) {
   return new EmbedBuilder()
     .setColor(0x4a5568)
     .setTitle('⚫ No ATC online')
-    .setDescription(artccIds.length ? `Nobody is controlling in ${artccIds.join(', ')} right now.` : 'Nobody is controlling right now.')
-    .setFooter({ text: `${FOOTER_PREFIX}__none__` });
+    .setDescription(artccIds.length ? `Nobody is controlling in ${artccIds.join(', ')} right now.` : 'Nobody is controlling right now.');
 }
 
-module.exports = { statusEmbed, noneOnlineEmbed, FOOTER_PREFIX };
+module.exports = { statusEmbed, noneOnlineEmbed };
