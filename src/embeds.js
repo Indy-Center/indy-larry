@@ -1,0 +1,81 @@
+const { EmbedBuilder } = require('discord.js');
+const { formatFrequency } = require('./feed');
+
+const STATUS = {
+  online: { color: 0x2ecc71, icon: '🟢', verb: 'is online' },
+  closing: { color: 0xf1c40f, icon: '🟡', verb: 'is closing' },
+  planned: { color: 0x3498db, icon: '🔵', verb: 'is planned' },
+  offline: { color: 0xe74c3c, icon: '🔴', verb: 'is offline' },
+};
+const TYPE_LABELS = { Artcc: 'Center', Tracon: 'TRACON', Atct: 'Tower' };
+
+// Footer marker lets the bot find its own messages again after a restart.
+const FOOTER_PREFIX = 'vNAS facility ';
+
+const unix = (date) => Math.floor(date.getTime() / 1000);
+
+function controllerLine(c, { showNames }) {
+  const freq = formatFrequency(c.frequency);
+  const who = showNames && c.name && c.name !== c.cid ? `${c.name} (${c.rating})` : `${c.cid} (${c.rating})`;
+  let line = `**${c.callsign}** · ${c.positionName}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.loginTime)}:t>`;
+  if (!c.isActive) line += ' · *inactive*';
+  if (c.closing) line += ` · 🟡 closing${c.closing.at ? ` <t:${unix(c.closing.at)}:R>` : ' soon'}`;
+  if (c.extraPositions.length) {
+    line += `\n└ also covering ${c.extraPositions.map((p) => `**${p.callsign}**`).join(', ')}`;
+  }
+  return line;
+}
+
+function bookingLine(b) {
+  const kind = b.type && b.type !== 'booking' ? ` · ${b.type}` : '';
+  return `**${b.callsign}** · ${b.positionName ?? ''}\n└ <t:${unix(b.start)}:t> – <t:${unix(b.end)}:t> (<t:${unix(b.start)}:R>) · CID ${b.cid}${kind}`;
+}
+
+function clip(text) {
+  return text.length > 4000 ? text.slice(0, 3990) + '\n…' : text;
+}
+
+/** One embed for a StatusBoard entry. */
+function statusEmbed(entry, opts = {}) {
+  const s = STATUS[entry.status];
+  const embed = new EmbedBuilder()
+    .setColor(s.color)
+    .setTitle(`${s.icon} ${entry.facilityName} ${s.verb}`)
+    .setFooter({ text: `${FOOTER_PREFIX}${entry.key}` });
+  const type = { name: 'Type', value: TYPE_LABELS[entry.positionType] ?? entry.positionType ?? '—', inline: true };
+
+  if (entry.status === 'online' || entry.status === 'closing') {
+    const f = entry.facility;
+    embed.setDescription(clip(f.controllers.map((c) => controllerLine(c, opts)).join('\n\n'))).addFields(
+      type,
+      { name: 'Controllers', value: String(f.controllers.length), inline: true },
+      entry.status === 'closing'
+        ? { name: 'Closing', value: entry.closingAt ? `<t:${unix(entry.closingAt)}:R>` : 'Soon', inline: true }
+        : { name: 'Online since', value: `<t:${unix(f.onlineSince)}:R>`, inline: true },
+    );
+  } else if (entry.status === 'planned') {
+    embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n'))).addFields(
+      type,
+      { name: 'Bookings', value: String(entry.bookings.length), inline: true },
+      { name: 'Opens', value: `<t:${unix(entry.bookings[0].start)}:R>`, inline: true },
+    );
+  } else {
+    const last = entry.facility.controllers.map((c) => `**${c.callsign}**`).join(', ');
+    embed.setDescription(`Last on: ${last}`).addFields(type, {
+      name: 'Closed',
+      value: `<t:${unix(entry.closedAt)}:R>`,
+      inline: true,
+    });
+  }
+  return embed;
+}
+
+function noneOnlineEmbed(artccIds) {
+  return new EmbedBuilder()
+    .setColor(0x4a5568)
+    .setTitle('⚫ No ATC online')
+    .setDescription(artccIds.length ? `Nobody is controlling in ${artccIds.join(', ')} right now.` : 'Nobody is controlling right now.')
+    .setFooter({ text: `${FOOTER_PREFIX}__none__` });
+}
+
+module.exports = { statusEmbed, noneOnlineEmbed, FOOTER_PREFIX };
