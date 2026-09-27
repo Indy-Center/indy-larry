@@ -64,9 +64,11 @@ function groupByFacility(feed, { artccIds = [], includeInactive = false, activeS
       positionName: primary.positionName,
       frequency: primary.frequency,
       isActive: c.isActive,
-      // Any extra positions this controller is covering (e.g. IND_DRE also working IND_DRW)
+      // Secondary positions this controller is actually working. The feed also lists every
+      // controlling display in their CRC profile (e.g. a center's STARS displays for each TRACON)
+      // as a secondary position, marked inactive; those aren't coverage, so they're skipped.
       extraPositions: c.positions
-        .filter((p) => p !== primary)
+        .filter((p) => p !== primary && p.isActive)
         .map((p) => ({ callsign: p.defaultCallsign, positionName: p.positionName, frequency: p.frequency })),
       loginTime: new Date(c.loginTime),
       activeSince: activeSince.has(sessionKey(c)) ? new Date(activeSince.get(sessionKey(c))) : null,
@@ -140,22 +142,35 @@ const ARTCC_DATA_URL = 'https://data-api.vnas.vatsim.net/api/artccs/';
 const BOOKINGS_URL = 'https://atc-bookings.vatsim.net/api/booking';
 
 /**
- * Builds a callsign -> facility lookup from the vNAS ARTCC data, so bookings
- * (which only carry a callsign) can be tied to a facility, e.g. DAY_M_APP -> CMH.
+ * Reads the vNAS ARTCC data into two lookups:
+ *   positions:  callsign -> facility, so bookings (which only carry a callsign) can be tied
+ *               to a facility, e.g. DAY_M_APP -> CMH.
+ *   facilities: facility key -> { id, name, positionType, childKeys }, the ARTCC's tree of
+ *               center -> TRACONs -> towers, used for top-down coverage.
  */
 async function fetchFacilityIndex(artccIds) {
-  const index = new Map();
+  const positions = new Map();
+  const facilities = new Map();
   for (const artccId of artccIds) {
     const res = await fetch(ARTCC_DATA_URL + artccId, { headers: { 'User-Agent': 'vnas-discord-bot' } });
     if (!res.ok) throw new Error(`ARTCC data request for ${artccId} failed: HTTP ${res.status}`);
     const data = await res.json();
 
     const walk = (facility) => {
+      const key = `${artccId}:${facility.id}`;
       // Data API uses "AtctTracon"; the controller feed calls the same thing "Tracon".
       const positionType = facility.type === 'AtctTracon' ? 'Tracon' : facility.type;
+      const children = facility.childFacilities ?? [];
+      facilities.set(key, {
+        key,
+        id: facility.id,
+        name: facility.name,
+        positionType,
+        childKeys: children.map((c) => `${artccId}:${c.id}`),
+      });
       for (const p of facility.positions ?? []) {
-        index.set(p.callsign, {
-          key: `${artccId}:${facility.id}`,
+        positions.set(p.callsign, {
+          key,
           artccId,
           facilityId: facility.id,
           facilityName: facility.name,
@@ -163,15 +178,15 @@ async function fetchFacilityIndex(artccIds) {
           positionName: p.name,
         });
       }
-      (facility.childFacilities ?? []).forEach(walk);
+      children.forEach(walk);
     };
     walk(data.facility);
   }
-  return index;
+  return { positions, facilities };
 }
 
 /** Returns bookings for positions in the facility index, with parsed UTC dates. */
-async function fetchBookings(index) {
+async function fetchBookings({ positions: index }) {
   const res = await fetch(BOOKINGS_URL, { headers: { 'User-Agent': 'vnas-discord-bot' } });
   if (!res.ok) throw new Error(`Bookings request failed: HTTP ${res.status}`);
   const parseUtc = (s) => new Date(s.replace(' ', 'T') + 'Z');

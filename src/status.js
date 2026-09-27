@@ -19,12 +19,12 @@ class StatusBoard {
    * @param {Date} now
    * @returns {object[]} entries: { key, status, facilityName, positionType, facility?, bookings?, closingAt?, closedAt? }
    */
-  update(facilities, bookings, now = new Date()) {
+  update(facilities, bookings, now = new Date(), facilityTree = null) {
     const entries = [];
-    const onlineKeys = new Set();
+    const online = new Map(facilities.map((f) => [f.key, f]));
+    const onlineKeys = new Set(online.keys());
 
     for (const f of facilities) {
-      onlineKeys.add(f.key);
       this.lastOnline.set(f.key, { facility: f, lastSeen: now });
 
       // Each controller can be closing on their own (from their info text or their booking).
@@ -40,6 +40,7 @@ class StatusBoard {
         positionType: f.positionType,
         facility: f,
         closingAt: closing && times.length ? new Date(Math.max(...times)) : null,
+        topDown: topDownCoverage(f, online, facilityTree),
       });
     }
 
@@ -97,6 +98,34 @@ class StatusBoard {
         a.facilityName.localeCompare(b.facilityName),
     );
   }
+}
+
+/**
+ * TRACONs a center covers top-down: every TRACON under it in the ARTCC's tree without an active
+ * radar (approach/departure) controller. A TRACON with only its tower, ground or delivery on
+ * still counts, since center is working its radar. Only an active center covers anything, and
+ * only centers get this list; towers are never listed.
+ * @param {object} facility  An online facility from groupByFacility()
+ * @param {Map} online       Online facilities by key
+ * @returns {{ id: string, name: string }[]}
+ */
+function topDownCoverage(facility, online, facilityTree) {
+  const node = facilityTree?.get(facility.key);
+  if (!node || facility.positionType !== 'Artcc') return [];
+  if (!facility.controllers.some((c) => c.isActive)) return [];
+
+  const hasActiveRadar = (key) =>
+    online.get(key)?.controllers.some((c) => c.isActive && c.facilityType === 'ApproachDeparture') ?? false;
+
+  const tracons = [];
+  const walk = (key) => {
+    const f = facilityTree.get(key);
+    if (!f) return;
+    if (f.positionType === 'Tracon' && !hasActiveRadar(key)) tracons.push({ id: f.id, name: f.name });
+    f.childKeys.forEach(walk);
+  };
+  node.childKeys.forEach(walk);
+  return tracons.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /** End time of the booking this controller is currently working at this facility, if any. */
