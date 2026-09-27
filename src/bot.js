@@ -13,9 +13,9 @@ const config = {
   pollSeconds: Math.max(15, Number(process.env.POLL_SECONDS) || 30),
   includeInactive: process.env.INCLUDE_INACTIVE === 'true',
   showNames: process.env.SHOW_NAMES !== 'false',
-  plannedHours: Number(process.env.PLANNED_HOURS ?? 3),
-  closingMinutes: Number(process.env.CLOSING_MINUTES ?? 15),
-  offlineMinutes: Number(process.env.OFFLINE_MINUTES ?? 30),
+  plannedHours: Number(process.env.PLANNED_HOURS || 3),
+  closingMinutes: Number(process.env.CLOSING_MINUTES || 15),
+  offlineMinutes: Number(process.env.OFFLINE_MINUTES || 30),
 };
 
 if (!config.token || !config.channelId) {

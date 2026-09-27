@@ -30,15 +30,15 @@ The bot marks the position as closing 15 minutes before that time. If both times
 - `test/`: unit tests.
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/vnas-discord-bot/` on the VPS. Keeps `state.json` in the `bot-state` volume.
+- `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
 - `.github/workflows/ci.yml`: tests, compose validation and an image build, on every pull request.
 - `.github/workflows/build-and-deploy.yml`: runs CI, pushes the image to GHCR, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
-- `.env.example`: every setting, with its default.
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env # then fill in DISCORD_TOKEN and CHANNEL_ID
+cp deploy/.env.example .env # then fill in DISCORD_TOKEN, CHANNEL_ID and ARTCC_IDS=ZID
 npm start            # npm.cmd start in Windows PowerShell
 ```
 
@@ -65,19 +65,26 @@ npm test
 
 The bot runs on the Vanderbilt VPS, following the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/). It only makes outbound calls (Discord, vNAS, VATSIM), so it has no Traefik labels, doesn't join `traefik-shared` and publishes no ports.
 
-`build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then writes `.env` from the `DOTENV` secret, rsyncs `deploy/` to `/home/deploy/apps/vnas-discord-bot/`, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later.
+`build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then rsyncs `deploy/` to `/home/deploy/apps/vnas-discord-bot/`, writes `.env` there from the `ENV_*` secrets and variables, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later.
 
 Secrets:
 
 - **Deploy credentials**: the `VANDERBILT_HOST`, `VANDERBILT_DEPLOY_USER`, `VANDERBILT_DEPLOY_SSH_KEY` and `VANDERBILT_KNOWN_HOSTS` organization secrets. An org admin adds this repository to their repository access.
-- **Runtime settings**: the `DOTENV` repository secret, holding the whole `.env` file (`DISCORD_TOKEN`, `CHANNEL_ID` and the other settings from `.env.example`). Every deploy writes it to `/home/deploy/apps/vnas-discord-bot/.env`, readable only by `deploy`. It's never in git or the image. Unlike the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/), which keeps runtime secrets on the VPS only, this lets the bot be managed without shell access to the VPS.
+- **Runtime settings**: one repository secret or variable per setting in [`deploy/.env.example`](deploy/.env.example), named `ENV_<NAME>`. Every deploy writes them to `/home/deploy/apps/vnas-discord-bot/.env` as `NAME='value'`, readable only by `deploy`. A secret wins over a variable with the same name. A value can't contain a single quote or a newline; the deploy fails with the setting's name before anything reaches the VPS.
 
-To change a setting, update `DOTENV` (**Settings → Secrets and variables → Actions**), then run **Build and Deploy**.
+| Name | Kind | Value |
+| ---- | ---- | ----- |
+| `ENV_DISCORD_TOKEN` | Secret | The bot's token |
+| `ENV_CHANNEL_ID` | Variable | The status channel's ID |
+| `ENV_ARTCC_IDS` | Variable | `ZID` |
+| `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
+
+To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.
 
 ### First deploy
 
 1. An org admin adds this repository to the `VANDERBILT_*` secrets.
-2. Add the `DOTENV` repository secret: paste in the whole `.env` file.
+2. Add the `ENV_*` secret and variables from the table above.
 3. Stop any other copy of the bot.
 4. Run **Build and Deploy**. The first run pushes the image, then fails at the pull, because new GHCR packages start private.
 5. Make the package public: **Indy-Center → Packages → vnas-discord-bot → Package settings → Change visibility → Public**.

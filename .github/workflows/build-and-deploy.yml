@@ -61,22 +61,31 @@ jobs:
             BatchMode yes
           EOF
 
-      # Runtime settings live in the DOTENV repository secret (the whole .env file). Written over stdin,
-      # so the token never appears on a command line or in the log, and readable only by deploy.
-      - name: Write .env on the VPS
-        env:
-          DOTENV: ${{ secrets.DOTENV }}
-        run: |
-          if [ -z "$DOTENV" ]; then
-            echo "::error::The DOTENV repository secret is empty or missing. Add it under Settings → Secrets and variables → Actions."
-            exit 1
-          fi
-          # tr drops Windows line endings, which would otherwise end up inside the values.
-          printf '%s\n' "$DOTENV" | tr -d '\r' | ssh vps "umask 077 && mkdir -p ~/apps/$APP && cat > ~/apps/$APP/.env"
-
       # --delete removes files dropped from deploy/; excluded files (.env) are never deleted.
       - name: Sync deploy/ to ~/apps/<app>/
-        run: rsync -rlz --delete --exclude=.env deploy/ "vps:apps/$APP/"
+        run: rsync -rlz --delete --exclude=.env --exclude=.env.example deploy/ "vps:apps/$APP/"
+
+      # Every repo secret or variable named ENV_<NAME> becomes NAME='value' in ~/apps/<app>/.env
+      # (a secret wins over a variable with the same name). The deploy owns that file and rewrites it
+      # every time, so a value changes by updating its secret and re-running the deploy, never by
+      # editing the file on the box.
+      - name: Write .env
+        env:
+          SECRETS: ${{ toJSON(secrets) }}
+          VARS: ${{ toJSON(vars) }}
+        run: |
+          # Single-quoted so Compose takes values literally, $ and # included. That means a value can't
+          # contain a single quote or a newline; if one does, this fails before anything reaches the box.
+          # \u0027 is a single quote: a literal ' would end the shell's quoting of the jq program.
+          env_file="$(jq -rn '
+            (env.VARS | fromjson) + (env.SECRETS | fromjson)
+            | to_entries[]
+            | select(.key | startswith("ENV_"))
+            | if (.value | test("[\u0027\n]"))
+              then error("\(.key) contains a single quote or a newline")
+              else "\(.key | ltrimstr("ENV_"))=\u0027\(.value)\u0027"
+              end')"
+          printf '%s\n' "$env_file" | ssh vps "umask 077 && cat > apps/$APP/.env"
 
       # The ghcr.io package is public, so the VPS pulls without logging in.
       - name: docker compose up -d
