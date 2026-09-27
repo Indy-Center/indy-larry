@@ -7,7 +7,6 @@ const STATUS = {
   planned: { color: 0x3498db, icon: '🔵', verb: 'is planned' },
   offline: { color: 0xe74c3c, icon: '🔴', verb: 'is offline' },
 };
-const TYPE_LABELS = { Artcc: 'Center', Tracon: 'TRACON', Atct: 'Tower' };
 
 const unix = (date) => Math.floor(date.getTime() / 1000);
 
@@ -38,30 +37,14 @@ function statusEmbed(entry, opts = {}) {
   const embed = new EmbedBuilder()
     .setColor(s.color)
     .setTitle(`${s.icon} ${entry.facilityName} ${s.verb}`);
-  const type = { name: 'Type', value: TYPE_LABELS[entry.positionType] ?? entry.positionType ?? '—', inline: true };
 
   if (entry.status === 'online' || entry.status === 'closing') {
-    const f = entry.facility;
-    embed.setDescription(clip(f.controllers.map((c) => controllerLine(c, opts)).join('\n\n'))).addFields(
-      type,
-      { name: 'Controllers', value: String(f.controllers.length), inline: true },
-      entry.status === 'closing'
-        ? { name: 'Closing', value: entry.closingAt ? `<t:${unix(entry.closingAt)}:R>` : 'Soon', inline: true }
-        : { name: 'Online since', value: `<t:${unix(f.onlineSince)}:R>`, inline: true },
-    );
+    embed.setDescription(clip(entry.facility.controllers.map((c) => controllerLine(c, opts)).join('\n\n')));
   } else if (entry.status === 'planned') {
-    embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n'))).addFields(
-      type,
-      { name: 'Bookings', value: String(entry.bookings.length), inline: true },
-      { name: 'Opens', value: `<t:${unix(entry.bookings[0].start)}:R>`, inline: true },
-    );
+    embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n')));
   } else {
     const last = entry.facility.controllers.map((c) => `**${c.callsign}**`).join(', ');
-    embed.setDescription(`Last on: ${last}`).addFields(type, {
-      name: 'Closed',
-      value: `<t:${unix(entry.closedAt)}:R>`,
-      inline: true,
-    });
+    embed.setDescription(`Closed <t:${unix(entry.closedAt)}:R>\nLast on: ${last}`);
   }
   return embed;
 }
