@@ -4,7 +4,8 @@
   "description": "Discord bot showing which Indy Center (ZID) facilities are online on vNAS",
   "main": "src/bot.js",
   "scripts": {
-    "start": "node src/bot.js"
+    "start": "node src/bot.js",
+    "test": "node --test"
   },
   "author": "",
   "license": "ISC",

@@ -1,0 +1,45 @@
+name: CI
+
+# No push trigger: on main, CI runs inside build-and-deploy.yml, so it still runs once per commit.
+on:
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Compose file is valid
+        run: docker compose -f deploy/docker-compose.yml config -q
+
+      # No "docker compose pull" check: the image is built from this repo, so CI builds it instead.
+      # Pulling :latest would only test the last published image, and fails before the first deploy.
+
+      - name: Build the image
+        run: docker build -t vnas-discord-bot:ci .
+
+      # No Discord token on the runner, so this checks the image without logging in.
+      - name: Image loads the bot
+        run: |
+          docker run --rm --entrypoint node vnas-discord-bot:ci -e "
+            require('./src/feed'); require('./src/status'); require('./src/embeds'); require('discord.js');
+            const { parseClosing } = require('./src/status');
+            const at = parseClosing('Online until 8pm ET', new Date('2026-12-01T22:00:00Z')).at;
+            if (at.toISOString() !== '2026-12-02T01:00:00.000Z') throw new Error('Time zone data missing: ' + at.toISOString());
+            console.log('ok');
+          "
