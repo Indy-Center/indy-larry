@@ -40,7 +40,11 @@ function statusEmbed(entry, opts = {}) {
 
   if (entry.status === 'online' || entry.status === 'closing') {
     const lines = entry.facility.controllers.map((c) => controllerLine(c, opts));
-    if (entry.topDown?.length) lines.push(`**Top-down:** ${entry.topDown.map((f) => f.id).join(' · ')}`);
+    if (entry.topDown?.length) {
+      // "Evansville ATCT/TRACON" -> "Evansville TRACON"
+      const names = entry.topDown.map((f) => f.name.replace('ATCT/TRACON', 'TRACON')).sort();
+      lines.push(`**Top-down:** ${names.join(' · ')}`);
+    }
     embed.setDescription(clip(lines.join('\n\n')));
   } else if (entry.status === 'planned') {
     embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n')));
