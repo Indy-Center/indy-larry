@@ -31,7 +31,7 @@ async function fetchFeed(url = FEED_URL) {
  * @param {string[]} opts.artccIds      Only include these ARTCCs (empty = all)
  * @param {boolean}  opts.includeInactive Include controllers who are connected but not active
  */
-function groupByFacility(feed, { artccIds = [], includeInactive = false } = {}) {
+function groupByFacility(feed, { artccIds = [], includeInactive = false, activeSince = new Map() } = {}) {
   const facilities = new Map();
 
   for (const c of feed.controllers ?? []) {
@@ -69,6 +69,7 @@ function groupByFacility(feed, { artccIds = [], includeInactive = false } = {}) 
         .filter((p) => p !== primary)
         .map((p) => ({ callsign: p.defaultCallsign, positionName: p.positionName, frequency: p.frequency })),
       loginTime: new Date(c.loginTime),
+      activeSince: activeSince.has(sessionKey(c)) ? new Date(activeSince.get(sessionKey(c))) : null,
     });
   }
 
@@ -88,6 +89,45 @@ function groupByFacility(feed, { artccIds = [], includeInactive = false } = {}) 
       a.facilityName.localeCompare(b.facilityName),
   );
   return list;
+}
+
+/** One controller connection; a reconnect gets a new login time and so a new key. */
+function sessionKey(c) {
+  return `${c.vatsimData.cid}|${c.loginTime}`;
+}
+
+/**
+ * Records when each controller went active. The feed only has connect time, so the
+ * bot notes the first check where a controller shows as active. Going inactive clears
+ * it, so re-activating starts the clock again.
+ * On the first check after the bot starts, a controller who is already active with no
+ * saved time gets their connect time, since the real activation time can't be known.
+ * @param {Map<string,string>} activeSince  sessionKey -> ISO time; updated in place
+ * @param {string[]} artccIds  Only track these ARTCCs (empty = all)
+ * @returns {boolean} whether anything changed (so the caller can save it)
+ */
+function trackActivations(feed, activeSince, now, firstRefresh, artccIds = []) {
+  let changed = false;
+  const seen = new Set();
+  for (const c of feed.controllers ?? []) {
+    if (artccIds.length && !artccIds.includes(c.artccId)) continue;
+    const key = sessionKey(c);
+    seen.add(key);
+    if (c.isActive && !activeSince.has(key)) {
+      activeSince.set(key, firstRefresh ? c.loginTime : now.toISOString());
+      changed = true;
+    } else if (!c.isActive && activeSince.has(key)) {
+      activeSince.delete(key);
+      changed = true;
+    }
+  }
+  for (const key of activeSince.keys()) {
+    if (!seen.has(key)) {
+      activeSince.delete(key);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /** 127350000 -> "127.350" */
@@ -149,5 +189,5 @@ async function fetchBookings(index) {
 }
 
 module.exports = {
-  FEED_URL, fetchFeed, groupByFacility, formatFrequency, fetchFacilityIndex, fetchBookings, CONTROLLER_ORDER,
+  FEED_URL, fetchFeed, groupByFacility, trackActivations, formatFrequency, fetchFacilityIndex, fetchBookings, CONTROLLER_ORDER,
 };

@@ -13,7 +13,7 @@ const unix = (date) => Math.floor(date.getTime() / 1000);
 function controllerLine(c, { showNames }) {
   const freq = formatFrequency(c.frequency);
   const who = showNames && c.name && c.name !== c.cid ? `${c.name} (${c.rating})` : `${c.cid} (${c.rating})`;
-  let line = `**${c.callsign}** · ${c.positionName}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.loginTime)}:t>`;
+  let line = `**${c.callsign}** · ${c.positionName}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.activeSince ?? c.loginTime)}:t>`;
   if (!c.isActive) line += ' · *inactive*';
   if (c.closing) line += ` · 🟡 closing${c.closing.at ? ` <t:${unix(c.closing.at)}:R>` : ' soon'}`;
   if (c.extraPositions.length) {

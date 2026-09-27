@@ -2,7 +2,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
-const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings } = require('./feed');
+const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
 const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
 
@@ -28,13 +28,19 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 // facility key -> { message, signature }
 const posted = new Map();
 
-// Which message belongs to which facility, so a restart edits the same messages.
+// When each controller went active (the feed only has connect time). See trackActivations().
+let activeSince = new Map();
+let firstRefresh = true;
+
+// Which message belongs to which facility, so a restart edits the same messages,
+// plus activation times so "on since" survives a restart.
 const STATE_FILE = path.join(__dirname, '..', 'state.json');
 
 function saveState() {
   const messages = Object.fromEntries([...posted].map(([key, { message }]) => [key, message.id]));
+  const state = { channelId: config.channelId, messages, activeSince: Object.fromEntries(activeSince) };
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify({ channelId: config.channelId, messages }, null, 2));
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (err) {
     console.error('Could not save state.json:', err.message);
   }
@@ -43,9 +49,10 @@ function saveState() {
 function readState() {
   try {
     const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-    return state.channelId === config.channelId ? state.messages ?? {} : {};
+    if (state.channelId !== config.channelId) return { messages: {}, activeSince: {} };
+    return { messages: state.messages ?? {}, activeSince: state.activeSince ?? {} };
   } catch {
-    return {};
+    return { messages: {}, activeSince: {} };
   }
 }
 let channel;
@@ -82,7 +89,9 @@ async function getBookings() {
  * Any other message the bot posted in the channel is stale and gets cleaned up.
  */
 async function loadExistingMessages() {
-  const known = new Map(Object.entries(readState()).map(([key, id]) => [id, key]));
+  const state = readState();
+  activeSince = new Map(Object.entries(state.activeSince));
+  const known = new Map(Object.entries(state.messages).map(([key, id]) => [id, key]));
   const messages = await channel.messages.fetch({ limit: 100 });
   for (const msg of messages.values()) {
     if (msg.author.id !== client.user.id) continue;
@@ -127,7 +136,9 @@ async function refresh() {
   running = true;
   try {
     const feed = await fetchFeed();
-    const facilities = groupByFacility(feed, config);
+    if (trackActivations(feed, activeSince, new Date(), firstRefresh, config.artccIds)) saveState();
+    firstRefresh = false;
+    const facilities = groupByFacility(feed, { ...config, activeSince });
     const entries = board.update(facilities, await getBookings());
 
     const wanted = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
