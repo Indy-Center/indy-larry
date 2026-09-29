@@ -11,9 +11,11 @@ const {
   ironMicPanel,
   requestModal,
   requestAlert,
+  alertStatus,
 } = require('./panels');
 
-const HOUR = 60 * 60_000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 const SWEEP_MS = 30_000; // expired roles come off within this long
 
 // The Break/Staffing panel's menus, in order. Each area's roles come from its own setting.
@@ -64,7 +66,7 @@ function parseAreas(env) {
   );
 }
 
-/** Grants whose time is up. */
+/** Grants (or alerts) whose time is up. */
 function expiredGrants(grants, now) {
   return Object.entries(grants).filter(([, g]) => g.expiresAt != null && g.expiresAt <= now);
 }
@@ -74,19 +76,20 @@ const unix = (ms) => Math.floor(ms / 1000);
 class Notifications {
   /**
    * @param {import('discord.js').Client} client
-   * @param {{ panelChannelId: string, alertChannelId: string, positions: {label: string, roleId: string}[], areas: {key: string, label: string, roles: {label: string, roleId: string}[]}[], ironMicRoleId?: string, stateFile: string }} config
+   * @param {{ panelChannelId: string, alertChannelId: string, positions: {label: string, roleId: string}[], areas: {key: string, label: string, roles: {label: string, roleId: string}[]}[], ironMicRoleId?: string, expireMinutes?: number, stateFile: string }} config
    */
   constructor(client, config) {
     this.client = client;
     this.config = config;
     // grants: "userId:roleId" -> { userId, roleId, duration, expiresAt|null }
-    this.state = { panelChannelId: null, panels: [], grants: {} };
+    // alerts: messageId -> the request alert's record (see requestAlert), while it can still be claimed or cancelled
+    this.state = { panelChannelId: null, panels: [], grants: {}, alerts: {} };
   }
 
   load() {
     try {
-      const { panelChannelId, panels, grants } = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
-      this.state = { panelChannelId, panels: panels ?? [], grants: grants ?? {} };
+      const { panelChannelId, panels, grants, alerts } = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
+      this.state = { panelChannelId, panels: panels ?? [], grants: grants ?? {}, alerts: alerts ?? {} };
     } catch {
       // First run.
     }
@@ -173,6 +176,8 @@ class Notifications {
     if (scope === 'relief' && kind === 'role') return this.pickRelief(interaction, rest[0]);
     if (scope === 'relief' && kind === 'hours') return this.submitHours(interaction, rest[0]);
     if (scope === 'ironmic') return this.toggleIronMic(interaction);
+    if (scope === 'alert' && kind === 'claim') return this.claimAlert(interaction);
+    if (scope === 'alert' && kind === 'cancel') return this.cancelAlert(interaction);
 
     if (scope === 'request' && kind === 'area') {
       const area = this.area(rest[0]);
@@ -267,13 +272,92 @@ class Notifications {
     const picked = area.roles.length > 1 ? f.getStringSelectValues('notify') : area.roles.map((r) => r.roleId);
     const roles = area.roles.filter((r) => picked.includes(r.roleId));
 
-    await this.alertChannel.send(requestAlert(type, area, roles, interaction.user.id, fields));
+    const now = Date.now();
+    const { expireMinutes } = this.config;
+    const alert = {
+      channelId: this.alertChannel.id,
+      type,
+      area: area.label,
+      userId: interaction.user.id,
+      fields,
+      roleIds: roles.map((r) => r.roleId),
+      createdAt: now,
+      expiresAt: expireMinutes ? now + expireMinutes * MINUTE : null,
+      status: 'open',
+      claimedBy: null,
+    };
+    const msg = await this.alertChannel.send(requestAlert(alert));
+    this.state.alerts[msg.id] = alert;
+    this.save();
     const where = this.alertChannel.id === interaction.channelId ? '' : ` in <#${this.alertChannel.id}>`;
     return this.reply(interaction, `✅ Sent. Notified ${roles.map((r) => `**${r.label}**`).join(', ')}${where}.`);
   }
 
-  /** Take expired relief roles back off. */
+  /**
+   * The record for the alert a button was pressed on. If it's gone (cancelled or expired), the buttons are
+   * taken off and the presser is told.
+   */
+  async alertFor(interaction) {
+    const alert = this.state.alerts[interaction.message.id];
+    if (alert) return alert;
+    await interaction.update({ components: [] });
+    await this.reply(interaction, 'This request is closed.');
+    return null;
+  }
+
+  /** Claim an open alert, or unclaim one you claimed. Anyone but the requester can claim. */
+  async claimAlert(interaction) {
+    const alert = await this.alertFor(interaction);
+    if (!alert) return;
+    const userId = interaction.user.id;
+    if (alert.userId === userId) return this.reply(interaction, "You can't claim your own request.");
+    if (alert.status === 'claimed' && alert.claimedBy !== userId) return this.reply(interaction, `<@${alert.claimedBy}> already has this.`);
+
+    if (alert.status === 'claimed') Object.assign(alert, { status: 'open', claimedBy: null });
+    else Object.assign(alert, { status: 'claimed', claimedBy: userId });
+    this.save();
+    return interaction.update(requestAlert(alert));
+  }
+
+  /** Cancel an alert. Only the requester can. */
+  async cancelAlert(interaction) {
+    const alert = await this.alertFor(interaction);
+    if (!alert) return;
+    if (alert.userId !== interaction.user.id) return this.reply(interaction, `Only <@${alert.userId}> can cancel this.`);
+    delete this.state.alerts[interaction.message.id];
+    this.save();
+    return interaction.update(requestAlert({ ...alert, status: 'cancelled' }));
+  }
+
   async sweep() {
+    await this.sweepGrants();
+    await this.sweepAlerts();
+  }
+
+  /** Close alerts whose time is up: an open one shows Expired, a claimed one stays claimed without buttons. */
+  async sweepAlerts() {
+    const expired = expiredGrants(this.state.alerts, Date.now());
+    if (!expired.length) return;
+    for (const [messageId, alert] of expired) {
+      try {
+        const channel = await this.client.channels.fetch(alert.channelId);
+        const msg = await channel.messages.fetch(messageId);
+        const status = alertStatus(alert, Date.now());
+        await msg.edit(requestAlert({ ...alert, status }, { final: true }));
+      } catch (err) {
+        // 10003 = Unknown Channel, 10008 = Unknown Message (deleted); anything else, try again next sweep.
+        if (err.code !== 10003 && err.code !== 10008) {
+          console.error(`[${new Date().toISOString()}] Could not close alert ${messageId}:`, err.message);
+          continue;
+        }
+      }
+      delete this.state.alerts[messageId];
+    }
+    this.save();
+  }
+
+  /** Take expired relief roles back off. */
+  async sweepGrants() {
     const expired = expiredGrants(this.state.grants, Date.now());
     if (!expired.length) return;
     const guild = this.channel.guild;

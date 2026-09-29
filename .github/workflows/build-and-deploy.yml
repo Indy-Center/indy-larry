@@ -90,6 +90,7 @@ jobs:
           ENV_CAB_ROLES: ${{ secrets.ENV_CAB_ROLES || vars.ENV_CAB_ROLES }}
           ENV_TRACON_ROLES: ${{ secrets.ENV_TRACON_ROLES || vars.ENV_TRACON_ROLES }}
           ENV_ENROUTE_ROLES: ${{ secrets.ENV_ENROUTE_ROLES || vars.ENV_ENROUTE_ROLES }}
+          ENV_REQUEST_EXPIRE_MINUTES: ${{ secrets.ENV_REQUEST_EXPIRE_MINUTES || vars.ENV_REQUEST_EXPIRE_MINUTES }}
           ENV_IRON_MIC_ROLE_ID: ${{ secrets.ENV_IRON_MIC_ROLE_ID || vars.ENV_IRON_MIC_ROLE_ID }}
         run: |
           # Values are single-quoted so Compose takes them literally, $ and # included. So a value can't
