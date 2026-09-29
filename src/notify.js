@@ -91,11 +91,12 @@ class Notifications {
     console.log(`Notification panels ready in #${this.channel.name}.`);
   }
 
+  /** Top to bottom. Relief goes last, since the mobile app opens a channel at its newest message. */
   panels() {
     const { positions, ironMicRoleId } = this.config;
     const list = [];
-    if (positions.length) list.push(reliefPanel(positions), requestPanel(positions));
     if (ironMicRoleId) list.push(ironMicPanel());
+    if (positions.length) list.push(requestPanel(positions), reliefPanel(positions));
     return list;
   }
 
