@@ -23,11 +23,11 @@ The bot marks the position as closing 15 minutes before that time. If both times
 
 ## Notification panels
 
-If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel. Each uses Discord's newer message components, and the bot's replies are visible only to the person who picked or pressed something.
+If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel, in this order from the top. Relief is last because the mobile app opens a channel at its newest message. Each uses Discord's newer message components, and the bot's replies are visible only to the person who picked or pressed something.
 
-- **Controller Relief Notification**: one drop-down per position. Pick 3, 6, 9 or 12 hours or Permanent to get that position's role. Timed roles come off within 30 seconds of running out, even across restarts. Picking a different length switches to it (a timed role restarts its clock); picking Opt out, or the length you already have, removes the role.
-- **Controller Break/Staffing Notification System**: one drop-down per position; pick Break or Staffing on the position that should be notified. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working, the area to staff (Cab, TRACON sector, Enroute sector) and a brief optional reason (Staffing). The request is posted in `ALERT_CHANNEL_ID` and pings that position's role.
 - **Iron Mic Notification Preference**: one button that adds or removes `IRON_MIC_ROLE_ID`.
+- **Controller Break/Staffing Notification System**: one drop-down per position; pick Break or Staffing on the position that should be notified. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working, the area to staff (Cab, TRACON sector, Enroute sector) and a brief optional reason (Staffing). The request is posted in `ALERT_CHANNEL_ID` and pings that position's role.
+- **Controller Relief Notification**: one drop-down per position. Pick 3, 6, 9 or 12 hours or Permanent to get that position's role. Timed roles come off within 30 seconds of running out, even across restarts. Picking a different length switches to it (a timed role restarts its clock); picking Opt out, or the length you already have, removes the role.
 
 The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Ground:222,S Local:333,A Local:444,T Radar:555,E Radar:666`, so a dev server and the production server can use different roles. The drop-downs follow that order. Each panel is redrawn after a pick, so the drop-downs go back to showing the position names. The panels are edited in place on every start, so a changed setting shows up after a restart.
 
