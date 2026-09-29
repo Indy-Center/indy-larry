@@ -21,12 +21,26 @@ Controllers add this line to their controller info, with the Eastern time and th
 
 The bot marks the position as closing 15 minutes before that time. If both times are given, the zulu one is used. A booked position is also marked closing 15 minutes before its booking ends, even without this line.
 
+## Notification panels
+
+If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel. Each uses Discord's newer message components, and every reply to a button is visible only to the person who pressed it.
+
+- **Controller Relief Notification**: pick 3, 6, 9 or 12 hours or Permanent, then a position button to get that position's role. Timed roles come off within 30 seconds of running out, even across restarts. Pressing a position you already have with a different length switches to it (a timed role restarts its clock), and pressing it with the same length opts out, so Permanent is changed to timed or dropped by pressing the position again.
+- **Controller Break/Staffing Notification System**: pick Break or Staffing, then the position that should be notified. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working, the area to staff (Cab, TRACON sector, Enroute sector) and a brief optional reason (Staffing). The request is posted in `ALERT_CHANNEL_ID` and pings that position's role.
+- **Iron Mic Notification Preference**: one button that adds or removes `IRON_MIC_ROLE_ID`.
+
+The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Ground:222,S Local:333,A Local:444,T Radar:555,E Radar:666`, so a dev server and the production server can use different roles. The buttons follow that order. The panels are edited in place on every start, so a changed setting shows up after a restart.
+
+The bot needs **Manage Roles**, and its own role has to sit above every role it hands out. To ping a role it also needs **Mention @everyone, @here and All Roles** in the alert channel, or the role has to allow anyone to mention it. `notify.json` holds the panel message IDs, who has which role until when, and each person's last menu picks. It isn't committed.
+
 ## Project layout
 
 - `src/bot.js`: logs in, polls every `POLL_SECONDS`, and posts, edits and deletes embeds.
 - `src/feed.js`: fetches the [vNAS controller feed](https://docs.virtualnas.net/data-admin/controller-feed/), the vNAS ARTCC data (facility and position list) and [VATSIM ATC bookings](https://atc-bookings.vatsim.net/), groups controllers by facility and tracks activation times.
 - `src/status.js`: decides each facility's status and parses "Online until" from controller info.
 - `src/embeds.js`: the embed layout.
+- `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
+- `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests.
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/vnas-discord-bot/` on the VPS. Keeps `state.json` in the `bot-state` volume.
@@ -77,6 +91,8 @@ Secrets:
 | `ENV_DISCORD_TOKEN` | Secret | The bot's token |
 | `ENV_CHANNEL_ID` | Variable | The status channel's ID |
 | `ENV_ARTCC_IDS` | Variable | `ZID` |
+| `ENV_PANEL_CHANNEL_ID`, `ENV_ALERT_CHANNEL_ID` | Variable | Optional; the notification panel and request channels |
+| `ENV_RELIEF_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 
 To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.
