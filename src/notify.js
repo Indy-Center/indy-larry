@@ -1,7 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { DURATIONS, reliefPanel, requestPanel, ironMicPanel, requestModal, requestAlert } = require('./panels');
+const {
+  MIN_HOURS,
+  MAX_HOURS,
+  reliefPanel,
+  hoursModal,
+  parseHours,
+  requestPanel,
+  ironMicPanel,
+  requestModal,
+  requestAlert,
+} = require('./panels');
 
 const HOUR = 60 * 60_000;
 const SWEEP_MS = 30_000; // expired roles come off within this long
@@ -33,17 +43,18 @@ function parseRoles(value, setting = 'RELIEF_ROLES') {
 
 /**
  * What picking an option in a relief position's menu does.
- * Picking the length you already have opts out, as does "Opt out".
+ * Temporary always sets a new time. Permanent when you already have it opts out, as does "Opt out".
  * A role with no record (e.g. added by hand) counts as permanent.
  * @param {boolean} hasRole
  * @param {{ duration: string }|undefined} grant the stored assignment, if any
- * @param {string} choice the option picked ('3' ... '12', 'perm' or 'off')
+ * @param {'temp'|'perm'|'off'} choice the option picked
  * @returns {'add'|'change'|'remove'|'none'}
  */
 function reliefAction(hasRole, grant, choice) {
   if (choice === 'off') return hasRole ? 'remove' : 'none';
   if (!hasRole) return 'add';
-  return (grant?.duration ?? 'perm') === choice ? 'remove' : 'change';
+  if (choice === 'perm') return (grant?.duration ?? 'perm') === 'perm' ? 'remove' : 'change';
+  return 'change';
 }
 
 /** The request areas that have roles set, each with its parsed roles. */
@@ -159,7 +170,8 @@ class Notifications {
     if (!id || interaction.guildId !== this.channel.guild.id) return;
     const [scope, kind, ...rest] = id.split(':');
 
-    if (scope === 'relief' && kind === 'role') return this.toggleRelief(interaction, rest[0]);
+    if (scope === 'relief' && kind === 'role') return this.pickRelief(interaction, rest[0]);
+    if (scope === 'relief' && kind === 'hours') return this.submitHours(interaction, rest[0]);
     if (scope === 'ironmic') return this.toggleIronMic(interaction);
 
     if (scope === 'request' && kind === 'area') {
@@ -179,12 +191,32 @@ class Notifications {
     return interaction.update({ components: [panel] });
   }
 
-  async toggleRelief(interaction, roleId) {
+  /** A pick in a relief position's menu. Temporary asks how long first; the rest apply straight away. */
+  async pickRelief(interaction, roleId) {
     const position = this.position(roleId);
     if (!position) return this.reply(interaction, 'That position is no longer set up.');
-    await this.resetPanel(interaction, reliefPanel(this.config.positions));
-
     const choice = interaction.values[0];
+    // Showing the form has to be the first response, so the menu is reset when the form is sent.
+    if (choice === 'temp') return interaction.showModal(hoursModal(position));
+    await this.resetPanel(interaction, reliefPanel(this.config.positions));
+    return this.applyRelief(interaction, position, choice);
+  }
+
+  async submitHours(interaction, roleId) {
+    const position = this.position(roleId);
+    if (!position) return this.reply(interaction, 'That position is no longer set up.');
+    if (interaction.isFromMessage()) await this.resetPanel(interaction, reliefPanel(this.config.positions));
+    const hours = parseHours(interaction.fields.getTextInputValue('hours'));
+    if (!hours) return this.reply(interaction, `Enter a whole number of hours from ${MIN_HOURS} to ${MAX_HOURS}.`);
+    return this.applyRelief(interaction, position, 'temp', hours);
+  }
+
+  /**
+   * @param {'temp'|'perm'|'off'} choice
+   * @param {number} [hours] for Temporary
+   */
+  async applyRelief(interaction, position, choice, hours) {
+    const { roleId } = position;
     const member = interaction.member;
     const key = `${member.id}:${roleId}`;
     const hasRole = member.roles.cache.has(roleId);
@@ -198,10 +230,9 @@ class Notifications {
       return this.reply(interaction, `🔕 You'll no longer get **${position.label}** notifications.`);
     }
 
-    const duration = DURATIONS.find((d) => d.value === choice);
-    if (!hasRole) await member.roles.add(roleId, `Relief notifications: ${duration.label}`);
-    const expiresAt = duration.hours ? Date.now() + duration.hours * HOUR : null;
-    this.state.grants[key] = { userId: member.id, roleId, duration: duration.value, expiresAt };
+    if (!hasRole) await member.roles.add(roleId, `Relief notifications: ${choice === 'temp' ? `${hours}h` : 'permanent'}`);
+    const expiresAt = choice === 'temp' ? Date.now() + hours * HOUR : null;
+    this.state.grants[key] = { userId: member.id, roleId, duration: choice, hours: hours ?? null, expiresAt };
     this.save();
 
     const until = expiresAt

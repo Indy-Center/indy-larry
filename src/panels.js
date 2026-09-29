@@ -12,13 +12,14 @@ const {
   TextInputStyle,
 } = require('discord.js');
 
-// How long a relief notification role lasts. "perm" keeps it until the user drops it.
-const DURATIONS = [
-  { value: '3', label: '3 hours', hours: 3 },
-  { value: '6', label: '6 hours', hours: 6 },
-  { value: '9', label: '9 hours', hours: 9 },
-  { value: '12', label: '12 hours', hours: 12 },
-  { value: 'perm', label: 'Permanent', hours: null },
+// How long a Temporary relief notification role can last, in whole hours.
+const MIN_HOURS = 1;
+const MAX_HOURS = 24;
+
+const RELIEF_OPTIONS = [
+  { value: 'temp', label: 'Temporary', description: `${MIN_HOURS} to ${MAX_HOURS} hours; you'll be asked how long` },
+  { value: 'perm', label: 'Permanent', description: 'Until you opt out' },
+  { value: 'off', label: 'Opt out' },
 ];
 
 const REQUEST_TYPES = [
@@ -43,14 +44,36 @@ function reliefPanel(positions) {
     .addTextDisplayComponents(
       text('## Controller Relief Notification'),
       text('Use the menus below to opt in to receiving notifications when controllers request a break or additional staffing for specific positions.'),
-      text('-# Pick how long for each position. Pick a different length to change it, or Opt out (or the length you already have) to stop.'),
+      text(`-# Pick Temporary (${MIN_HOURS}–${MAX_HOURS} hours) or Permanent for each position. Picking Temporary again sets a new time; Opt out stops.`),
     )
-    .addActionRowComponents(
-      ...menus(positions, 'relief:role', (p) => p.roleId, [
-        ...DURATIONS.map((d) => ({ label: d.label, value: d.value })),
-        { label: 'Opt out', value: 'off' },
-      ]),
+    .addActionRowComponents(...menus(positions, 'relief:role', (p) => p.roleId, RELIEF_OPTIONS));
+}
+
+/** Asks how many hours a Temporary relief role should last. */
+function hoursModal(position) {
+  return new ModalBuilder()
+    .setCustomId(`relief:hours:${position.roleId}`)
+    .setTitle(`Temporary · ${position.label}`.slice(0, 45))
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel(`How many hours? (${MIN_HOURS}–${MAX_HOURS})`)
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('hours')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g. 4')
+            .setMinLength(1)
+            .setMaxLength(2),
+        ),
     );
+}
+
+/** "4" -> 4; anything that isn't a whole number from MIN_HOURS to MAX_HOURS -> null. */
+function parseHours(value) {
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) return null;
+  const hours = Number(text);
+  return hours >= MIN_HOURS && hours <= MAX_HOURS ? hours : null;
 }
 
 function requestPanel(areas) {
@@ -146,4 +169,15 @@ function requestAlert(type, area, roles, userId, fields) {
   return { content: ids.map((id) => `<@&${id}>`).join(' '), embeds: [embed], allowedMentions: { roles: ids } };
 }
 
-module.exports = { DURATIONS, REQUEST_TYPES, reliefPanel, requestPanel, ironMicPanel, requestModal, requestAlert };
+module.exports = {
+  MIN_HOURS,
+  MAX_HOURS,
+  REQUEST_TYPES,
+  reliefPanel,
+  hoursModal,
+  parseHours,
+  requestPanel,
+  ironMicPanel,
+  requestModal,
+  requestAlert,
+};
