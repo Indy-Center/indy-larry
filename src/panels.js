@@ -26,15 +26,13 @@ const REQUEST_TYPES = [
   { value: 'staffing', label: 'Staffing', description: 'Ask for another position to open' },
 ];
 
-const STAFFING_AREAS = ['Cab', 'TRACON sector', 'Enroute sector'];
-
 const text = (content) => new TextDisplayBuilder().setContent(content);
 
-/** One drop-down per position, each in its own row, with the position's name as the placeholder. */
-function positionMenus(positions, prefix, options) {
-  return positions.map((p) =>
+/** One drop-down per item, each in its own row, with the item's name as the placeholder. */
+function menus(items, prefix, idOf, options) {
+  return items.map((item) =>
     new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder().setCustomId(`${prefix}:${p.roleId}`).setPlaceholder(p.label).addOptions(options),
+      new StringSelectMenuBuilder().setCustomId(`${prefix}:${idOf(item)}`).setPlaceholder(item.label).addOptions(options),
     ),
   );
 }
@@ -48,22 +46,22 @@ function reliefPanel(positions) {
       text('-# Pick how long for each position. Pick a different length to change it, or Opt out (or the length you already have) to stop.'),
     )
     .addActionRowComponents(
-      ...positionMenus(positions, 'relief:role', [
+      ...menus(positions, 'relief:role', (p) => p.roleId, [
         ...DURATIONS.map((d) => ({ label: d.label, value: d.value })),
         { label: 'Opt out', value: 'off' },
       ]),
     );
 }
 
-function requestPanel(positions) {
+function requestPanel(areas) {
   return new ContainerBuilder()
     .setAccentColor(0xe67e22)
     .addTextDisplayComponents(
       text('## Controller Break/Staffing Notification System'),
       text('Use the menus below to request a break or additional positions to come online for specific positions.'),
-      text('-# Pick Break or Staffing on the position that should be notified.'),
+      text('-# Pick Break or Staffing on your area, then choose who to notify in the form.'),
     )
-    .addActionRowComponents(...positionMenus(positions, 'request:pos', REQUEST_TYPES));
+    .addActionRowComponents(...menus(areas, 'request:area', (a) => a.key, REQUEST_TYPES));
 }
 
 function ironMicPanel() {
@@ -84,39 +82,51 @@ const shortInput = (id, placeholder, { required = true, max = 50 } = {}) =>
   new TextInputBuilder().setCustomId(id).setStyle(TextInputStyle.Short).setPlaceholder(placeholder).setRequired(required).setMaxLength(max);
 
 /** The form a controller fills in after picking a request type and a position. */
-function requestModal(type, position) {
-  const modal = new ModalBuilder().setCustomId(`request:modal:${type}:${position.roleId}`);
+/** Who to ping. Left out when the area has only one role, which is then always pinged. */
+function notifyPicker(area) {
+  if (area.roles.length < 2) return [];
+  return [
+    new LabelBuilder()
+      .setLabel('Who to notify')
+      .setStringSelectMenuComponent(
+        new StringSelectMenuBuilder()
+          .setCustomId('notify')
+          .setPlaceholder('Pick one or more')
+          .setMinValues(1)
+          .setMaxValues(area.roles.length)
+          .addOptions(area.roles.map((r) => ({ label: r.label, value: r.roleId }))),
+      ),
+  ];
+}
+
+/** The form a controller fills in after picking a request type on an area. */
+function requestModal(type, area) {
+  const modal = new ModalBuilder().setCustomId(`request:modal:${type}:${area.key}`);
   if (type === 'break') {
-    return modal.setTitle(`Break request · ${position.label}`.slice(0, 45)).addLabelComponents(
+    return modal.setTitle(`Break request · ${area.label}`).addLabelComponents(
       new LabelBuilder().setLabel('Position you need relief from').setTextInputComponent(shortInput('position', 'e.g. IND_GND', { max: 20 })),
       new LabelBuilder()
         .setLabel('How long can you stay on?')
         .setTextInputComponent(shortInput('stay', 'e.g. 30 minutes, or until 0200z')),
+      ...notifyPicker(area),
     );
   }
-  return modal.setTitle(`Staffing request · ${position.label}`.slice(0, 45)).addLabelComponents(
+  return modal.setTitle(`Staffing request · ${area.label}`).addLabelComponents(
     new LabelBuilder().setLabel("Position you're working").setTextInputComponent(shortInput('position', 'e.g. IND_TWR', { max: 20 })),
-    new LabelBuilder()
-      .setLabel('Area to staff')
-      .setStringSelectMenuComponent(
-        new StringSelectMenuBuilder()
-          .setCustomId('area')
-          .setPlaceholder('Cab, TRACON sector or Enroute sector')
-          .addOptions(STAFFING_AREAS.map((a) => ({ label: a, value: a }))),
-      ),
+    ...notifyPicker(area),
     new LabelBuilder()
       .setLabel('Brief reason')
       .setTextInputComponent(shortInput('reason', 'e.g. departure push, weather', { required: false, max: 100 })),
   );
 }
 
-/** The alert posted for a submitted request. The role mention goes in the content so it pings. */
-function requestAlert(type, position, userId, fields) {
+/** The alert posted for a submitted request. The role mentions go in the content so they ping. */
+function requestAlert(type, area, roles, userId, fields) {
   const embed = new EmbedBuilder().setTimestamp();
   if (type === 'break') {
     embed
       .setColor(0xf1c40f)
-      .setTitle(`Break requested ·${position.label}`)
+      .setTitle(`Break requested · ${area.label}`)
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Relief needed on', value: fields.position, inline: true },
@@ -125,15 +135,15 @@ function requestAlert(type, position, userId, fields) {
   } else {
     embed
       .setColor(0xe67e22)
-      .setTitle(`Staffing requested ·${position.label}`)
+      .setTitle(`Staffing requested · ${area.label}`)
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Working', value: fields.position, inline: true },
-        { name: 'Wants staffed', value: fields.area, inline: true },
       );
     if (fields.reason) embed.addFields({ name: 'Reason', value: fields.reason });
   }
-  return { content: `<@&${position.roleId}>`, embeds: [embed], allowedMentions: { roles: [position.roleId] } };
+  const ids = roles.map((r) => r.roleId);
+  return { content: ids.map((id) => `<@&${id}>`).join(' '), embeds: [embed], allowedMentions: { roles: ids } };
 }
 
 module.exports = { DURATIONS, REQUEST_TYPES, reliefPanel, requestPanel, ironMicPanel, requestModal, requestAlert };

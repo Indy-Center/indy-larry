@@ -6,11 +6,18 @@ const { DURATIONS, reliefPanel, requestPanel, ironMicPanel, requestModal, reques
 const HOUR = 60 * 60_000;
 const SWEEP_MS = 30_000; // expired roles come off within this long
 
+// The Break/Staffing panel's menus, in order. Each area's roles come from its own setting.
+const REQUEST_AREAS = [
+  { key: 'cab', label: 'CAB', setting: 'CAB_ROLES' },
+  { key: 'tracon', label: 'TRACON', setting: 'TRACON_ROLES' },
+  { key: 'enroute', label: 'ENROUTE', setting: 'ENROUTE_ROLES' },
+];
+
 /**
  * "S Ground:123, A Ground:456" -> [{ label: 'S Ground', roleId: '123' }, ...].
- * The label names the position's menus; the ID is the role it hands out and pings.
+ * The label is what the menu or form shows; the ID is the role it hands out or pings.
  */
-function parseRoles(value) {
+function parseRoles(value, setting = 'RELIEF_ROLES') {
   return (value || '')
     .split(',')
     .map((s) => s.trim())
@@ -19,7 +26,7 @@ function parseRoles(value) {
       const i = entry.lastIndexOf(':');
       const label = entry.slice(0, i).trim();
       const roleId = entry.slice(i + 1).trim();
-      if (i < 1 || !label || !/^\d+$/.test(roleId)) throw new Error(`RELIEF_ROLES entry "${entry}" should look like "S Ground:123456789"`);
+      if (i < 1 || !label || !/^\d+$/.test(roleId)) throw new Error(`${setting} entry "${entry}" should look like "S Ground:123456789"`);
       return { label, roleId };
     });
 }
@@ -39,6 +46,13 @@ function reliefAction(hasRole, grant, choice) {
   return (grant?.duration ?? 'perm') === choice ? 'remove' : 'change';
 }
 
+/** The request areas that have roles set, each with its parsed roles. */
+function parseAreas(env) {
+  return REQUEST_AREAS.map((a) => ({ key: a.key, label: a.label, roles: parseRoles(env[a.setting], a.setting) })).filter(
+    (a) => a.roles.length,
+  );
+}
+
 /** Grants whose time is up. */
 function expiredGrants(grants, now) {
   return Object.entries(grants).filter(([, g]) => g.expiresAt != null && g.expiresAt <= now);
@@ -49,7 +63,7 @@ const unix = (ms) => Math.floor(ms / 1000);
 class Notifications {
   /**
    * @param {import('discord.js').Client} client
-   * @param {{ panelChannelId: string, alertChannelId: string, positions: {label: string, roleId: string}[], ironMicRoleId?: string, stateFile: string }} config
+   * @param {{ panelChannelId: string, alertChannelId: string, positions: {label: string, roleId: string}[], areas: {key: string, label: string, roles: {label: string, roleId: string}[]}[], ironMicRoleId?: string, stateFile: string }} config
    */
   constructor(client, config) {
     this.client = client;
@@ -93,10 +107,11 @@ class Notifications {
 
   /** Top to bottom. Relief goes last, since the mobile app opens a channel at its newest message. */
   panels() {
-    const { positions, ironMicRoleId } = this.config;
+    const { positions, areas, ironMicRoleId } = this.config;
     const list = [];
     if (ironMicRoleId) list.push(ironMicPanel());
-    if (positions.length) list.push(requestPanel(positions), reliefPanel(positions));
+    if (areas.length) list.push(requestPanel(areas));
+    if (positions.length) list.push(reliefPanel(positions));
     return list;
   }
 
@@ -128,6 +143,10 @@ class Notifications {
     return this.config.positions.find((p) => p.roleId === roleId);
   }
 
+  area(key) {
+    return this.config.areas.find((a) => a.key === key);
+  }
+
   async handle(interaction) {
     const id = interaction.customId;
     if (!id || interaction.guildId !== this.channel.guild.id) return;
@@ -136,11 +155,11 @@ class Notifications {
     if (scope === 'relief' && kind === 'role') return this.toggleRelief(interaction, rest[0]);
     if (scope === 'ironmic') return this.toggleIronMic(interaction);
 
-    if (scope === 'request' && kind === 'pos') {
-      const position = this.position(rest[0]);
-      if (!position) return this.reply(interaction, 'That position is no longer set up.');
+    if (scope === 'request' && kind === 'area') {
+      const area = this.area(rest[0]);
+      if (!area) return this.reply(interaction, 'That area is no longer set up.');
       // Showing the form has to be the first response, so the menu is reset when the form is sent.
-      return interaction.showModal(requestModal(interaction.values[0], position));
+      return interaction.showModal(requestModal(interaction.values[0], area));
     }
     if (scope === 'request' && kind === 'modal') return this.submitRequest(interaction, rest[0], rest[1]);
   }
@@ -197,19 +216,22 @@ class Notifications {
     return this.reply(interaction, "🎙️ You'll get Iron Mic notifications. Press the button again to opt out.");
   }
 
-  async submitRequest(interaction, type, roleId) {
-    const position = this.position(roleId);
-    if (!position) return this.reply(interaction, 'That position is no longer set up.');
-    if (interaction.isFromMessage()) await this.resetPanel(interaction, requestPanel(this.config.positions));
+  async submitRequest(interaction, type, areaKey) {
+    const area = this.area(areaKey);
+    if (!area) return this.reply(interaction, 'That area is no longer set up.');
+    if (interaction.isFromMessage()) await this.resetPanel(interaction, requestPanel(this.config.areas));
     const f = interaction.fields;
     const fields =
       type === 'break'
         ? { position: f.getTextInputValue('position'), stay: f.getTextInputValue('stay') }
-        : { position: f.getTextInputValue('position'), area: f.getStringSelectValues('area')[0], reason: f.getTextInputValue('reason') };
+        : { position: f.getTextInputValue('position'), reason: f.getTextInputValue('reason') };
+    // A one-role area has no picker in the form and always pings its role.
+    const picked = area.roles.length > 1 ? f.getStringSelectValues('notify') : area.roles.map((r) => r.roleId);
+    const roles = area.roles.filter((r) => picked.includes(r.roleId));
 
-    await this.alertChannel.send(requestAlert(type, position, interaction.user.id, fields));
+    await this.alertChannel.send(requestAlert(type, area, roles, interaction.user.id, fields));
     const where = this.alertChannel.id === interaction.channelId ? '' : ` in <#${this.alertChannel.id}>`;
-    return this.reply(interaction, `✅ Sent. **${position.label}** has been notified${where}.`);
+    return this.reply(interaction, `✅ Sent. Notified ${roles.map((r) => `**${r.label}**`).join(', ')}${where}.`);
   }
 
   /** Take expired relief roles back off. */
@@ -250,4 +272,4 @@ class Notifications {
   }
 }
 
-module.exports = { Notifications, parseRoles, reliefAction, expiredGrants };
+module.exports = { Notifications, parseRoles, parseAreas, reliefAction, expiredGrants };
