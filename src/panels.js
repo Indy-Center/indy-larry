@@ -134,7 +134,7 @@ function requestAlert(type, position, userId, fields) {
   if (type === 'break') {
     embed
       .setColor(0xf1c40f)
-      .setTitle(`☕ Break requested · ${position.label}`)
+      .setTitle(`Break requested ·${position.label}`)
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Relief needed on', value: fields.position, inline: true },
@@ -143,7 +143,7 @@ function requestAlert(type, position, userId, fields) {
   } else {
     embed
       .setColor(0xe67e22)
-      .setTitle(`📈 Staffing requested · ${position.label}`)
+      .setTitle(`Staffing requested ·${position.label}`)
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Working', value: fields.position, inline: true },
