@@ -23,15 +23,15 @@ The bot marks the position as closing 15 minutes before that time. If both times
 
 ## Notification panels
 
-If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel. Each uses Discord's newer message components, and every reply to a button is visible only to the person who pressed it.
+If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel. Each uses Discord's newer message components, and the bot's replies are visible only to the person who picked or pressed something.
 
-- **Controller Relief Notification**: pick 3, 6, 9 or 12 hours or Permanent, then a position button to get that position's role. Timed roles come off within 30 seconds of running out, even across restarts. Pressing a position you already have with a different length switches to it (a timed role restarts its clock), and pressing it with the same length opts out, so Permanent is changed to timed or dropped by pressing the position again.
-- **Controller Break/Staffing Notification System**: pick Break or Staffing, then the position that should be notified. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working, the area to staff (Cab, TRACON sector, Enroute sector) and a brief optional reason (Staffing). The request is posted in `ALERT_CHANNEL_ID` and pings that position's role.
+- **Controller Relief Notification**: one drop-down per position. Pick 3, 6, 9 or 12 hours or Permanent to get that position's role. Timed roles come off within 30 seconds of running out, even across restarts. Picking a different length switches to it (a timed role restarts its clock); picking Opt out, or the length you already have, removes the role.
+- **Controller Break/Staffing Notification System**: one drop-down per position; pick Break or Staffing on the position that should be notified. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working, the area to staff (Cab, TRACON sector, Enroute sector) and a brief optional reason (Staffing). The request is posted in `ALERT_CHANNEL_ID` and pings that position's role.
 - **Iron Mic Notification Preference**: one button that adds or removes `IRON_MIC_ROLE_ID`.
 
-The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Ground:222,S Local:333,A Local:444,T Radar:555,E Radar:666`, so a dev server and the production server can use different roles. The buttons follow that order. The panels are edited in place on every start, so a changed setting shows up after a restart.
+The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Ground:222,S Local:333,A Local:444,T Radar:555,E Radar:666`, so a dev server and the production server can use different roles. The drop-downs follow that order. Each panel is redrawn after a pick, so the drop-downs go back to showing the position names. The panels are edited in place on every start, so a changed setting shows up after a restart.
 
-The bot needs **Manage Roles**, and its own role has to sit above every role it hands out. To ping a role it also needs **Mention @everyone, @here and All Roles** in the alert channel, or the role has to allow anyone to mention it. `notify.json` holds the panel message IDs, who has which role until when, and each person's last menu picks. It isn't committed.
+The bot needs **Manage Roles**, and its own role has to sit above every role it hands out. To ping a role it also needs **Mention @everyone, @here and All Roles** in the alert channel, or the role has to allow anyone to mention it. `notify.json` holds the panel message IDs, and who has which role until when. It isn't committed.
 
 ## Project layout
 

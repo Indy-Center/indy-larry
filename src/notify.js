@@ -8,7 +8,7 @@ const SWEEP_MS = 30_000; // expired roles come off within this long
 
 /**
  * "S Ground:123, A Ground:456" -> [{ label: 'S Ground', roleId: '123' }, ...].
- * The label is the button text; the ID is the role it hands out and pings.
+ * The label names the position's menus; the ID is the role it hands out and pings.
  */
 function parseRoles(value) {
   return (value || '')
@@ -25,14 +25,16 @@ function parseRoles(value) {
 }
 
 /**
- * What pressing a relief position button does.
+ * What picking an option in a relief position's menu does.
+ * Picking the length you already have opts out, as does "Opt out".
  * A role with no record (e.g. added by hand) counts as permanent.
  * @param {boolean} hasRole
  * @param {{ duration: string }|undefined} grant the stored assignment, if any
- * @param {string} choice the duration picked in the menu ('3' ... '12' or 'perm')
- * @returns {'add'|'change'|'remove'}
+ * @param {string} choice the option picked ('3' ... '12', 'perm' or 'off')
+ * @returns {'add'|'change'|'remove'|'none'}
  */
 function reliefAction(hasRole, grant, choice) {
+  if (choice === 'off') return hasRole ? 'remove' : 'none';
   if (!hasRole) return 'add';
   return (grant?.duration ?? 'perm') === choice ? 'remove' : 'change';
 }
@@ -53,14 +55,13 @@ class Notifications {
     this.client = client;
     this.config = config;
     // grants: "userId:roleId" -> { userId, roleId, duration, expiresAt|null }
-    // choices: what each user last picked in the two menus, so it survives a restart.
-    this.state = { panelChannelId: null, panels: [], grants: {}, choices: { duration: {}, request: {} } };
+    this.state = { panelChannelId: null, panels: [], grants: {} };
   }
 
   load() {
     try {
-      const saved = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
-      this.state = { ...this.state, ...saved, choices: { ...this.state.choices, ...saved.choices } };
+      const { panelChannelId, panels, grants } = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
+      this.state = { panelChannelId, panels: panels ?? [], grants: grants ?? {} };
     } catch {
       // First run.
     }
@@ -130,41 +131,39 @@ class Notifications {
     const id = interaction.customId;
     if (!id || interaction.guildId !== this.channel.guild.id) return;
     const [scope, kind, ...rest] = id.split(':');
-    const userId = interaction.user.id;
 
-    if (scope === 'relief' && kind === 'duration') return this.remember(interaction, 'duration');
-    if (scope === 'request' && kind === 'type') return this.remember(interaction, 'request');
     if (scope === 'relief' && kind === 'role') return this.toggleRelief(interaction, rest[0]);
     if (scope === 'ironmic') return this.toggleIronMic(interaction);
 
     if (scope === 'request' && kind === 'pos') {
       const position = this.position(rest[0]);
-      const type = this.state.choices.request[userId];
       if (!position) return this.reply(interaction, 'That position is no longer set up.');
-      if (!type) return this.reply(interaction, 'Pick **Break** or **Staffing** in the menu first.');
-      return interaction.showModal(requestModal(type, position));
+      // Showing the form has to be the first response, so the menu is reset when the form is sent.
+      return interaction.showModal(requestModal(interaction.values[0], position));
     }
     if (scope === 'request' && kind === 'modal') return this.submitRequest(interaction, rest[0], rest[1]);
   }
 
-  async remember(interaction, menu) {
-    this.state.choices[menu][interaction.user.id] = interaction.values[0];
-    this.save();
-    await interaction.deferUpdate();
+  /**
+   * Redraw the panel the interaction came from. A menu keeps showing what was picked until the
+   * message is redrawn, and picking the same option again doesn't fire, so this clears it.
+   */
+  resetPanel(interaction, panel) {
+    return interaction.update({ components: [panel] });
   }
 
   async toggleRelief(interaction, roleId) {
     const position = this.position(roleId);
     if (!position) return this.reply(interaction, 'That position is no longer set up.');
-    const choice = this.state.choices.duration[interaction.user.id];
-    const duration = DURATIONS.find((d) => d.value === choice);
-    if (!duration) return this.reply(interaction, 'Pick how long you want notifications for in the menu first.');
+    await this.resetPanel(interaction, reliefPanel(this.config.positions));
 
+    const choice = interaction.values[0];
     const member = interaction.member;
     const key = `${member.id}:${roleId}`;
     const hasRole = member.roles.cache.has(roleId);
-    const action = reliefAction(hasRole, this.state.grants[key], duration.value);
+    const action = reliefAction(hasRole, this.state.grants[key], choice);
 
+    if (action === 'none') return this.reply(interaction, `You weren't getting **${position.label}** notifications.`);
     if (action === 'remove') {
       await member.roles.remove(roleId, 'Relief notifications: opted out');
       delete this.state.grants[key];
@@ -172,6 +171,7 @@ class Notifications {
       return this.reply(interaction, `🔕 You'll no longer get **${position.label}** notifications.`);
     }
 
+    const duration = DURATIONS.find((d) => d.value === choice);
     if (!hasRole) await member.roles.add(roleId, `Relief notifications: ${duration.label}`);
     const expiresAt = duration.hours ? Date.now() + duration.hours * HOUR : null;
     this.state.grants[key] = { userId: member.id, roleId, duration: duration.value, expiresAt };
@@ -179,7 +179,7 @@ class Notifications {
 
     const until = expiresAt
       ? `until <t:${unix(expiresAt)}:t> (<t:${unix(expiresAt)}:R>)`
-      : `permanently. Press **${position.label}** again with Permanent selected to opt out`;
+      : `permanently. Pick Opt out on **${position.label}** to stop`;
     const verb = action === 'change' ? 'now get' : 'get';
     return this.reply(interaction, `🔔 You'll ${verb} **${position.label}** notifications ${until}.`);
   }
@@ -199,6 +199,7 @@ class Notifications {
   async submitRequest(interaction, type, roleId) {
     const position = this.position(roleId);
     if (!position) return this.reply(interaction, 'That position is no longer set up.');
+    if (interaction.isFromMessage()) await this.resetPanel(interaction, requestPanel(this.config.positions));
     const f = interaction.fields;
     const fields =
       type === 'break'
@@ -231,8 +232,10 @@ class Notifications {
     this.save();
   }
 
+  /** A reply only the user sees; a follow-up if the panel was already redrawn. */
   reply(interaction, content) {
-    return interaction.reply({ content, flags: MessageFlags.Ephemeral });
+    const message = { content, flags: MessageFlags.Ephemeral };
+    return interaction.replied || interaction.deferred ? interaction.followUp(message) : interaction.reply(message);
   }
 
   async fail(interaction, err) {
@@ -242,8 +245,7 @@ class Notifications {
       err.code === 50013
         ? "I don't have permission to do that. Staff: give me Manage Roles and move my role above the notification roles."
         : 'Something went wrong. Try again in a moment.';
-    const send = interaction.deferred || interaction.replied ? interaction.followUp.bind(interaction) : interaction.reply.bind(interaction);
-    await send({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
+    await this.reply(interaction, content).catch(() => {});
   }
 }
 

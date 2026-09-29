@@ -27,6 +27,9 @@ test('reliefAction adds, changes and removes', () => {
   // A role with no record counts as permanent.
   assert.equal(reliefAction(true, undefined, 'perm'), 'remove');
   assert.equal(reliefAction(true, undefined, '9'), 'change');
+  // Opt out removes the role, or does nothing if there isn't one.
+  assert.equal(reliefAction(true, { duration: '6' }, 'off'), 'remove');
+  assert.equal(reliefAction(false, undefined, 'off'), 'none');
 });
 
 test('expiredGrants skips permanent and future grants', () => {
@@ -40,9 +43,12 @@ test('expiredGrants skips permanent and future grants', () => {
 
 test('panels and modals pass discord.js validation', () => {
   for (const panel of [reliefPanel(positions), requestPanel(positions), ironMicPanel()]) panel.toJSON();
-  // 6 positions -> two rows of three, after the menu row.
+  // One menu per position, named after it, with the lengths plus Opt out.
   const rows = reliefPanel(positions).toJSON().components.filter((c) => c.type === 1);
-  assert.deepEqual(rows.map((r) => r.components.length), [1, 3, 3]);
+  assert.deepEqual(rows.map((r) => r.components[0].placeholder), positions.map((p) => p.label));
+  assert.deepEqual(rows[0].components[0].options.map((o) => o.value), ['3', '6', '9', '12', 'perm', 'off']);
+  const requestRows = requestPanel(positions).toJSON().components.filter((c) => c.type === 1);
+  assert.deepEqual(requestRows[5].components[0].custom_id, 'request:pos:6');
   requestModal('break', positions[0]).toJSON();
   requestModal('staffing', positions[4]).toJSON();
 });
