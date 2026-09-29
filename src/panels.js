@@ -30,20 +30,13 @@ const STAFFING_AREAS = ['Cab', 'TRACON sector', 'Enroute sector'];
 
 const text = (content) => new TextDisplayBuilder().setContent(content);
 
-/** Position buttons in rows of equal length, at most five to a row (6 -> 3 + 3). */
-function positionRows(positions, prefix) {
-  const perRow = Math.ceil(positions.length / Math.ceil(positions.length / 5));
-  const rows = [];
-  for (let i = 0; i < positions.length; i += perRow) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        positions.slice(i, i + perRow).map((p) =>
-          new ButtonBuilder().setCustomId(`${prefix}:${p.roleId}`).setLabel(p.label).setStyle(ButtonStyle.Secondary),
-        ),
-      ),
-    );
-  }
-  return rows;
+/** One drop-down per position, each in its own row, with the position's name as the placeholder. */
+function positionMenus(positions, prefix, options) {
+  return positions.map((p) =>
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId(`${prefix}:${p.roleId}`).setPlaceholder(p.label).addOptions(options),
+    ),
+  );
 }
 
 function reliefPanel(positions) {
@@ -51,17 +44,14 @@ function reliefPanel(positions) {
     .setAccentColor(0x3498db)
     .addTextDisplayComponents(
       text('## Controller Relief Notification'),
-      text('Click the buttons below to opt in to receiving notifications when controllers request a break or additional staffing for specific positions.'),
-      text('-# Pick how long first, then a position. Press a position again with a different length to change it, or with the same length to opt out.'),
+      text('Use the menus below to opt in to receiving notifications when controllers request a break or additional staffing for specific positions.'),
+      text('-# Pick how long for each position. Pick a different length to change it, or Opt out (or the length you already have) to stop.'),
     )
     .addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('relief:duration')
-          .setPlaceholder('How long?')
-          .addOptions(DURATIONS.map((d) => ({ label: d.label, value: d.value }))),
-      ),
-      ...positionRows(positions, 'relief:role'),
+      ...positionMenus(positions, 'relief:role', [
+        ...DURATIONS.map((d) => ({ label: d.label, value: d.value })),
+        { label: 'Opt out', value: 'off' },
+      ]),
     );
 }
 
@@ -70,18 +60,10 @@ function requestPanel(positions) {
     .setAccentColor(0xe67e22)
     .addTextDisplayComponents(
       text('## Controller Break/Staffing Notification System'),
-      text('Use the buttons below to request a break or additional positions to come online for specific positions.'),
-      text('-# Pick Break or Staffing first, then the position that should be notified.'),
+      text('Use the menus below to request a break or additional positions to come online for specific positions.'),
+      text('-# Pick Break or Staffing on the position that should be notified.'),
     )
-    .addActionRowComponents(
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('request:type')
-          .setPlaceholder('Break or Staffing?')
-          .addOptions(REQUEST_TYPES),
-      ),
-      ...positionRows(positions, 'request:pos'),
-    );
+    .addActionRowComponents(...positionMenus(positions, 'request:pos', REQUEST_TYPES));
 }
 
 function ironMicPanel() {
