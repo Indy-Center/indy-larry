@@ -26,10 +26,10 @@ The bot marks the position as closing 15 minutes before that time. If both times
 If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel, in this order from the top. Relief is last because the mobile app opens a channel at its newest message. Each uses Discord's newer message components, and the bot's replies are visible only to the person who picked or pressed something.
 
 - **Iron Mic Notification Preference**: one button that adds or removes `IRON_MIC_ROLE_ID`.
-- **Controller Break/Staffing Notification System**: one drop-down per position; pick Break or Staffing on the position that should be notified. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working, the area to staff (Cab, TRACON sector, Enroute sector) and a brief optional reason (Staffing). The request is posted in `ALERT_CHANNEL_ID` and pings that position's role.
+- **Controller Break/Staffing Notification System**: one drop-down per area (CAB, TRACON, ENROUTE); pick Break or Staffing on your area. A form asks for the position you need relief from and how long you can stay on (Break), or the position you're working and a brief optional reason (Staffing), plus who to notify out of that area's roles. An area with a single role skips that question and always pings it. The request is posted in `ALERT_CHANNEL_ID` and pings the chosen roles.
 - **Controller Relief Notification**: one drop-down per position. Pick 3, 6, 9 or 12 hours or Permanent to get that position's role. Timed roles come off within 30 seconds of running out, even across restarts. Picking a different length switches to it (a timed role restarts its clock); picking Opt out, or the length you already have, removes the role.
 
-The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Ground:222,S Local:333,A Local:444,T Radar:555,E Radar:666`, so a dev server and the production server can use different roles. The drop-downs follow that order. Each panel is redrawn after a pick, so the drop-downs go back to showing the position names. The panels are edited in place on every start, so a changed setting shows up after a restart.
+The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Ground:222,S Local:333,A Local:444,T Radar:555,E Radar:666`, so a dev server and the production server can use different roles. The drop-downs follow that order. Each request area's roles come from `CAB_ROLES`, `TRACON_ROLES` and `ENROUTE_ROLES` in the same format, e.g. `CAB_ROLES=S-GC:111,A-GC:222,S-LC:333,A-LC:444`; they can be the same roles as `RELIEF_ROLES` under different names. Each panel is redrawn after a pick, so the drop-downs go back to showing the position names. The panels are edited in place on every start, so a changed setting shows up after a restart.
 
 The bot needs **Manage Roles**, and its own role has to sit above every role it hands out. To ping a role it also needs **Mention @everyone, @here and All Roles** in the alert channel, or the role has to allow anyone to mention it. `notify.json` holds the panel message IDs, and who has which role until when. It isn't committed.
 
@@ -92,7 +92,7 @@ Secrets:
 | `ENV_CHANNEL_ID` | Variable | The status channel's ID |
 | `ENV_ARTCC_IDS` | Variable | `ZID` |
 | `ENV_PANEL_CHANNEL_ID`, `ENV_ALERT_CHANNEL_ID` | Variable | Optional; the notification panel and request channels |
-| `ENV_RELIEF_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
+| `ENV_RELIEF_ROLES`, `ENV_CAB_ROLES`, `ENV_TRACON_ROLES`, `ENV_ENROUTE_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 
 To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.

@@ -5,7 +5,7 @@ const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
 const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
-const { Notifications, parseRoles } = require('./notify');
+const { Notifications, parseRoles, parseAreas } = require('./notify');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -29,6 +29,7 @@ const notifyConfig = {
   panelChannelId: process.env.PANEL_CHANNEL_ID,
   alertChannelId: process.env.ALERT_CHANNEL_ID || process.env.PANEL_CHANNEL_ID,
   positions: parseRoles(process.env.RELIEF_ROLES),
+  areas: parseAreas(process.env),
   ironMicRoleId: process.env.IRON_MIC_ROLE_ID,
   stateFile: path.join(__dirname, '..', 'notify.json'),
 };
