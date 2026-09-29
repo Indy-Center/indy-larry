@@ -102,7 +102,14 @@ class Notifications {
     );
     await this.sweep();
     setInterval(() => this.sweep(), SWEEP_MS);
-    console.log(`Notification panels ready in #${this.channel.name}.`);
+    const { positions, areas, ironMicRoleId } = this.config;
+    const shown = [
+      ironMicRoleId ? 'Iron Mic' : null,
+      areas.length ? `Break/Staffing (${areas.map((a) => `${a.label}: ${a.roles.map((r) => r.label).join(', ')}`).join('; ')})` : null,
+      positions.length ? `Relief (${positions.map((p) => p.label).join(', ')})` : null,
+    ].filter(Boolean);
+    console.log(`Notification panels ready in #${this.channel.name}: ${shown.join(' | ') || 'none'}.`);
+    if (!areas.length) console.log('No Break/Staffing panel: CAB_ROLES, TRACON_ROLES and ENROUTE_ROLES are all unset.');
   }
 
   /** Top to bottom. Relief goes last, since the mobile app opens a channel at its newest message. */

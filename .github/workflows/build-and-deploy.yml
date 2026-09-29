@@ -73,24 +73,24 @@ jobs:
         env:
           # One line per setting in deploy/.env.example. Listed by name rather than passing
           # toJSON(secrets): the step only sees what the bot needs, and GitHub flags workflows that
-          # hand every secret to a step that talks to another host. All sixteen are stored as secrets
-          # today; settings that aren't secret can move to repo variables (vars.ENV_*) later.
+          # hand every secret to a step that talks to another host. Each setting can be a repo secret
+          # or a repo variable (the secret wins if both exist); the token is only read as a secret.
           ENV_DISCORD_TOKEN: ${{ secrets.ENV_DISCORD_TOKEN }}
-          ENV_CHANNEL_ID: ${{ secrets.ENV_CHANNEL_ID }}
-          ENV_ARTCC_IDS: ${{ secrets.ENV_ARTCC_IDS }}
-          ENV_POLL_SECONDS: ${{ secrets.ENV_POLL_SECONDS }}
-          ENV_INCLUDE_INACTIVE: ${{ secrets.ENV_INCLUDE_INACTIVE }}
-          ENV_SHOW_NAMES: ${{ secrets.ENV_SHOW_NAMES }}
-          ENV_PLANNED_HOURS: ${{ secrets.ENV_PLANNED_HOURS }}
-          ENV_CLOSING_MINUTES: ${{ secrets.ENV_CLOSING_MINUTES }}
-          ENV_OFFLINE_MINUTES: ${{ secrets.ENV_OFFLINE_MINUTES }}
-          ENV_PANEL_CHANNEL_ID: ${{ secrets.ENV_PANEL_CHANNEL_ID }}
-          ENV_ALERT_CHANNEL_ID: ${{ secrets.ENV_ALERT_CHANNEL_ID }}
-          ENV_RELIEF_ROLES: ${{ secrets.ENV_RELIEF_ROLES }}
-          ENV_CAB_ROLES: ${{ secrets.ENV_CAB_ROLES }}
-          ENV_TRACON_ROLES: ${{ secrets.ENV_TRACON_ROLES }}
-          ENV_ENROUTE_ROLES: ${{ secrets.ENV_ENROUTE_ROLES }}
-          ENV_IRON_MIC_ROLE_ID: ${{ secrets.ENV_IRON_MIC_ROLE_ID }}
+          ENV_CHANNEL_ID: ${{ secrets.ENV_CHANNEL_ID || vars.ENV_CHANNEL_ID }}
+          ENV_ARTCC_IDS: ${{ secrets.ENV_ARTCC_IDS || vars.ENV_ARTCC_IDS }}
+          ENV_POLL_SECONDS: ${{ secrets.ENV_POLL_SECONDS || vars.ENV_POLL_SECONDS }}
+          ENV_INCLUDE_INACTIVE: ${{ secrets.ENV_INCLUDE_INACTIVE || vars.ENV_INCLUDE_INACTIVE }}
+          ENV_SHOW_NAMES: ${{ secrets.ENV_SHOW_NAMES || vars.ENV_SHOW_NAMES }}
+          ENV_PLANNED_HOURS: ${{ secrets.ENV_PLANNED_HOURS || vars.ENV_PLANNED_HOURS }}
+          ENV_CLOSING_MINUTES: ${{ secrets.ENV_CLOSING_MINUTES || vars.ENV_CLOSING_MINUTES }}
+          ENV_OFFLINE_MINUTES: ${{ secrets.ENV_OFFLINE_MINUTES || vars.ENV_OFFLINE_MINUTES }}
+          ENV_PANEL_CHANNEL_ID: ${{ secrets.ENV_PANEL_CHANNEL_ID || vars.ENV_PANEL_CHANNEL_ID }}
+          ENV_ALERT_CHANNEL_ID: ${{ secrets.ENV_ALERT_CHANNEL_ID || vars.ENV_ALERT_CHANNEL_ID }}
+          ENV_RELIEF_ROLES: ${{ secrets.ENV_RELIEF_ROLES || vars.ENV_RELIEF_ROLES }}
+          ENV_CAB_ROLES: ${{ secrets.ENV_CAB_ROLES || vars.ENV_CAB_ROLES }}
+          ENV_TRACON_ROLES: ${{ secrets.ENV_TRACON_ROLES || vars.ENV_TRACON_ROLES }}
+          ENV_ENROUTE_ROLES: ${{ secrets.ENV_ENROUTE_ROLES || vars.ENV_ENROUTE_ROLES }}
+          ENV_IRON_MIC_ROLE_ID: ${{ secrets.ENV_IRON_MIC_ROLE_ID || vars.ENV_IRON_MIC_ROLE_ID }}
         run: |
           # Values are single-quoted so Compose takes them literally, $ and # included. So a value can't
           # contain a single quote or a newline; if one does, this fails before anything reaches the box.
