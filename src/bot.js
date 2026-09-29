@@ -5,6 +5,7 @@ const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
 const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
+const { Notifications, parseRoles } = require('./notify');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -20,6 +21,21 @@ const config = {
 
 if (!config.token || !config.channelId) {
   console.error('DISCORD_TOKEN and CHANNEL_ID must be set (see .env.example).');
+  process.exit(1);
+}
+
+// Notification panels (relief/staffing roles and Iron Mic). Off unless PANEL_CHANNEL_ID is set.
+const notifyConfig = {
+  panelChannelId: process.env.PANEL_CHANNEL_ID,
+  alertChannelId: process.env.ALERT_CHANNEL_ID || process.env.PANEL_CHANNEL_ID,
+  positions: parseRoles(process.env.RELIEF_ROLES),
+  ironMicRoleId: process.env.IRON_MIC_ROLE_ID,
+  stateFile: path.join(__dirname, '..', 'notify.json'),
+};
+
+// The status loop deletes every other message the bot has in CHANNEL_ID, so panels and alerts need their own channel.
+if ([notifyConfig.panelChannelId, notifyConfig.alertChannelId].includes(config.channelId)) {
+  console.error('PANEL_CHANNEL_ID and ALERT_CHANNEL_ID must be different from CHANNEL_ID.');
   process.exit(1);
 }
 
@@ -166,6 +182,10 @@ client.once(Events.ClientReady, async () => {
   await refresh();
   setInterval(refresh, config.pollSeconds * 1000);
   console.log(`Polling every ${config.pollSeconds}s${config.artccIds.length ? ` for ${config.artccIds.join(', ')}` : ''}.`);
+
+  if (notifyConfig.panelChannelId) {
+    await new Notifications(client, notifyConfig).start().catch((err) => console.error('Notification panels failed to start:', err.message));
+  }
 });
 
 client.login(config.token);
