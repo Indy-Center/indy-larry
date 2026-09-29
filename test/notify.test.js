@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseRoles, parseAreas, reliefAction, expiredGrants } = require('../src/notify');
-const { reliefPanel, hoursModal, parseHours, requestPanel, ironMicPanel, requestModal, requestAlert } = require('../src/panels');
+const { reliefPanel, hoursModal, parseHours, requestPanel, ironMicPanel, requestModal, requestAlert, alertStatus } = require('../src/panels');
 
 const positions = parseRoles('S Ground:1, A Ground:2, S Local:3, A Local:4, T Radar:5, E Radar:6');
 const areas = parseAreas({ CAB_ROLES: 'S-GC:1,A-GC:2,S-LC:3,A-LC:4', TRACON_ROLES: 'T-RC:5', ENROUTE_ROLES: 'E-RC:6' });
@@ -79,11 +79,61 @@ test('request forms ask who to notify only when the area has a choice', () => {
   assert.equal(picker(requestModal('staffing', tracon)), undefined);
 });
 
+const record = (over = {}) => ({
+  channelId: '9',
+  type: 'staffing',
+  area: 'CAB',
+  userId: '42',
+  fields: { position: 'IND_TWR', reason: '' },
+  roleIds: ['1', '2'],
+  createdAt: 1_000_000,
+  expiresAt: 4_600_000,
+  status: 'open',
+  claimedBy: null,
+  ...over,
+});
+const buttons = (msg) => msg.components.flatMap((row) => row.toJSON().components.map((c) => [c.custom_id, c.label]));
+
 test('requestAlert pings only the picked roles', () => {
-  const alert = requestAlert('staffing', cab, cab.roles.slice(0, 2), '42', { position: 'IND_TWR', reason: '' });
+  const alert = requestAlert(record());
   assert.equal(alert.content, '<@&1> <@&2>');
   assert.deepEqual(alert.allowedMentions, { roles: ['1', '2'] });
   const embed = alert.embeds[0].toJSON();
   assert.equal(embed.title, 'Staffing requested · CAB');
   assert.equal(embed.fields.length, 2); // blank reason left out
+});
+
+test('an open alert has Claim and Cancel and says when it expires', () => {
+  const alert = requestAlert(record());
+  assert.deepEqual(buttons(alert), [['alert:claim', 'Claim'], ['alert:cancel', 'Cancel']]);
+  assert.match(alert.embeds[0].toJSON().description, /<t:4600:R>/);
+  assert.equal(requestAlert(record({ expiresAt: null })).embeds[0].toJSON().description, undefined);
+});
+
+test('a claimed alert is green, names the claimer and offers Unclaim', () => {
+  const alert = requestAlert(record({ status: 'claimed', claimedBy: '7' }));
+  const embed = alert.embeds[0].toJSON();
+  assert.equal(embed.color, 0x2ecc71);
+  assert.equal(embed.title, '✅ Claimed · Staffing requested · CAB');
+  assert.deepEqual(embed.fields.at(-1), { name: 'Claimed by', value: '<@7>' });
+  assert.deepEqual(buttons(alert), [['alert:claim', 'Unclaim'], ['alert:cancel', 'Cancel']]);
+  assert.deepEqual(requestAlert(record({ status: 'claimed', claimedBy: '7' }), { final: true }).components, []);
+});
+
+test('cancelled and expired alerts are grey with no buttons', () => {
+  for (const [status, word] of [['cancelled', 'Cancelled'], ['expired', 'Expired']]) {
+    const alert = requestAlert(record({ status, type: 'break', fields: { position: 'IND_GND', stay: '30m' } }));
+    const embed = alert.embeds[0].toJSON();
+    assert.equal(embed.color, 0x95a5a6);
+    assert.equal(embed.title, `${word} · Break requested · CAB`);
+    assert.deepEqual(alert.components, []);
+    assert.equal(alert.content, '<@&1> <@&2>');
+  }
+});
+
+test('alertStatus expires only open alerts past their time', () => {
+  assert.equal(alertStatus(record(), 4_599_999), 'open');
+  assert.equal(alertStatus(record(), 4_600_000), 'expired');
+  assert.equal(alertStatus(record({ status: 'claimed', claimedBy: '7' }), 9_000_000), 'claimed');
+  assert.equal(alertStatus(record({ expiresAt: null }), 9_000_000), 'open');
 });

@@ -31,6 +31,7 @@ const notifyConfig = {
   positions: parseRoles(process.env.RELIEF_ROLES),
   areas: parseAreas(process.env),
   ironMicRoleId: process.env.IRON_MIC_ROLE_ID,
+  expireMinutes: Math.max(0, Number(process.env.REQUEST_EXPIRE_MINUTES || 60) || 0),
   stateFile: path.join(__dirname, '..', 'notify.json'),
 };
 

@@ -143,13 +143,31 @@ function requestModal(type, area) {
   );
 }
 
-/** The alert posted for a submitted request. The role mentions go in the content so they ping. */
-function requestAlert(type, area, roles, userId, fields) {
-  const embed = new EmbedBuilder().setTimestamp();
+const CLAIMED_COLOR = 0x2ecc71;
+const CLOSED_COLOR = 0x95a5a6;
+
+/**
+ * What an alert shows right now: an open alert past its expiry time counts as expired.
+ * @returns {'open'|'claimed'|'cancelled'|'expired'}
+ */
+function alertStatus(alert, now) {
+  return alert.status === 'open' && alert.expiresAt != null && alert.expiresAt <= now ? 'expired' : alert.status;
+}
+
+/**
+ * The alert posted for a submitted request, drawn from its stored record. The role mentions go in the
+ * content so they ping; edits never ping again. Open and claimed alerts get Claim/Unclaim and Cancel
+ * buttons unless `final` is set; cancelled and expired ones get none.
+ * @param {{ type: string, area: string, userId: string, fields: object, roleIds: string[], createdAt: number,
+ *   expiresAt: number|null, status: 'open'|'claimed'|'cancelled'|'expired', claimedBy: string|null }} alert
+ */
+function requestAlert(alert, { final = false } = {}) {
+  const { type, area, userId, fields, status } = alert;
+  const embed = new EmbedBuilder().setTimestamp(alert.createdAt);
   if (type === 'break') {
     embed
       .setColor(0xf1c40f)
-      .setTitle(`Break requested · ${area.label}`)
+      .setTitle(`Break requested · ${area}`)
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Relief needed on', value: fields.position, inline: true },
@@ -158,15 +176,37 @@ function requestAlert(type, area, roles, userId, fields) {
   } else {
     embed
       .setColor(0xe67e22)
-      .setTitle(`Staffing requested · ${area.label}`)
+      .setTitle(`Staffing requested · ${area}`)
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Working', value: fields.position, inline: true },
       );
     if (fields.reason) embed.addFields({ name: 'Reason', value: fields.reason });
   }
-  const ids = roles.map((r) => r.roleId);
-  return { content: ids.map((id) => `<@&${id}>`).join(' '), embeds: [embed], allowedMentions: { roles: ids } };
+
+  const title = embed.data.title;
+  if (status === 'claimed') {
+    embed.setColor(CLAIMED_COLOR).setTitle(`✅ Claimed · ${title}`).addFields({ name: 'Claimed by', value: `<@${alert.claimedBy}>` });
+  } else if (status === 'cancelled' || status === 'expired') {
+    embed.setColor(CLOSED_COLOR).setTitle(`${status === 'cancelled' ? 'Cancelled' : 'Expired'} · ${title}`);
+  } else if (alert.expiresAt != null) {
+    embed.setDescription(`-# Expires <t:${Math.floor(alert.expiresAt / 1000)}:R> if nobody claims it`);
+  }
+
+  const live = !final && (status === 'open' || status === 'claimed');
+  const components = live
+    ? [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('alert:claim')
+            .setLabel(status === 'claimed' ? 'Unclaim' : 'Claim')
+            .setStyle(status === 'claimed' ? ButtonStyle.Secondary : ButtonStyle.Success),
+          new ButtonBuilder().setCustomId('alert:cancel').setLabel('Cancel').setStyle(ButtonStyle.Danger),
+        ),
+      ]
+    : [];
+  const ids = alert.roleIds;
+  return { content: ids.map((id) => `<@&${id}>`).join(' '), embeds: [embed], components, allowedMentions: { roles: ids } };
 }
 
 module.exports = {
@@ -180,4 +220,5 @@ module.exports = {
   ironMicPanel,
   requestModal,
   requestAlert,
+  alertStatus,
 };
