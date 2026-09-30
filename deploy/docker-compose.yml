@@ -1,6 +1,7 @@
 # The bot's deploy/docker-compose.yml. build-and-deploy.yml rsyncs deploy/ to
-# /home/deploy/apps/vnas-discord-bot/ on the Vanderbilt VPS, so the compose project is named after the repo.
-# Renaming the repo renames the project and its volumes; the old volumes stay behind.
+# /home/deploy/apps/indy-larry/ on the Vanderbilt VPS, so the compose project is named after the repo.
+# Renaming the repo renames the project and its volumes; the old container keeps running and its volumes stay behind,
+# so `docker compose down` the old project on the VPS (see README, Deployment).
 # The bot only makes outbound calls (Discord, vNAS, VATSIM), so it has no Traefik labels,
 # doesn't join traefik-shared and publishes no ports.
 services:

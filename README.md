@@ -2,7 +2,7 @@
 
 A Discord bot that shows which Indy Center (ZID) facilities are staffed on vNAS. It polls the vNAS controller feed every 30 seconds and keeps one embed per facility up to date in a Discord channel.
 
-[![Build and Deploy](https://github.com/Indy-Center/vnas-discord-bot/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/Indy-Center/vnas-discord-bot/actions/workflows/build-and-deploy.yml)
+[![Build and Deploy](https://github.com/Indy-Center/indy-larry/actions/workflows/build-and-deploy.yml/badge.svg)](https://github.com/Indy-Center/indy-larry/actions/workflows/build-and-deploy.yml)
 
 ## Embeds
 
@@ -43,7 +43,7 @@ The bot needs **Manage Roles**, and its own role has to sit above every role it 
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests.
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
-- `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/vnas-discord-bot/` on the VPS. Keeps `state.json` in the `bot-state` volume.
+- `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
 - `.github/workflows/ci.yml`: tests, compose validation and an image build, on every pull request.
 - `.github/workflows/build-and-deploy.yml`: runs CI, pushes the image to GHCR, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
@@ -79,12 +79,14 @@ npm test
 
 The bot runs on the Vanderbilt VPS, following the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/). It only makes outbound calls (Discord, vNAS, VATSIM), so it has no Traefik labels, doesn't join `traefik-shared` and publishes no ports.
 
-`build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then rsyncs `deploy/` to `/home/deploy/apps/vnas-discord-bot/`, writes `.env` there from the `ENV_*` secrets and variables, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later.
+`build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then rsyncs `deploy/` to `/home/deploy/apps/indy-larry/`, writes `.env` there from the `ENV_*` secrets and variables, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later.
+
+The app directory and compose project are named after the repository, so renaming the repo deploys a second copy next to the old one, with its own empty volume. Two copies with the same token repost the panels and double up status embeds. After a rename, stop the old one on the VPS: `cd ~/apps/<old name> && docker compose down`.
 
 Secrets:
 
 - **Deploy credentials**: the `VANDERBILT_HOST` and `VANDERBILT_DEPLOY_USER` organization variables and the `VANDERBILT_DEPLOY_SSH_KEY` and `VANDERBILT_KNOWN_HOSTS` organization secrets. An org admin adds this repository to the repository access of all four.
-- **Runtime settings**: one repository secret or variable per setting in [`deploy/.env.example`](deploy/.env.example), named `ENV_<NAME>`, plus a matching line in the **Write .env** step of `.github/workflows/build-and-deploy.yml`. Either kind works (a secret wins if both exist), except `ENV_DISCORD_TOKEN`, which must be a secret. Every deploy writes the settings that are set to `/home/deploy/apps/vnas-discord-bot/.env` as `NAME='value'`, readable only by `deploy`; unset ones are left out so the defaults apply. A value can't contain a single quote or a newline; the deploy fails with the setting's name before anything reaches the VPS.
+- **Runtime settings**: one repository secret or variable per setting in [`deploy/.env.example`](deploy/.env.example), named `ENV_<NAME>`, plus a matching line in the **Write .env** step of `.github/workflows/build-and-deploy.yml`. Either kind works (a secret wins if both exist), except `ENV_DISCORD_TOKEN`, which must be a secret. Every deploy writes the settings that are set to `/home/deploy/apps/indy-larry/.env` as `NAME='value'`, readable only by `deploy`; unset ones are left out so the defaults apply. A value can't contain a single quote or a newline; the deploy fails with the setting's name before anything reaches the VPS.
 
 | Name | Kind | Value |
 | ---- | ---- | ----- |

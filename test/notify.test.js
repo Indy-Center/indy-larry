@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseRoles, parseAreas, reliefAction, expiredGrants } = require('../src/notify');
+const { parseRoles, parseAreas, reliefAction, expiredGrants, isPanelMessage } = require('../src/notify');
 const { reliefPanel, hoursModal, parseHours, requestPanel, ironMicPanel, requestModal, requestAlert, alertStatus } = require('../src/panels');
 
 const positions = parseRoles('S Ground:1, A Ground:2, S Local:3, A Local:4, T Radar:5, E Radar:6');
@@ -136,4 +136,11 @@ test('alertStatus expires only open alerts past their time', () => {
   assert.equal(alertStatus(record(), 4_600_000), 'expired');
   assert.equal(alertStatus(record({ status: 'claimed', claimedBy: '7' }), 9_000_000), 'claimed');
   assert.equal(alertStatus(record({ expiresAt: null }), 9_000_000), 'open');
+});
+
+test('isPanelMessage matches the panels but not request alerts', () => {
+  const json = (components) => components.map((c) => c.toJSON());
+  for (const panel of [reliefPanel(positions), requestPanel(areas), ironMicPanel()]) assert.ok(isPanelMessage(json([panel])));
+  assert.equal(isPanelMessage(json(requestAlert(record()).components)), false);
+  assert.equal(isPanelMessage([]), false);
 });

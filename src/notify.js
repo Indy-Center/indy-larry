@@ -71,6 +71,15 @@ function expiredGrants(grants, now) {
   return Object.entries(grants).filter(([, g]) => g.expiresAt != null && g.expiresAt <= now);
 }
 
+/**
+ * Whether a message's components (as JSON) are one of the panels: any relief or request menu, or the
+ * Iron Mic button. Request alerts can share the panel channel, so they must not match.
+ */
+function isPanelMessage(components) {
+  const walk = (c) => /^(relief:role:|request:area:|ironmic:toggle$)/.test(c.custom_id ?? '') || (c.components ?? []).some(walk);
+  return components.some(walk);
+}
+
 const unix = (ms) => Math.floor(ms / 1000);
 
 class Notifications {
@@ -142,7 +151,10 @@ class Notifications {
     const ids = this.state.panelChannelId === this.channel.id ? this.state.panels : [];
     const found = [];
     for (const id of ids) {
-      const msg = await this.channel.messages.fetch(id).catch(() => null);
+      const msg = await this.channel.messages.fetch(id).catch((err) => {
+        if (err.code !== 10008) console.error(`Could not fetch panel ${id}:`, err.message); // 10008 = deleted
+        return null;
+      });
       if (msg) found.push(msg);
     }
 
@@ -158,6 +170,23 @@ class Notifications {
     }
     this.state.panelChannelId = this.channel.id;
     this.save();
+    await this.removeStrayPanels();
+  }
+
+  /** Delete panels the bot posted but no longer tracks (lost notify.json, or a second copy of the bot). */
+  async removeStrayPanels() {
+    const recent = await this.channel.messages.fetch({ limit: 50 }).catch((err) => {
+      console.error('Could not check for stray panels:', err.message);
+      return new Map();
+    });
+    const keep = new Set(this.state.panels);
+    let removed = 0;
+    for (const msg of recent.values()) {
+      if (msg.author.id !== this.client.user.id || keep.has(msg.id)) continue;
+      if (!isPanelMessage(msg.components.map((c) => c.toJSON()))) continue;
+      await msg.delete().then(() => removed++, (err) => console.error(`Could not delete stray panel ${msg.id}:`, err.message));
+    }
+    if (removed) console.log(`Removed ${removed} stray panel(s); another copy of the bot may be running.`);
   }
 
   position(roleId) {
@@ -394,4 +423,4 @@ class Notifications {
   }
 }
 
-module.exports = { Notifications, parseRoles, parseAreas, reliefAction, expiredGrants };
+module.exports = { Notifications, parseRoles, parseAreas, reliefAction, expiredGrants, isPanelMessage };
