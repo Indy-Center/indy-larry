@@ -33,6 +33,47 @@ The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Gro
 
 The bot needs **Manage Roles**, and its own role has to sit above every role it hands out. To ping a role it also needs **Mention @everyone, @here and All Roles** in the alert channel, or the role has to allow anyone to mention it. `notify.json` holds the panel message IDs, who has which role until when, and the request alerts that can still be claimed or cancelled. It isn't committed.
 
+## Sending messages from other apps
+
+Other Indy Center Workers can send Discord messages as Larry instead of keeping their own webhooks: to a channel by name, or as a DM to a user. A small Cloudflare Worker in `worker/` (`indy-larry`) does the sending with Larry's token, through Discord's REST API, so the bot on the VPS isn't involved. Following the [RPC vs Queue pattern](https://tech.flyindycenter.com/patterns/rpc-vs-queue/), callers reach it over a service binding; it has no HTTP route and isn't on the internet.
+
+```jsonc
+// caller's wrangler.jsonc
+"services": [{ "binding": "LARRY", "service": "indy-larry" }]
+```
+
+```ts
+import type { LarryBinding } from '@indy-center/larry'; // sibling checkout: "file:../indy-larry/worker"
+
+// RPC: sends now and returns { channelId, messageId }; throws if Discord refuses it.
+await env.LARRY.send({
+  channel: 'events',
+  content: `<@${userId}> your session is confirmed`,
+  embeds: [{ title: 'FNO', color: 0x5865f2 }],
+});
+await env.LARRY.sendDirect({ userId, content: 'Your training session starts in an hour.' });
+
+// Queue: returns once queued; delivery retries rate limits and Discord outages.
+await env.LARRY.enqueue({ channel: 'events', content: 'FNO starts in one hour! @everyone', allowedMentions: { parse: ['everyone'] } });
+await env.LARRY.enqueueDirect({ userId, embeds: [{ title: 'Request approved' }] });
+```
+
+- **Channels**: callers name a channel from `SEND_CHANNELS` (`name:channelId`, like `RELIEF_ROLES`), e.g. `SEND_CHANNELS=events:111,training:222`. Any other name, or a channel ID, is refused, so a channel moves by changing the setting and redeploying, with no change to the callers. The deploy fails on a malformed entry, a repeated name, or `CHANNEL_ID`, where the status loop would delete the message.
+- **DMs** take the user's Discord ID. The user has to share a server with Larry and accept DMs from it; if not, `sendDirect()` throws and a queued DM is dropped.
+- **Mentions**: `allowedMentions` goes to Discord as `allowed_mentions`, unchanged. Without it, the users mentioned in the content (`<@id>`) are pinged and nobody else is.
+- **Checks**: every method throws straight away for an unknown channel, a bad user ID, an empty message, more than 2000 characters or more than 10 embeds; the queue methods queue nothing then.
+- **Delivery**: `send()` waits out a rate limit of 5 seconds or less once, then throws. The queue (`larry-messages`) waits for Discord's `retry_after` on a rate limit, backs off on 5xx and network errors, and drops a message Discord refuses (4xx, e.g. missing permissions), logging why. After 5 attempts a message moves to `larry-messages-dlq`. Each queued message carries a nonce, so a retry can't post twice.
+
+The bot needs **View Channel**, **Send Messages** and **Embed Links** in each channel in `SEND_CHANNELS`.
+
+First time only, before the first deploy that includes the Worker:
+
+1. Create the queues (needs `npx wrangler login` with the IndyCenter account): `cd worker && npx wrangler queues create larry-messages && npx wrangler queues create larry-messages-dlq`
+2. Add the `CLOUDFLARE_WORKERS_API_KEY` repository secret: a Cloudflare API token with **Workers Scripts:Edit** and **Queues:Edit**.
+3. Add the `ENV_SEND_CHANNELS` repository variable.
+
+To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev.vars` with a test token and test channels, and run `npx wrangler dev`. A caller Worker run alongside it (`npx wrangler dev -c ../caller/wrangler.jsonc -c wrangler.jsonc`) can then use its `LARRY` binding.
+
 ## Project layout
 
 - `src/bot.js`: logs in, polls every `POLL_SECONDS`, and posts, edits and deletes embeds.
@@ -42,11 +83,12 @@ The bot needs **Manage Roles**, and its own role has to sit above every role it 
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests.
+- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint and queue consumer, `src/send.ts` checks and sends messages, `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
-- `.github/workflows/ci.yml`: tests, compose validation and an image build, on every pull request.
-- `.github/workflows/build-and-deploy.yml`: runs CI, pushes the image to GHCR, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH.
+- `.github/workflows/ci.yml`: tests, compose validation and an image build, plus the Worker's typecheck, tests and bundle, on every pull request.
+- `.github/workflows/build-and-deploy.yml`: runs CI, pushes the image to GHCR, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH. Alongside that it deploys the Worker to Cloudflare.
 
 ## Local development
 
@@ -96,6 +138,8 @@ Secrets:
 | `ENV_PANEL_CHANNEL_ID`, `ENV_ALERT_CHANNEL_ID` | Variable | Optional; the notification panel and request channels |
 | `ENV_RELIEF_ROLES`, `ENV_CAB_ROLES`, `ENV_TRACON_ROLES`, `ENV_ENROUTE_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
+| `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; read by the Worker deploy, not written to `.env` on the VPS |
+| `CLOUDFLARE_WORKERS_API_KEY` | Secret | Cloudflare API token for the Worker deploy (Workers Scripts:Edit, Queues:Edit) |
 
 To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.
 
