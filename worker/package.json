@@ -1,0 +1,32 @@
+{
+  "name": "@indy-center/larry",
+  "version": "1.0.0",
+  "description": "Send Discord messages as Larry from other Indy Center Workers, over RPC or a queue",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:lib": "tsc -p tsconfig.lib.json"
+  },
+  "dependencies": {
+    "discord-api-types": "^0.38.56"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260930.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.145.0"
+  }
+}

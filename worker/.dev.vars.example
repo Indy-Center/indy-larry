@@ -1,0 +1,5 @@
+# For wrangler dev: copy to .dev.vars and fill in. Use a test server's token and channels.
+# Larry's bot token (the same one the VPS bot uses)
+DISCORD_TOKEN=
+# Channels callers may post to, as name:channelId, comma-separated, e.g. events:111,training:222
+SEND_CHANNELS=
