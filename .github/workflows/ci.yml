@@ -65,6 +65,11 @@ jobs:
 
       - run: npm test
 
+      # Builds the published @indy-center/larry types and lists what npm would publish, so a broken
+      # client package fails here rather than at npm publish.
+      - name: Client package
+        run: npm run build:lib && npm pack --dry-run
+
       # Bundles the Worker without uploading it, so a bad wrangler.jsonc or import fails here, not at deploy.
       - name: Worker bundles
         run: npx wrangler deploy --dry-run --outdir dist-check

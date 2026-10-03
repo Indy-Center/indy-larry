@@ -1,4 +1,5 @@
 node_modules/
+worker/dist/
 .env
 state.json
 notify.json
