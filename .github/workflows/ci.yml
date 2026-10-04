@@ -37,7 +37,7 @@ jobs:
       - name: Image loads the bot
         run: |
           docker run --rm --entrypoint node vnas-discord-bot:ci -e "
-            require('./src/feed'); require('./src/status'); require('./src/embeds'); require('./src/notify'); require('discord.js');
+            require('./src/feed'); require('./src/status'); require('./src/embeds'); require('./src/notify'); require('./src/ironmicCommand'); require('discord.js');
             const { parseClosing } = require('./src/status');
             const at = parseClosing('Online until 8pm ET', new Date('2026-12-01T22:00:00Z')).at;
             if (at.toISOString() !== '2026-12-02T01:00:00.000Z') throw new Error('Time zone data missing: ' + at.toISOString());

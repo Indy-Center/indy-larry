@@ -3,3 +3,4 @@ worker/dist/
 .env
 state.json
 notify.json
+ironmic.json

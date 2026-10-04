@@ -130,6 +130,7 @@ jobs:
           ENV_ENROUTE_ROLES: ${{ secrets.ENV_ENROUTE_ROLES || vars.ENV_ENROUTE_ROLES }}
           ENV_REQUEST_EXPIRE_MINUTES: ${{ secrets.ENV_REQUEST_EXPIRE_MINUTES || vars.ENV_REQUEST_EXPIRE_MINUTES }}
           ENV_IRON_MIC_ROLE_ID: ${{ secrets.ENV_IRON_MIC_ROLE_ID || vars.ENV_IRON_MIC_ROLE_ID }}
+          ENV_IRON_MIC_CHANNEL_ID: ${{ secrets.ENV_IRON_MIC_CHANNEL_ID || vars.ENV_IRON_MIC_CHANNEL_ID }}
           ENV_SEND_CHANNELS: ${{ secrets.ENV_SEND_CHANNELS || vars.ENV_SEND_CHANNELS }}
         run: |
           # Values are single-quoted so Compose takes them literally, $ and # included. So a value can't
