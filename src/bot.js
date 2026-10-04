@@ -43,11 +43,13 @@ if ([notifyConfig.panelChannelId, notifyConfig.alertChannelId].includes(config.c
 }
 
 // /ironmic: Iron Mic leaderboard (totals from vNAS Stats). Always on; IRON_MIC_ROLE_ID (if set) is pinged when one starts.
+// Its embeds go above the status embeds in CHANNEL_ID, or in IRON_MIC_CHANNEL_ID if set.
 const ironMicConfig = {
   stateFile: path.join(__dirname, '..', 'ironmic.json'),
+  channelId: process.env.IRON_MIC_CHANNEL_ID || config.channelId,
   statusChannelId: config.channelId,
+  onPosted: () => refresh(), // a new leaderboard message in CHANNEL_ID pushes the status embeds back under it
   roleId: process.env.IRON_MIC_ROLE_ID,
-  showNames: config.showNames,
   // Towers and TRACONs from the vNAS ARTCC data, for /ironmic start's facility list.
   facilities: () =>
     [...(cache.index?.facilities.values() ?? [])]
@@ -90,6 +92,7 @@ function readState() {
 }
 let channel;
 let running = false;
+let again = false; // refresh() was asked for while one was running
 const board = new StatusBoard(config);
 
 // Bookings and top-down coverage need the ARTCC's facility data, so they only work when
@@ -126,9 +129,10 @@ async function loadExistingMessages() {
   const state = readState();
   activeSince = new Map(Object.entries(state.activeSince));
   const known = new Map(Object.entries(state.messages).map(([key, id]) => [id, key]));
+  const leaderboard = ironMic?.messageIn(config.channelId);
   const messages = await channel.messages.fetch({ limit: 100 });
   for (const msg of messages.values()) {
-    if (msg.author.id !== client.user.id) continue;
+    if (msg.author.id !== client.user.id || msg.id === leaderboard) continue;
     const key = known.get(msg.id);
     if (key) posted.set(key, { message: msg, signature: null });
     else await msg.delete().catch(() => {});
@@ -166,13 +170,24 @@ async function remove(key) {
 }
 
 async function refresh() {
-  if (running) return;
+  if (running) {
+    again = true;
+    return;
+  }
   running = true;
   try {
     const feed = await fetchFeed();
     if (trackActivations(feed, activeSince, new Date(), firstRefresh, config.artccIds)) saveState();
     firstRefresh = false;
-    await ironMic?.tick(feed); // catches its own errors, so the status embeds still update
+    await ironMic?.tick(); // catches its own errors, so the status embeds still update
+
+    // The Iron Mic leaderboard sits on top. If it's newer than any status message (just started, reposted,
+    // or the order got lost), take the status messages down so they're posted again below it.
+    const top = ironMic?.messageIn(config.channelId);
+    if (top && [...posted.values()].some(({ message }) => BigInt(message.id) < BigInt(top))) {
+      for (const key of [...posted.keys()]) await remove(key);
+    }
+
     const facilities = groupByFacility(feed, { ...config, activeSince });
     const { bookings, facilityTree } = await getReferenceData();
     const entries = board.update(facilities, bookings, new Date(), facilityTree);
@@ -189,6 +204,10 @@ async function refresh() {
   } finally {
     running = false;
   }
+  if (again) {
+    again = false;
+    await refresh();
+  }
 }
 
 client.once(Events.ClientReady, async () => {
@@ -196,8 +215,8 @@ client.once(Events.ClientReady, async () => {
   channel = await client.channels.fetch(config.channelId);
   if (!channel?.isTextBased()) throw new Error(`Channel ${config.channelId} is not a text channel`);
 
+  ironMic = new IronMic(client, ironMicConfig); // before loadExistingMessages, so its message isn't cleaned up
   await loadExistingMessages();
-  ironMic = new IronMic(client, ironMicConfig);
   await ironMic.start(channel.guild).catch((err) => {
     console.error('/ironmic failed to start:', err.message);
     ironMic = null;

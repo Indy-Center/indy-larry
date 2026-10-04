@@ -35,15 +35,14 @@ The bot needs **Manage Roles**, and its own role has to sit above every role it 
 
 ## Iron Mic leaderboard
 
-Staff run `/ironmic` in any channel except `CHANNEL_ID` to keep a leaderboard of how long a facility's positions were staffed:
+Staff run `/ironmic` in any channel except `CHANNEL_ID` to keep a leaderboard of how long a facility's positions were staffed. The leaderboard is one message at the top of `CHANNEL_ID`, above the status embeds, with an embed per position in the order Center, Approach, Local, Ground, Delivery. Set `IRON_MIC_CHANNEL_ID` to post it somewhere else instead, such as a test channel.
 
-- `/ironmic start facility:LEX positions:local, approach` posts the leaderboard in that channel and pings `IRON_MIC_ROLE_ID`, if set. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Positions are `delivery`, `ground`, `local`, `approach` and `center` (or `del`, `gnd`, `twr`, `app`, `ctr`), any combination.
-- `/ironmic end` stops it. The leaderboard turns gold and shows the final totals within a minute.
+- `/ironmic start facility:LEX positions:local, approach` posts the leaderboard (reposting the status embeds below it) and pings `IRON_MIC_ROLE_ID`, if set, in the channel it was run in. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Positions are `center`, `approach`, `local`, `ground` and `delivery` (or `ctr`, `app`, `twr`, `gnd`, `del`), any combination.
+- `/ironmic end` stops it. The leaderboard shows the final totals within a minute.
 - `/ironmic clear` deletes the leaderboard and its log, after `end`. Only one Iron Mic runs at a time.
 
-Totals come from [vNAS Stats](https://vnas-stats.com) ([source](https://github.com/kengreim/vnas-stats)), fetched every 5 minutes for the time since `start`. It counts active controllers and groups time by callsign prefix and suffix, ignoring the middle part, so `LEX_APP` and `LEX_N_APP` are both LEX approach and two controllers on it at once count once. Its list only has the network's top callsigns; a position that didn't make it shows as "Under" the last one listed. The live 🟢/🔴 line under each position comes from Larry's own feed check and counts each controller's primary, active position only.
-
-By default only members with **Manage Server** see the command; change who can use it under **Server Settings → Integrations → Larry**. The bot needs **View Channel**, **Send Messages** and **Embed Links** where it's run, and the role ping needs the same mention permission as the request alerts. `ironmic.json` holds the running Iron Mic and its message ID, so a restart edits the same message. It isn't committed.
+Totals come from [vNAS Stats](https://vnas-stats.com) ([source](https://github.com/kengreim/vnas-stats)), fetched every 5 minutes for the time since `start`. It counts active controllers and groups time by callsign prefix and suffix, ignoring the middle part, so `LEX_APP` and `LEX_N_APP` are both LEX approach and two controllers on it at once count once. Its list only has the network's top callsigns; a position that didn't make it shows as "Under" the last one listed.
+By default only members with **Manage Server** see the command; change who can use it under **Server Settings → Integrations → Larry**. The bot needs **View Channel**, **Send Messages** and **Embed Links** where it's run and in the leaderboard's channel, and the role ping needs the same mention permission as the request alerts. `ironmic.json` holds the running Iron Mic and its message ID, so a restart edits the same message. It isn't committed.
 
 ## Sending messages from other apps
 
@@ -150,6 +149,7 @@ Secrets:
 | `ENV_ARTCC_IDS` | Variable | `ZID` |
 | `ENV_PANEL_CHANNEL_ID`, `ENV_ALERT_CHANNEL_ID` | Variable | Optional; the notification panel and request channels |
 | `ENV_RELIEF_ROLES`, `ENV_CAB_ROLES`, `ENV_TRACON_ROLES`, `ENV_ENROUTE_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
+| `ENV_IRON_MIC_CHANNEL_ID` | Variable | Optional; posts the Iron Mic leaderboard outside `CHANNEL_ID`, e.g. while testing |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 | `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; the Worker deploy reads it (the VPS bot ignores its `.env` copy) |
 | `CLOUDFLARE_WORKERS_API_KEY` | Secret | Cloudflare API token for the Worker deploy (Workers Scripts:Edit, Queues:Edit) |

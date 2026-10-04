@@ -1,16 +1,17 @@
 // The /ironmic command and its leaderboard embed. The counting itself is in ironmic.js.
 //
-//   /ironmic start facility:LEX positions:local, approach   posts the embed in this channel and starts counting
+//   /ironmic start facility:LEX positions:local, approach   posts the embeds and starts counting
 //   /ironmic end                                            stops counting; the embed shows the final standings
 //   /ironmic clear                                          deletes the embed and the log, ready for the next one
 //
-// Totals come from vNAS Stats every few minutes; who's on right now comes from the vNAS feed Larry
-// already polls. One competition at a time. It's saved to ironmic.json, so a restart edits the same message.
+// The embeds go in IRON_MIC_CHANNEL_ID (the status channel unless set), one message with an embed per
+// position; bot.js keeps that message above the status embeds when they share a channel.
+// Totals come from vNAS Stats every few minutes, checked on Larry's feed poll. One competition at a time. It's saved to ironmic.json, so a restart edits the same message.
 
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, parsePositions, staffedPositions, fetchStats, readStats, newCompetition, competitionEmbed } = require('./ironmic');
+const { POSITIONS, parsePositions, fetchStats, readStats, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -25,7 +26,7 @@ const COMMAND = {
     {
       type: 1,
       name: 'start',
-      description: 'Start an Iron Mic and post its leaderboard in this channel',
+      description: 'Start an Iron Mic and post its leaderboard',
       options: [
         { type: 3, name: 'facility', description: 'Facility ID, e.g. LEX', required: true, autocomplete: true, max_length: 4 },
         { type: 3, name: 'positions', description: 'Positions to track, e.g. local, approach', required: true, autocomplete: true, max_length: 100 },
@@ -51,9 +52,10 @@ const POSITION_SETS = [
 class IronMic {
   /**
    * @param {import('discord.js').Client} client
-   * @param {{ stateFile: string, statusChannelId: string, roleId?: string, showNames?: boolean,
-   *           facilities?: () => {id: string, name: string}[] }} config
-   *   facilities: the facilities to suggest and allow (from the vNAS ARTCC data); empty allows any ID.
+   * @param {{ stateFile: string, channelId: string, statusChannelId: string, roleId?: string,
+   *           facilities?: () => {id: string, name: string}[], onPosted?: () => void }} config
+   *   channelId: where the embeds go. facilities: the facilities to suggest and allow (from the vNAS
+   *   ARTCC data); empty allows any ID. onPosted: called after the embeds go out as a new message.
    */
   constructor(client, config) {
     this.client = client;
@@ -61,6 +63,13 @@ class IronMic {
     this.competition = null;
     this.signature = null;
     this.lastFetchAttempt = 0;
+    this.load();
+  }
+
+  /** The leaderboard's message ID if it's posted in channelId, so the status loop can keep it on top. */
+  messageIn(channelId) {
+    const c = this.competition;
+    return c?.messageId && c.channelId === channelId ? c.messageId : null;
   }
 
   load() {
@@ -81,7 +90,6 @@ class IronMic {
 
   /** Registers /ironmic in the server and starts answering it. */
   async start(guild) {
-    this.load();
     this.guildId = guild.id;
     // Creating a command with an existing name updates it, and leaves the server's other commands alone.
     await guild.commands.create(COMMAND);
@@ -93,11 +101,10 @@ class IronMic {
   }
 
   /** Called with every feed check. Errors are caught here so they never hold up the status embeds. */
-  async tick(feed, now = Date.now()) {
+  async tick(now = Date.now()) {
     const c = this.competition;
     if (!c || c.final) return;
     try {
-      if (!c.endedAt) c.live = staffedPositions(feed, c.facilityId, c.positions);
       await this.refreshTotals(now);
       await this.render();
     } catch (err) {
@@ -123,28 +130,42 @@ class IronMic {
     this.save();
   }
 
-  /** Edits the leaderboard when it changed, and reposts it if someone deleted it. */
+  /** Edits the leaderboard when it changed, and reposts it if someone deleted it or the channel changed. */
   async render() {
     const c = this.competition;
     if (!c) return;
-    const embed = competitionEmbed(c, this.config);
-    const signature = JSON.stringify(embed);
+    if (c.channelId !== this.config.channelId) {
+      await this.deleteMessage(c);
+      c.channelId = this.config.channelId;
+      c.messageId = null;
+    }
+    const embeds = competitionEmbeds(c);
+    const signature = JSON.stringify(embeds);
     if (signature === this.signature && c.messageId) return;
 
     const channel = await this.client.channels.fetch(c.channelId);
     if (c.messageId) {
       try {
-        await channel.messages.edit(c.messageId, { embeds: [embed] });
+        await channel.messages.edit(c.messageId, { embeds });
         this.signature = signature;
         return;
       } catch (err) {
         if (err.code !== 10008) throw err; // 10008 = Unknown Message (deleted) -> repost
       }
     }
-    const message = await channel.send({ embeds: [embed] });
+    const message = await channel.send({ embeds });
     c.messageId = message.id;
     this.signature = signature;
     this.save();
+    this.config.onPosted?.();
+  }
+
+  async deleteMessage(c) {
+    if (!c.messageId) return;
+    const channel = await this.client.channels.fetch(c.channelId).catch(() => null);
+    await channel?.messages.delete(c.messageId).catch((err) => {
+      if (err.code !== 10008) throw err;
+    });
   }
 
   async handle(interaction) {
@@ -187,7 +208,7 @@ class IronMic {
       return this.reply(interaction, `There's already an Iron Mic for **${c.facilityId}**. ${next}`);
     }
     if (interaction.channelId === this.config.statusChannelId) {
-      return this.reply(interaction, 'Run this in another channel; the status channel clears out every other message I post.');
+      return this.reply(interaction, 'Run this in another channel; my ping would land between the status embeds.');
     }
 
     const facilityId = interaction.options.getString('facility').trim().toUpperCase();
@@ -208,7 +229,7 @@ class IronMic {
       facilityId,
       facilityName: facility?.name ?? null,
       positions,
-      channelId: interaction.channelId,
+      channelId: this.config.channelId,
       startedAt: Date.now(),
     });
     try {
@@ -234,7 +255,6 @@ class IronMic {
     if (c.endedAt) return this.reply(interaction, 'It has already ended. `/ironmic clear` removes the leaderboard.');
 
     c.endedAt = Date.now();
-    c.live = Object.fromEntries(c.positions.map((k) => [k, []]));
     this.lastFetchAttempt = 0; // fetch the final totals on the next check
     this.save();
     await this.render();
@@ -249,12 +269,7 @@ class IronMic {
     if (!c) return this.reply(interaction, 'There\'s nothing to clear.');
     if (!c.endedAt) return this.reply(interaction, '`/ironmic end` it first, so the final standings are posted.');
 
-    if (c.messageId) {
-      const channel = await this.client.channels.fetch(c.channelId).catch(() => null);
-      await channel?.messages.delete(c.messageId).catch((err) => {
-        if (err.code !== 10008) throw err;
-      });
-    }
+    await this.deleteMessage(c);
     this.competition = null;
     this.signature = null;
     this.lastFetchAttempt = 0;

@@ -1,24 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, staffedPositions, statsUrl, readStats, newCompetition, formatDuration, competitionEmbed } = require('../src/ironmic');
+const { parsePositions, statsUrl, readStats, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const T0 = Date.parse('2026-10-01T00:00:00Z');
-
-/** A vNAS feed controller. */
-function controller({ cid, callsign, facilityId = 'LEX', type, active = true, primaryActive = true, extra = [] }) {
-  return {
-    artccId: 'ZID',
-    isActive: active,
-    isObserver: false,
-    vatsimData: { cid, realName: `Controller ${cid}`, callsign, facilityType: type },
-    positions: [
-      { isPrimary: true, isActive: primaryActive, facilityId, defaultCallsign: callsign },
-      ...extra.map((e) => ({ isPrimary: false, isActive: true, ...e })),
-    ],
-  };
-}
 
 /** A vNAS Stats /v1/callsigns/top response. */
 const stats = (callsigns, elapsedHours = 72) => ({
@@ -30,30 +16,12 @@ const stats = (callsigns, elapsedHours = 72) => ({
 });
 
 test('parsePositions reads names and aliases, in a fixed order', () => {
-  assert.deepEqual(parsePositions('local, approach'), ['local', 'approach']);
-  assert.deepEqual(parsePositions('APP twr'), ['local', 'approach']);
-  assert.deepEqual(parsePositions('approach and local and local'), ['local', 'approach']);
-  assert.deepEqual(parsePositions('del/gnd + tower'), ['delivery', 'ground', 'local']);
+  assert.deepEqual(parsePositions('local, approach'), ['approach', 'local']);
+  assert.deepEqual(parsePositions('twr APP'), ['approach', 'local']);
+  assert.deepEqual(parsePositions('local and approach and local'), ['approach', 'local']);
+  assert.deepEqual(parsePositions('del/gnd + tower, ctr'), ['center', 'local', 'ground', 'delivery']);
   assert.throws(() => parsePositions('local, oceanic'), /"oceanic" isn't a position/);
   assert.throws(() => parsePositions('  '), /at least one/);
-});
-
-test("staffedPositions lists who's on each position's primary, active position", () => {
-  const feed = {
-    controllers: [
-      controller({ cid: 1, callsign: 'LEX_TWR', type: 'Tower' }),
-      controller({ cid: 2, callsign: 'LEX_N_APP', type: 'ApproachDeparture' }),
-      controller({ cid: 3, callsign: 'LEX_APP', type: 'ApproachDeparture' }),
-      controller({ cid: 4, callsign: 'LEX_GND', type: 'Ground' }), // not tracked
-      controller({ cid: 5, callsign: 'SDF_TWR', facilityId: 'SDF', type: 'Tower' }),
-      controller({ cid: 6, callsign: 'LEX_1_TWR', type: 'Tower', active: false }),
-      controller({ cid: 7, callsign: 'LEX_2_TWR', type: 'Tower', primaryActive: false }),
-      controller({ cid: 8, callsign: 'IND_CTR', facilityId: 'ZID', type: 'Center', extra: [{ facilityId: 'LEX', defaultCallsign: 'LEX_APP' }] }),
-    ],
-  };
-  const staffed = staffedPositions(feed, 'LEX', ['local', 'approach']);
-  assert.deepEqual(staffed.local.map((p) => p.callsign), ['LEX_TWR']);
-  assert.deepEqual(staffed.approach.map((p) => p.callsign), ['LEX_APP', 'LEX_N_APP']);
 });
 
 test('statsUrl sends whole-second UTC times', () => {
@@ -77,34 +45,33 @@ test('readStats picks out the facility, and an unlisted position is under the cu
   assert.deepEqual(readStats(stats([]), 'LEX', ['local']).positions, { local: { ms: 0 } });
 });
 
-test('the embed shows totals, percentages and who is on', () => {
-  const comp = newCompetition({ facilityId: 'LEX', facilityName: 'Lexington ATCT/TRACON', positions: ['local', 'approach'], channelId: 'c', startedAt: T0 });
-  assert.match(competitionEmbed(comp).fields[0].value, /Waiting for the first totals/);
+test('one embed per position, top-down, with totals, percentages and network rank', () => {
+  const comp = newCompetition({ facilityId: 'LEX', facilityName: 'Lexington ATCT/TRACON', positions: ['approach', 'local'], channelId: 'c', startedAt: T0 });
+  assert.match(competitionEmbeds(comp)[0].description, /Waiting for the first totals/);
 
   comp.totals = readStats(stats([['BOS', 'TWR', 19.25], ['LEX', 'TWR', 18], ['HSV', 'APP', 2]]), 'LEX', comp.positions);
-  comp.live.local = [{ cid: '1', name: 'Controller 1', callsign: 'LEX_TWR' }];
-  const e = competitionEmbed(comp);
-  assert.equal(e.title, '🎙️ Lexington ATCT/TRACON Iron Mic');
-  assert.equal(e.fields[0].name, 'Local (LEX_TWR)');
-  assert.equal(e.fields[0].value, '**18h 00m** staffed · 25%\n🏆 **#2** on the network · 1h 15m behind BOS_TWR\n🟢 **LEX_TWR** Controller 1');
-  assert.equal(e.fields[1].value, "**Under 2h 00m** staffed · outside the network's top 3\n🔴 Unstaffed");
-  assert.equal(e.color, 0x2ecc71);
-  assert.equal(competitionEmbed(comp, { showNames: false }).fields[0].value.split('\n')[2], '🟢 **LEX_TWR** 1');
+  const [app, twr] = competitionEmbeds(comp);
+  assert.equal(app.title, '🎙️ Lexington ATCT/TRACON Iron Mic · Approach (LEX_APP)');
+  assert.equal(app.description, "**Under 2h 00m** staffed · outside the network's top 3");
+  assert.equal(app.footer, undefined);
+  assert.equal(twr.title, '🎙️ Lexington ATCT/TRACON Iron Mic · Local (LEX_TWR)');
+  assert.equal(twr.description, '**18h 00m** staffed · 25%\n🏆 **#2** on the network · 1h 15m behind BOS_TWR');
+  assert.equal(twr.timestamp, new Date(T0).toISOString());
+  assert.equal(twr.color, 0xf1c40f);
 });
 
 test('an ended competition says so until its final totals are in', () => {
   const comp = newCompetition({ facilityId: 'LEX', positions: ['local'], channelId: 'c', startedAt: T0 });
   comp.endedAt = T0 + 72 * HOUR;
   comp.totals = readStats(stats([['LEX', 'TWR', 36]]), 'LEX', comp.positions);
-  let e = competitionEmbed(comp);
-  assert.equal(e.title, '🏁 LEX Iron Mic: final results');
-  assert.match(e.description, /Fetching the final totals/);
-  assert.equal(e.fields[0].value, '**36h 00m** staffed · 50%\n🏆 **#1** on the network'); // no live line once ended
+  let [e] = competitionEmbeds(comp);
+  assert.equal(e.title, '🏁 LEX Iron Mic · Local (LEX_TWR): final');
+  assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network\n*Fetching the final totals…*');
+  assert.match(e.footer.text, /ended/);
 
   comp.final = true;
-  e = competitionEmbed(comp);
-  assert.doesNotMatch(e.description, /Fetching/);
-  assert.equal(e.color, 0xf1c40f);
+  [e] = competitionEmbeds(comp);
+  assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network');
 });
 
 test('formatDuration', () => {

@@ -8,14 +8,13 @@
 const STATS_URL = 'https://api.vnas-stats.com/v1/callsigns/top';
 const MINUTE = 60_000;
 
-// Position names staff type in /ironmic, in display order. suffix is the callsign suffix vNAS Stats groups by;
-// facilityType is what the vNAS feed calls it, for the live "who's on" line.
+// Position names staff type in /ironmic, in display order (top-down). suffix is the callsign suffix vNAS Stats groups by.
 const POSITIONS = {
-  delivery: { label: 'Delivery', suffix: 'DEL', facilityType: 'ClearanceDelivery', aliases: ['del', 'clearance', 'cd'] },
-  ground: { label: 'Ground', suffix: 'GND', facilityType: 'Ground', aliases: ['gnd', 'gc'] },
-  local: { label: 'Local', suffix: 'TWR', facilityType: 'Tower', aliases: ['tower', 'twr', 'lc'] },
-  approach: { label: 'Approach', suffix: 'APP', facilityType: 'ApproachDeparture', aliases: ['app', 'radar', 'tracon'] },
-  center: { label: 'Center', suffix: 'CTR', facilityType: 'Center', aliases: ['ctr', 'enroute'] },
+  center: { label: 'Center', suffix: 'CTR', aliases: ['ctr', 'enroute'] },
+  approach: { label: 'Approach', suffix: 'APP', aliases: ['app', 'radar', 'tracon'] },
+  local: { label: 'Local', suffix: 'TWR', aliases: ['tower', 'twr', 'lc'] },
+  ground: { label: 'Ground', suffix: 'GND', aliases: ['gnd', 'gc'] },
+  delivery: { label: 'Delivery', suffix: 'DEL', aliases: ['del', 'clearance', 'cd'] },
 };
 
 /**
@@ -37,29 +36,6 @@ function parsePositions(text) {
     picked.add(key);
   }
   return Object.keys(POSITIONS).filter((k) => picked.has(k));
-}
-
-/**
- * Who is on each tracked position right now, from the vNAS feed Larry already polls.
- * Only a controller's primary position counts, and only while they're active on it.
- * @returns {Record<string, {cid: string, name: string, callsign: string}[]>}
- */
-function staffedPositions(feed, facilityId, keys) {
-  const result = Object.fromEntries(keys.map((k) => [k, []]));
-  for (const c of feed.controllers ?? []) {
-    if (c.isObserver || !c.isActive) continue;
-    const primary = c.positions?.find((p) => p.isPrimary) ?? c.positions?.[0];
-    if (!primary || primary.facilityId !== facilityId || primary.isActive === false) continue;
-    const key = keys.find((k) => POSITIONS[k].facilityType === c.vatsimData?.facilityType);
-    if (!key) continue;
-    result[key].push({
-      cid: String(c.vatsimData.cid),
-      name: c.vatsimData.realName || String(c.vatsimData.cid),
-      callsign: c.vatsimData.callsign || primary.defaultCallsign,
-    });
-  }
-  for (const list of Object.values(result)) list.sort((a, b) => a.callsign.localeCompare(b.callsign));
-  return result;
 }
 
 function statsUrl(start, end) {
@@ -118,7 +94,6 @@ function newCompetition({ facilityId, facilityName = null, positions, channelId,
     endedAt: null,
     totals: null, // readStats() output, refreshed every few minutes
     final: false, // true once totals have been fetched for the whole run after it ended
-    live: Object.fromEntries(positions.map((k) => [k, []])),
   };
 }
 
@@ -135,16 +110,16 @@ function percent(ms, elapsed) {
   return Math.min(100, Math.round((ms / elapsed) * 100));
 }
 
-const unix = (ms) => Math.floor(ms / 1000);
-
-/** The leaderboard embed, as plain JSON (discord.js accepts it as-is). */
-function competitionEmbed(comp, { showNames = true } = {}) {
+/**
+ * One embed per tracked position, in POSITIONS order (Center first), as plain JSON (discord.js accepts it
+ * as-is). They go out together in one message. The last one's footer says when it started or ended.
+ */
+function competitionEmbeds(comp) {
   const ended = Boolean(comp.endedAt);
-  const who = (p) => (showNames && p.name ? p.name : p.cid);
-  const anyoneOn = comp.positions.some((k) => comp.live[k]?.length);
   const totals = comp.totals;
+  const name = comp.facilityName ?? comp.facilityId;
 
-  const fields = comp.positions.map((key) => {
+  const embeds = comp.positions.map((key) => {
     const t = totals?.positions[key];
     let line;
     if (!t) line = '*Waiting for the first totals…*';
@@ -158,38 +133,32 @@ function competitionEmbed(comp, { showNames = true } = {}) {
       else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${t.lead.callsign}`;
       lines.push(rank);
     }
-    if (!ended) {
-      const on = comp.live[key] ?? [];
-      lines.push(on.length ? `🟢 ${on.map((p) => `**${p.callsign}** ${who(p)}`).join(', ')}` : '🔴 Unstaffed');
-    }
-    return { name: `${POSITIONS[key].label} (${comp.facilityId}_${POSITIONS[key].suffix})`, value: lines.join('\n'), inline: false };
+    if (ended && !comp.final) lines.push('*Fetching the final totals…*');
+
+    const position = `${POSITIONS[key].label} (${comp.facilityId}_${POSITIONS[key].suffix})`;
+    return {
+      color: 0xf1c40f,
+      title: ended ? `🏁 ${name} Iron Mic · ${position}: final` : `🎙️ ${name} Iron Mic · ${position}`,
+      description: lines.join('\n'),
+    };
   });
 
-  const name = comp.facilityName ?? comp.facilityId;
-  let description = ended
-    ? `<t:${unix(comp.startedAt)}:D> to <t:${unix(comp.endedAt)}:D>`
-    : `Started <t:${unix(comp.startedAt)}:D> (<t:${unix(comp.startedAt)}:R>)`;
-  if (ended && !comp.final) description += '\n*Fetching the final totals…*';
-  else if (!ended && totals) description += ` · totals updated <t:${unix(totals.fetchedAt)}:R>`;
-
-  return {
-    color: ended ? 0xf1c40f : anyoneOn ? 0x2ecc71 : 0x4a5568,
-    title: ended ? `🏁 ${name} Iron Mic: final results` : `🎙️ ${name} Iron Mic`,
-    description,
-    fields,
-    footer: { text: 'Totals from vnas-stats.com. Several controllers on one position count once.' },
-  };
+  const last = embeds[embeds.length - 1];
+  if (last) {
+    last.footer = { text: `Totals from vnas-stats.com · Iron Mic ${ended ? 'ended' : 'started'}` };
+    last.timestamp = new Date(comp.endedAt ?? comp.startedAt).toISOString();
+  }
+  return embeds;
 }
 
 module.exports = {
   STATS_URL,
   POSITIONS,
   parsePositions,
-  staffedPositions,
   statsUrl,
   fetchStats,
   readStats,
   newCompetition,
   formatDuration,
-  competitionEmbed,
+  competitionEmbeds,
 };
