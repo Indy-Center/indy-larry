@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, resolveCallsigns, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { parsePositions, resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -62,6 +62,16 @@ test('resolveCallsigns: center from the ARTCC, approach from the TRACON over it,
   assert.deepEqual(resolveCallsigns(null, 'LEX', ['center', 'approach']), { center: ['LEX_CTR'], approach: ['LEX_APP'] });
 });
 
+test('resolvePlaces names each position after the facility that owns it, without the facility type', () => {
+  const index = zid();
+  const names = { ZID: 'Indianapolis ARTCC', CMH: 'Columbus ATCT/TRACON', DAY: 'Dayton ATCT', LEX: 'Lexington ATCT/TRACON', PKB: 'Parkersburg ATCT' };
+  for (const f of index.facilities.values()) f.name = names[f.id];
+  assert.deepEqual(resolvePlaces(index, 'LEX', ['center', 'approach', 'local']), { center: 'Indianapolis', approach: 'Lexington', local: 'Lexington' });
+  assert.deepEqual(resolvePlaces(index, 'DAY', ['approach', 'ground']), { approach: 'Columbus', ground: 'Dayton' });
+  assert.deepEqual(resolvePlaces(null, 'LEX', ['local'], 'Lexington ATCT/TRACON'), { local: 'Lexington' });
+  assert.deepEqual(resolvePlaces(null, 'LEX', ['local']), { local: 'LEX' });
+});
+
 test('statsUrl sends whole-second UTC times', () => {
   assert.equal(
     statsUrl(T0 + 123, T0 + 2 * HOUR),
@@ -70,40 +80,50 @@ test('statsUrl sends whole-second UTC times', () => {
 });
 
 test('readStats picks out the callsigns, and an unlisted position is under the cut-off', () => {
-  const r = readStats(stats([['SAN', 'GND', 20], ['LEX', 'TWR', 10], ['LEX', 'GND', 4], ['SDF', 'APP', 3], ['HSV', 'APP', 2]]), {
+  const r = readStats(stats([['SAN', 'TWR', 20], ['LEX', 'TWR', 10], ['LEX', 'GND', 4], ['SDF', 'APP', 3], ['HSV', 'APP', 2]]), {
     local: ['LEX_TWR'],
     approach: ['LEX_APP'],
   });
   assert.deepEqual(r.positions, {
-    local: { ms: 10 * HOUR, rank: 2, ahead: { callsign: 'SAN_GND', gapMs: 10 * HOUR } },
+    local: { ms: 10 * HOUR, rank: 2, ahead: { callsign: 'SAN_TWR', gapMs: 10 * HOUR } },
     approach: { underMs: 2 * HOUR },
   });
   assert.equal(r.ranked, 5);
-  const first = readStats(stats([['SDF', 'APP', 3], ['LEX', 'TWR', 4.5]]), { local: ['LEX_TWR'] }).positions.local;
-  assert.deepEqual(first, { ms: 4.5 * HOUR, rank: 1, lead: { callsign: 'SDF_APP', gapMs: 1.5 * HOUR } });
+  const first = readStats(stats([['SDF', 'TWR', 3], ['LEX', 'TWR', 4.5]]), { local: ['LEX_TWR'] }).positions.local;
+  assert.deepEqual(first, { ms: 4.5 * HOUR, rank: 1, lead: { callsign: 'SDF_TWR', gapMs: 1.5 * HOUR } });
   assert.equal(r.elapsedMs, 72 * HOUR);
   assert.equal(r.fetchedAt, Date.parse('2026-10-04T00:00:00.123Z'));
   assert.deepEqual(readStats(stats([]), { local: ['LEX_TWR'] }).positions, { local: { ms: 0 } });
 });
 
 test('readStats adds up a position with several callsigns and ranks the total against the rest', () => {
-  const r = readStats(stats([['BOS', 'TWR', 12], ['CMH', 'APP', 8], ['SDF', 'APP', 7], ['DAY', 'APP', 3]]), { approach: ['CMH_APP', 'DAY_APP'] });
-  assert.deepEqual(r.positions.approach, { ms: 11 * HOUR, rank: 2, ahead: { callsign: 'BOS_TWR', gapMs: 1 * HOUR } });
+  const r = readStats(stats([['NY', 'APP', 12], ['CMH', 'APP', 8], ['SDF', 'APP', 7], ['DAY', 'APP', 3]]), { approach: ['CMH_APP', 'DAY_APP'] });
+  assert.deepEqual(r.positions.approach, { ms: 11 * HOUR, rank: 2, ahead: { callsign: 'NY_APP', gapMs: 1 * HOUR } });
+});
+
+test('readStats ranks a position against its own kind only, like vnas-stats.com', () => {
+  const r = readStats(stats([['BOS', 'TWR', 18.2], ['MEM', 'GND', 13.6], ['ZTL', 'CTR', 30], ['DFW', 'TWR', 15], ['LEX', 'TWR', 13.6], ['SLC', 'TWR', 12.5]]), {
+    local: ['LEX_TWR'],
+  });
+  assert.equal(r.positions.local.rank, 3);
+  assert.equal(r.positions.local.tied, undefined);
+  assert.equal(r.positions.local.ahead.callsign, 'DFW_TWR');
+  assert.equal(formatDuration(r.positions.local.ahead.gapMs), '1h 24m');
 });
 
 test('callsigns with the same time are tied, and a tie for #1 has no lead', () => {
-  const r = readStats(stats([['SEA', 'CTR', 0.5], ['ATL', 'APP', 0.5], ['LEX', 'TWR', 0.5], ['BOS', 'GND', 0.4], ['LEX', 'GND', 0.4], ['MIA', 'TWR', 0.3]]), {
-    local: ['LEX_TWR'],
-    ground: ['LEX_GND'],
-  });
+  const r = readStats(
+    stats([['SEA', 'TWR', 0.5], ['ATL', 'TWR', 0.5], ['LEX', 'TWR', 0.5], ['ATL', 'GND', 0.5], ['BOS', 'GND', 0.4], ['LEX', 'GND', 0.4], ['MIA', 'TWR', 0.3]]),
+    { local: ['LEX_TWR'], ground: ['LEX_GND'] },
+  );
   assert.deepEqual(r.positions.local, { ms: 0.5 * HOUR, rank: 1, tied: 2 });
-  assert.deepEqual(r.positions.ground, { ms: 0.4 * HOUR, rank: 4, tied: 1, ahead: { callsign: 'LEX_TWR', gapMs: 0.1 * HOUR } });
+  assert.deepEqual(r.positions.ground, { ms: 0.4 * HOUR, rank: 2, tied: 1, ahead: { callsign: 'ATL_GND', gapMs: 0.1 * HOUR } });
 
   const comp = newCompetition({ facilityId: 'LEX', positions: ['local', 'ground'], callsigns: { local: ['LEX_TWR'], ground: ['LEX_GND'] }, channelId: 'c', startedAt: T0 });
   comp.totals = r;
   const [twr, gnd] = competitionEmbeds(comp);
   assert.equal(twr.description.split('\n')[1], '🏆 **#1** on the network · tied with 2 others');
-  assert.equal(gnd.description.split('\n')[1], '🏆 **#4** on the network · tied with 1 other · 6m behind LEX_TWR');
+  assert.equal(gnd.description.split('\n')[1], '🏆 **#2** on the network · tied with 1 other · 6m behind ATL_GND');
 });
 
 test('one embed per position, top-down, with totals, percentages and network rank', () => {
@@ -119,16 +139,16 @@ test('one embed per position, top-down, with totals, percentages and network ran
 
   comp.totals = readStats(stats([['BOS', 'TWR', 19.25], ['LEX', 'TWR', 18], ['HSV', 'APP', 2]]), comp.callsigns);
   const [app, twr] = competitionEmbeds(comp);
-  assert.equal(app.title, '🎙️ Lexington ATCT/TRACON Iron Mic · Approach (LEX_APP)');
+  assert.equal(app.title, '🎙️ Lexington Approach Iron Mic');
   assert.equal(app.description, "**Under 2h 00m** staffed · outside the network's top 3");
   assert.equal(app.footer, undefined);
-  assert.equal(twr.title, '🎙️ Lexington ATCT/TRACON Iron Mic · Local (LEX_TWR)');
+  assert.equal(twr.title, '🎙️ Lexington Local Iron Mic');
   assert.equal(twr.description, '**18h 00m** staffed · 25%\n🏆 **#2** on the network · 1h 15m behind BOS_TWR');
   assert.equal(twr.timestamp, new Date(T0).toISOString());
   assert.equal(twr.color, 0xf1c40f);
 
-  const cmh = newCompetition({ facilityId: 'DAY', positions: ['approach'], callsigns: { approach: ['CMH_APP', 'DAY_APP'] }, channelId: 'c', startedAt: T0 });
-  assert.equal(competitionEmbeds(cmh)[0].title, '🎙️ DAY Iron Mic · Approach (CMH_APP, DAY_APP)');
+  const cmh = newCompetition({ facilityId: 'DAY', positions: ['approach'], callsigns: { approach: ['CMH_APP', 'DAY_APP'] }, places: { approach: 'Columbus' }, channelId: 'c', startedAt: T0 });
+  assert.equal(competitionEmbeds(cmh)[0].title, '🎙️ Columbus Approach Iron Mic');
 });
 
 test('an ended competition says so until its final totals are in', () => {
@@ -136,7 +156,7 @@ test('an ended competition says so until its final totals are in', () => {
   comp.endedAt = T0 + 72 * HOUR;
   comp.totals = readStats(stats([['LEX', 'TWR', 36]]), comp.callsigns);
   let [e] = competitionEmbeds(comp);
-  assert.equal(e.title, '🏁 LEX Iron Mic · Local (LEX_TWR): final');
+  assert.equal(e.title, '🏁 LEX Local Iron Mic: final');
   assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network\n*Fetching the final totals…*');
   assert.match(e.footer.text, /ended/);
 

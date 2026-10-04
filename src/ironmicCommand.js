@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, parsePositions, resolveCallsigns, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
+const { POSITIONS, parsePositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -107,9 +107,11 @@ class IronMic {
     const c = this.competition;
     if (!c || c.final) return;
     try {
-      if (!c.callsigns) {
-        // Started before callsigns were worked out from the vNAS data; work them out now.
-        c.callsigns = resolveCallsigns(this.config.facilityIndex?.(), c.facilityId, c.positions);
+      if (!c.callsigns || !c.places) {
+        // Started before callsigns and titles were worked out from the vNAS data; work them out now.
+        const index = this.config.facilityIndex?.();
+        c.callsigns ??= resolveCallsigns(index, c.facilityId, c.positions);
+        c.places = resolvePlaces(index, c.facilityId, c.positions, c.facilityName);
         this.lastFetchAttempt = 0;
         this.save();
       }
@@ -238,7 +240,8 @@ class IronMic {
     } catch (err) {
       return this.reply(interaction, err.message);
     }
-    const callsigns = resolveCallsigns(this.config.facilityIndex?.(), facilityId, positions);
+    const index = this.config.facilityIndex?.();
+    const callsigns = resolveCallsigns(index, facilityId, positions);
     const missing = positions.filter((k) => !callsigns[k].length).map((k) => POSITIONS[k].label);
     if (missing.length) {
       return this.reply(interaction, `**${facilityId}** has no ${missing.join(' or ')} position in the vNAS data.`);
@@ -249,6 +252,7 @@ class IronMic {
       facilityName: facility?.name ?? null,
       positions,
       callsigns,
+      places: resolvePlaces(index, facilityId, positions, facility?.name),
       channelId: this.config.channelId,
       startedAt: monthStart(Date.now()), // counts the whole month so far, like vnas-stats.com's month view
     });
