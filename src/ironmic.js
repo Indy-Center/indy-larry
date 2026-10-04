@@ -95,7 +95,8 @@ async function fetchStats(start, end) {
 /**
  * Picks the tracked positions out of a vNAS Stats response, with each one's network rank.
  * A position's time is the sum of its callsigns (CMH approach = CMH_APP + DAY_APP). The response ranks
- * the network's top callsigns by time, so a listed position gets its rank among the other callsigns and
+ * the network's top callsigns by time, so a listed position gets its rank among the other callsigns of
+ * its kind (towers among TWR, approaches among APP and DEP) and
  * the gap to the one just above it (or, at #1, its lead over #2). Callsigns with the same time share a
  * rank and count as tied; a tie for #1 has no lead. A position with none of its callsigns
  * listed had less time than the last one listed; that's kept as "under", rather than shown as zero.
@@ -115,7 +116,8 @@ function readStats(stats, callsigns) {
       continue;
     }
     const seconds = mine.reduce((sum, c) => sum + c.durationSeconds, 0);
-    const others = list.filter((c) => !mine.includes(c));
+    // Ranked like vnas-stats.com: against the same kind of position only, so a tower against towers.
+    const others = list.filter((c) => !mine.includes(c) && POSITIONS[key].suffixes.includes(c.suffix));
     const above = others.filter((c) => c.durationSeconds > seconds);
     const tied = others.filter((c) => c.durationSeconds === seconds).length;
     const t = { ms: seconds * 1000, rank: above.length + 1 };
