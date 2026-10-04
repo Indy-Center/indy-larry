@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, parsePositions, fetchStats, readStats, newCompetition, competitionEmbeds } = require('./ironmic');
+const { POSITIONS, parsePositions, resolveCallsigns, fetchStats, readStats, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -53,9 +53,11 @@ class IronMic {
   /**
    * @param {import('discord.js').Client} client
    * @param {{ stateFile: string, channelId: string, statusChannelId: string, roleId?: string,
-   *           facilities?: () => {id: string, name: string}[], onPosted?: () => void }} config
+   *           facilities?: () => {id: string, name: string}[], facilityIndex?: () => object|null,
+   *           onPosted?: () => void }} config
    *   channelId: where the embeds go. facilities: the facilities to suggest and allow (from the vNAS
-   *   ARTCC data); empty allows any ID. onPosted: called after the embeds go out as a new message.
+   *   ARTCC data); empty allows any ID. facilityIndex: fetchFacilityIndex() output, to work out each
+   *   position's callsigns. onPosted: called after the embeds go out as a new message.
    */
   constructor(client, config) {
     this.client = client;
@@ -105,6 +107,12 @@ class IronMic {
     const c = this.competition;
     if (!c || c.final) return;
     try {
+      if (!c.callsigns) {
+        // Started before callsigns were worked out from the vNAS data; work them out now.
+        c.callsigns = resolveCallsigns(this.config.facilityIndex?.(), c.facilityId, c.positions);
+        this.lastFetchAttempt = 0;
+        this.save();
+      }
       await this.refreshTotals(now);
       await this.render();
     } catch (err) {
@@ -123,7 +131,7 @@ class IronMic {
     if (end - c.startedAt < 60_000) return; // vNAS Stats needs the range to have started in the past
     this.lastFetchAttempt = now;
 
-    const totals = readStats(await fetchStats(c.startedAt, end), c.facilityId, c.positions);
+    const totals = readStats(await fetchStats(c.startedAt, end), c.callsigns);
     if (this.competition !== c) return; // cleared while the request was out
     c.totals = totals;
     if (c.endedAt) c.final = true;
@@ -224,11 +232,17 @@ class IronMic {
     } catch (err) {
       return this.reply(interaction, err.message);
     }
+    const callsigns = resolveCallsigns(this.config.facilityIndex?.(), facilityId, positions);
+    const missing = positions.filter((k) => !callsigns[k].length).map((k) => POSITIONS[k].label);
+    if (missing.length) {
+      return this.reply(interaction, `**${facilityId}** has no ${missing.join(' or ')} position in the vNAS data.`);
+    }
 
     this.competition = newCompetition({
       facilityId,
       facilityName: facility?.name ?? null,
       positions,
+      callsigns,
       channelId: this.config.channelId,
       startedAt: Date.now(),
     });
