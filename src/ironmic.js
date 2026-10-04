@@ -40,6 +40,39 @@ function parsePositions(text) {
 }
 
 /**
+ * Which facility in the vNAS ARTCC data owns each position for facilityId (see resolveCallsigns()), as
+ * position -> facility (undefined if there's none, like a tower with no TRACON over it). Null when
+ * facilityId isn't in the data.
+ */
+function ownerFacilities(index, facilityId) {
+  const facilities = [...(index?.facilities?.values() ?? [])];
+  const facility = facilities.find((f) => f.id === facilityId);
+  if (!facility) return null;
+
+  const parentOf = (f) => facilities.find((p) => p.childKeys.includes(f.key));
+  let artcc = facility;
+  while (artcc && artcc.positionType !== 'Artcc') artcc = parentOf(artcc);
+  const tracon = [facility, parentOf(facility)].find((f) => f?.positionType === 'Tracon');
+  return (key) => (key === 'center' ? artcc : key === 'approach' ? tracon : facility);
+}
+
+/** "Lexington ATCT/TRACON" -> "Lexington", "Indianapolis ARTCC" -> "Indianapolis". */
+function placeName(name) {
+  return String(name ?? '').replace(/\s+(ATCT\/TRACON|ATCT|TRACON|ARTCC)$/i, '').trim();
+}
+
+/**
+ * The place name for each position's title, from the facility that owns it: LEX's center is
+ * "Indianapolis" and DAY's approach "Columbus". Without the data, the facility's own name or ID.
+ * @returns {Record<string, string>}
+ */
+function resolvePlaces(index, facilityId, keys, facilityName = null) {
+  const owners = ownerFacilities(index, facilityId);
+  const fallback = placeName(facilityName) || facilityId;
+  return Object.fromEntries(keys.map((key) => [key, placeName(owners?.(key)?.name) || fallback]));
+}
+
+/**
  * The vNAS Stats callsigns each position covers for a facility, worked out from the vNAS ARTCC data
  * (fetchFacilityIndex() in feed.js):
  *   center              the ARTCC's center positions, so LEX's center is IND_CTR
@@ -51,15 +84,8 @@ function parsePositions(text) {
  * @returns {Record<string, string[]>} position -> callsigns like 'CMH_APP', empty if the facility has none
  */
 function resolveCallsigns(index, facilityId, keys) {
-  const facilities = [...(index?.facilities?.values() ?? [])];
-  const facility = facilities.find((f) => f.id === facilityId);
-  if (!facility) return Object.fromEntries(keys.map((k) => [k, POSITIONS[k].suffixes.slice(0, 1).map((s) => `${facilityId}_${s}`)]));
-
-  const parentOf = (f) => facilities.find((p) => p.childKeys.includes(f.key));
-  let artcc = facility;
-  while (artcc && artcc.positionType !== 'Artcc') artcc = parentOf(artcc);
-  const tracon = [facility, parentOf(facility)].find((f) => f?.positionType === 'Tracon');
-  const owner = { center: artcc, approach: tracon };
+  const owners = ownerFacilities(index, facilityId);
+  if (!owners) return Object.fromEntries(keys.map((k) => [k, POSITIONS[k].suffixes.slice(0, 1).map((s) => `${facilityId}_${s}`)]));
 
   const callsignsOf = new Map(); // facility key -> its position callsigns
   for (const [callsign, p] of index.positions ?? []) {
@@ -69,9 +95,8 @@ function resolveCallsigns(index, facilityId, keys) {
 
   return Object.fromEntries(
     keys.map((key) => {
-      const source = key in owner ? owner[key] : facility;
       const names = new Set();
-      for (const callsign of callsignsOf.get(source?.key) ?? []) {
+      for (const callsign of callsignsOf.get(owners(key)?.key) ?? []) {
         const parts = callsign.split('_');
         const suffix = parts[parts.length - 1];
         if (parts.length > 1 && POSITIONS[key].suffixes.includes(suffix)) names.add(`${parts[0]}_${suffix}`);
@@ -142,12 +167,13 @@ function monthStart(ms) {
 }
 
 /** A fresh competition, saved as-is to ironmic.json. */
-function newCompetition({ facilityId, facilityName = null, positions, callsigns, channelId, startedAt }) {
+function newCompetition({ facilityId, facilityName = null, positions, callsigns, places, channelId, startedAt }) {
   return {
     facilityId,
     facilityName,
     positions,
     callsigns, // resolveCallsigns() output, fixed for the whole run
+    places, // resolvePlaces() output, for the titles
     channelId,
     messageId: null,
     startedAt,
@@ -177,7 +203,7 @@ function percent(ms, elapsed) {
 function competitionEmbeds(comp) {
   const ended = Boolean(comp.endedAt);
   const totals = comp.totals;
-  const name = comp.facilityName ?? comp.facilityId;
+  const fallback = placeName(comp.facilityName) || comp.facilityId;
 
   const embeds = comp.positions.map((key) => {
     const t = totals?.positions[key];
@@ -196,10 +222,10 @@ function competitionEmbeds(comp) {
     }
     if (ended && !comp.final) lines.push('*Fetching the final totals…*');
 
-    const position = `${POSITIONS[key].label} (${comp.callsigns[key].join(', ')})`;
+    const title = `${comp.places?.[key] ?? fallback} ${POSITIONS[key].label} Iron Mic`;
     return {
       color: 0xf1c40f,
-      title: ended ? `🏁 ${name} Iron Mic · ${position}: final` : `🎙️ ${name} Iron Mic · ${position}`,
+      title: ended ? `🏁 ${title}: final` : `🎙️ ${title}`,
       description: lines.join('\n'),
     };
   });
@@ -217,6 +243,8 @@ module.exports = {
   POSITIONS,
   parsePositions,
   resolveCallsigns,
+  resolvePlaces,
+  placeName,
   statsUrl,
   fetchStats,
   readStats,

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, resolveCallsigns, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { parsePositions, resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -60,6 +60,16 @@ test('resolveCallsigns: center from the ARTCC, approach from the TRACON over it,
   assert.deepEqual(resolveCallsigns(zid(), 'PKB', ['approach', 'local', 'delivery']), { approach: [], local: ['PKB_TWR'], delivery: [] });
   // Without the vNAS data, it's just the facility ID.
   assert.deepEqual(resolveCallsigns(null, 'LEX', ['center', 'approach']), { center: ['LEX_CTR'], approach: ['LEX_APP'] });
+});
+
+test('resolvePlaces names each position after the facility that owns it, without the facility type', () => {
+  const index = zid();
+  const names = { ZID: 'Indianapolis ARTCC', CMH: 'Columbus ATCT/TRACON', DAY: 'Dayton ATCT', LEX: 'Lexington ATCT/TRACON', PKB: 'Parkersburg ATCT' };
+  for (const f of index.facilities.values()) f.name = names[f.id];
+  assert.deepEqual(resolvePlaces(index, 'LEX', ['center', 'approach', 'local']), { center: 'Indianapolis', approach: 'Lexington', local: 'Lexington' });
+  assert.deepEqual(resolvePlaces(index, 'DAY', ['approach', 'ground']), { approach: 'Columbus', ground: 'Dayton' });
+  assert.deepEqual(resolvePlaces(null, 'LEX', ['local'], 'Lexington ATCT/TRACON'), { local: 'Lexington' });
+  assert.deepEqual(resolvePlaces(null, 'LEX', ['local']), { local: 'LEX' });
 });
 
 test('statsUrl sends whole-second UTC times', () => {
@@ -129,16 +139,16 @@ test('one embed per position, top-down, with totals, percentages and network ran
 
   comp.totals = readStats(stats([['BOS', 'TWR', 19.25], ['LEX', 'TWR', 18], ['HSV', 'APP', 2]]), comp.callsigns);
   const [app, twr] = competitionEmbeds(comp);
-  assert.equal(app.title, '🎙️ Lexington ATCT/TRACON Iron Mic · Approach (LEX_APP)');
+  assert.equal(app.title, '🎙️ Lexington Approach Iron Mic');
   assert.equal(app.description, "**Under 2h 00m** staffed · outside the network's top 3");
   assert.equal(app.footer, undefined);
-  assert.equal(twr.title, '🎙️ Lexington ATCT/TRACON Iron Mic · Local (LEX_TWR)');
+  assert.equal(twr.title, '🎙️ Lexington Local Iron Mic');
   assert.equal(twr.description, '**18h 00m** staffed · 25%\n🏆 **#2** on the network · 1h 15m behind BOS_TWR');
   assert.equal(twr.timestamp, new Date(T0).toISOString());
   assert.equal(twr.color, 0xf1c40f);
 
-  const cmh = newCompetition({ facilityId: 'DAY', positions: ['approach'], callsigns: { approach: ['CMH_APP', 'DAY_APP'] }, channelId: 'c', startedAt: T0 });
-  assert.equal(competitionEmbeds(cmh)[0].title, '🎙️ DAY Iron Mic · Approach (CMH_APP, DAY_APP)');
+  const cmh = newCompetition({ facilityId: 'DAY', positions: ['approach'], callsigns: { approach: ['CMH_APP', 'DAY_APP'] }, places: { approach: 'Columbus' }, channelId: 'c', startedAt: T0 });
+  assert.equal(competitionEmbeds(cmh)[0].title, '🎙️ Columbus Approach Iron Mic');
 });
 
 test('an ended competition says so until its final totals are in', () => {
@@ -146,7 +156,7 @@ test('an ended competition says so until its final totals are in', () => {
   comp.endedAt = T0 + 72 * HOUR;
   comp.totals = readStats(stats([['LEX', 'TWR', 36]]), comp.callsigns);
   let [e] = competitionEmbeds(comp);
-  assert.equal(e.title, '🏁 LEX Iron Mic · Local (LEX_TWR): final');
+  assert.equal(e.title, '🏁 LEX Local Iron Mic: final');
   assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network\n*Fetching the final totals…*');
   assert.match(e.footer.text, /ended/);
 
