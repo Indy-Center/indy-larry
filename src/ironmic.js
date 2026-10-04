@@ -8,13 +8,14 @@
 const STATS_URL = 'https://api.vnas-stats.com/v1/callsigns/top';
 const MINUTE = 60_000;
 
-// Position names staff type in /ironmic, in display order (top-down). suffix is the callsign suffix vNAS Stats groups by.
+// Position names staff type in /ironmic, in display order (top-down). suffixes are the callsign suffixes
+// vNAS Stats groups by.
 const POSITIONS = {
-  center: { label: 'Center', suffix: 'CTR', aliases: ['ctr', 'enroute'] },
-  approach: { label: 'Approach', suffix: 'APP', aliases: ['app', 'radar', 'tracon'] },
-  local: { label: 'Local', suffix: 'TWR', aliases: ['tower', 'twr', 'lc'] },
-  ground: { label: 'Ground', suffix: 'GND', aliases: ['gnd', 'gc'] },
-  delivery: { label: 'Delivery', suffix: 'DEL', aliases: ['del', 'clearance', 'cd'] },
+  center: { label: 'Center', suffixes: ['CTR'], aliases: ['ctr', 'enroute'] },
+  approach: { label: 'Approach', suffixes: ['APP', 'DEP'], aliases: ['app', 'radar', 'tracon'] },
+  local: { label: 'Local', suffixes: ['TWR'], aliases: ['tower', 'twr', 'lc'] },
+  ground: { label: 'Ground', suffixes: ['GND'], aliases: ['gnd', 'gc'] },
+  delivery: { label: 'Delivery', suffixes: ['DEL'], aliases: ['del', 'clearance', 'cd'] },
 };
 
 /**
@@ -38,6 +39,48 @@ function parsePositions(text) {
   return Object.keys(POSITIONS).filter((k) => picked.has(k));
 }
 
+/**
+ * The vNAS Stats callsigns each position covers for a facility, worked out from the vNAS ARTCC data
+ * (fetchFacilityIndex() in feed.js):
+ *   center              the ARTCC's center positions, so LEX's center is IND_CTR
+ *   approach            the TRACON over the facility: itself, or the parent of a tower under one, so
+ *                       DAY's approach is CMH's (CMH_APP and DAY_APP). A tower with no TRACON has none.
+ *   local/ground/delivery  the facility's own positions
+ * Callsigns are cut to prefix and suffix the way vNAS Stats groups them, so IND_E_TWR and IND_W_TWR are
+ * both IND_TWR. Without the data, each position is just <facility>_<suffix>.
+ * @returns {Record<string, string[]>} position -> callsigns like 'CMH_APP', empty if the facility has none
+ */
+function resolveCallsigns(index, facilityId, keys) {
+  const facilities = [...(index?.facilities?.values() ?? [])];
+  const facility = facilities.find((f) => f.id === facilityId);
+  if (!facility) return Object.fromEntries(keys.map((k) => [k, POSITIONS[k].suffixes.slice(0, 1).map((s) => `${facilityId}_${s}`)]));
+
+  const parentOf = (f) => facilities.find((p) => p.childKeys.includes(f.key));
+  let artcc = facility;
+  while (artcc && artcc.positionType !== 'Artcc') artcc = parentOf(artcc);
+  const tracon = [facility, parentOf(facility)].find((f) => f?.positionType === 'Tracon');
+  const owner = { center: artcc, approach: tracon };
+
+  const callsignsOf = new Map(); // facility key -> its position callsigns
+  for (const [callsign, p] of index.positions ?? []) {
+    if (!callsignsOf.has(p.key)) callsignsOf.set(p.key, []);
+    callsignsOf.get(p.key).push(callsign);
+  }
+
+  return Object.fromEntries(
+    keys.map((key) => {
+      const source = key in owner ? owner[key] : facility;
+      const names = new Set();
+      for (const callsign of callsignsOf.get(source?.key) ?? []) {
+        const parts = callsign.split('_');
+        const suffix = parts[parts.length - 1];
+        if (parts.length > 1 && POSITIONS[key].suffixes.includes(suffix)) names.add(`${parts[0]}_${suffix}`);
+      }
+      return [key, [...names].sort()];
+    }),
+  );
+}
+
 function statsUrl(start, end) {
   const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
   return `${STATS_URL}?start=${encodeURIComponent(iso(start))}&end=${encodeURIComponent(iso(end))}`;
@@ -51,27 +94,32 @@ async function fetchStats(start, end) {
 
 /**
  * Picks the tracked positions out of a vNAS Stats response, with each one's network rank.
- * The response ranks the network's top callsigns by time, so a listed position gets its rank and the
- * gap to the callsign ranked just above it (or, at #1, its lead over #2). A position that isn't listed
- * had less time than the last one listed; that's kept as "under", rather than shown as zero.
+ * A position's time is the sum of its callsigns (CMH approach = CMH_APP + DAY_APP). The response ranks
+ * the network's top callsigns by time, so a listed position gets its rank among the other callsigns and
+ * the gap to the one just above it (or, at #1, its lead over #2). A position with none of its callsigns
+ * listed had less time than the last one listed; that's kept as "under", rather than shown as zero.
+ * @param {Record<string, string[]>} callsigns  resolveCallsigns() output
  * @returns {{ elapsedMs: number, fetchedAt: number, ranked: number,
  *   positions: Record<string, {ms: number, rank?: number, ahead?: {callsign: string, gapMs: number}, lead?: {callsign: string, gapMs: number}}|{underMs: number}> }}
  */
-function readStats(stats, facilityId, keys) {
+function readStats(stats, callsigns) {
   const list = [...(stats.callsigns ?? [])].sort((a, b) => b.durationSeconds - a.durationSeconds);
   const floor = list.length ? list[list.length - 1].durationSeconds * 1000 : 0;
   const name = (c) => `${c.prefix}_${c.suffix}`;
   const positions = {};
-  for (const key of keys) {
-    const i = list.findIndex((c) => c.prefix === facilityId && c.suffix === POSITIONS[key].suffix);
-    if (i < 0) {
+  for (const [key, names] of Object.entries(callsigns)) {
+    const mine = list.filter((c) => names.includes(name(c)));
+    if (!mine.length) {
       positions[key] = list.length ? { underMs: floor } : { ms: 0 };
       continue;
     }
-    const entry = list[i];
-    const t = { ms: entry.durationSeconds * 1000, rank: i + 1 };
-    if (i > 0) t.ahead = { callsign: name(list[i - 1]), gapMs: (list[i - 1].durationSeconds - entry.durationSeconds) * 1000 };
-    else if (list[1]) t.lead = { callsign: name(list[1]), gapMs: (entry.durationSeconds - list[1].durationSeconds) * 1000 };
+    const seconds = mine.reduce((sum, c) => sum + c.durationSeconds, 0);
+    const others = list.filter((c) => !mine.includes(c));
+    const above = others.filter((c) => c.durationSeconds > seconds);
+    const t = { ms: seconds * 1000, rank: above.length + 1 };
+    const next = above[above.length - 1];
+    if (next) t.ahead = { callsign: name(next), gapMs: (next.durationSeconds - seconds) * 1000 };
+    else if (others[0]) t.lead = { callsign: name(others[0]), gapMs: (seconds - others[0].durationSeconds) * 1000 };
     positions[key] = t;
   }
   return {
@@ -83,11 +131,12 @@ function readStats(stats, facilityId, keys) {
 }
 
 /** A fresh competition, saved as-is to ironmic.json. */
-function newCompetition({ facilityId, facilityName = null, positions, channelId, startedAt }) {
+function newCompetition({ facilityId, facilityName = null, positions, callsigns, channelId, startedAt }) {
   return {
     facilityId,
     facilityName,
     positions,
+    callsigns, // resolveCallsigns() output, fixed for the whole run
     channelId,
     messageId: null,
     startedAt,
@@ -135,7 +184,7 @@ function competitionEmbeds(comp) {
     }
     if (ended && !comp.final) lines.push('*Fetching the final totals…*');
 
-    const position = `${POSITIONS[key].label} (${comp.facilityId}_${POSITIONS[key].suffix})`;
+    const position = `${POSITIONS[key].label} (${comp.callsigns[key].join(', ')})`;
     return {
       color: 0xf1c40f,
       title: ended ? `🏁 ${name} Iron Mic · ${position}: final` : `🎙️ ${name} Iron Mic · ${position}`,
@@ -155,6 +204,7 @@ module.exports = {
   STATS_URL,
   POSITIONS,
   parsePositions,
+  resolveCallsigns,
   statsUrl,
   fetchStats,
   readStats,

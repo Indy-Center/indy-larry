@@ -55,6 +55,7 @@ const ironMicConfig = {
     [...(cache.index?.facilities.values() ?? [])]
       .filter((f) => f.positionType === 'Atct' || f.positionType === 'Tracon')
       .map((f) => ({ id: f.id, name: f.name })),
+  facilityIndex: () => cache.index, // which callsigns each position covers, e.g. DAY's approach is CMH's
 };
 let ironMic = null;
 
@@ -179,6 +180,7 @@ async function refresh() {
     const feed = await fetchFeed();
     if (trackActivations(feed, activeSince, new Date(), firstRefresh, config.artccIds)) saveState();
     firstRefresh = false;
+    const { bookings, facilityTree } = await getReferenceData(); // first, so Iron Mic has the facility data
     await ironMic?.tick(); // catches its own errors, so the status embeds still update
 
     // The Iron Mic leaderboard sits on top. If it's newer than any status message (just started, reposted,
@@ -189,7 +191,6 @@ async function refresh() {
     }
 
     const facilities = groupByFacility(feed, { ...config, activeSince });
-    const { bookings, facilityTree } = await getReferenceData();
     const entries = board.update(facilities, bookings, new Date(), facilityTree);
 
     const wanted = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
