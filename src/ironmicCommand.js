@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, parsePositions, resolveCallsigns, fetchStats, readStats, newCompetition, competitionEmbeds } = require('./ironmic');
+const { POSITIONS, parsePositions, resolveCallsigns, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -110,6 +110,12 @@ class IronMic {
       if (!c.callsigns) {
         // Started before callsigns were worked out from the vNAS data; work them out now.
         c.callsigns = resolveCallsigns(this.config.facilityIndex?.(), c.facilityId, c.positions);
+        this.lastFetchAttempt = 0;
+        this.save();
+      }
+      if (c.startedAt !== monthStart(c.startedAt)) {
+        // Started before Iron Mics counted from the 1st; move it back.
+        c.startedAt = monthStart(c.startedAt);
         this.lastFetchAttempt = 0;
         this.save();
       }
@@ -244,7 +250,7 @@ class IronMic {
       positions,
       callsigns,
       channelId: this.config.channelId,
-      startedAt: Date.now(),
+      startedAt: monthStart(Date.now()), // counts the whole month so far, like vnas-stats.com's month view
     });
     try {
       await this.render();

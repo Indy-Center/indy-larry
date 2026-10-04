@@ -96,11 +96,12 @@ async function fetchStats(start, end) {
  * Picks the tracked positions out of a vNAS Stats response, with each one's network rank.
  * A position's time is the sum of its callsigns (CMH approach = CMH_APP + DAY_APP). The response ranks
  * the network's top callsigns by time, so a listed position gets its rank among the other callsigns and
- * the gap to the one just above it (or, at #1, its lead over #2). A position with none of its callsigns
+ * the gap to the one just above it (or, at #1, its lead over #2). Callsigns with the same time share a
+ * rank and count as tied; a tie for #1 has no lead. A position with none of its callsigns
  * listed had less time than the last one listed; that's kept as "under", rather than shown as zero.
  * @param {Record<string, string[]>} callsigns  resolveCallsigns() output
  * @returns {{ elapsedMs: number, fetchedAt: number, ranked: number,
- *   positions: Record<string, {ms: number, rank?: number, ahead?: {callsign: string, gapMs: number}, lead?: {callsign: string, gapMs: number}}|{underMs: number}> }}
+ *   positions: Record<string, {ms: number, rank?: number, tied?: number, ahead?: {callsign: string, gapMs: number}, lead?: {callsign: string, gapMs: number}}|{underMs: number}> }}
  */
 function readStats(stats, callsigns) {
   const list = [...(stats.callsigns ?? [])].sort((a, b) => b.durationSeconds - a.durationSeconds);
@@ -116,10 +117,12 @@ function readStats(stats, callsigns) {
     const seconds = mine.reduce((sum, c) => sum + c.durationSeconds, 0);
     const others = list.filter((c) => !mine.includes(c));
     const above = others.filter((c) => c.durationSeconds > seconds);
+    const tied = others.filter((c) => c.durationSeconds === seconds).length;
     const t = { ms: seconds * 1000, rank: above.length + 1 };
+    if (tied) t.tied = tied; // everyone on since the start has the same time, so early on most are tied
     const next = above[above.length - 1];
     if (next) t.ahead = { callsign: name(next), gapMs: (next.durationSeconds - seconds) * 1000 };
-    else if (others[0]) t.lead = { callsign: name(others[0]), gapMs: (seconds - others[0].durationSeconds) * 1000 };
+    else if (others[0] && !tied) t.lead = { callsign: name(others[0]), gapMs: (seconds - others[0].durationSeconds) * 1000 };
     positions[key] = t;
   }
   return {
@@ -128,6 +131,12 @@ function readStats(stats, callsigns) {
     fetchedAt: Date.parse(stats.requestedAt) || Date.now(),
     positions,
   };
+}
+
+/** Midnight UTC on the 1st of the month `ms` falls in. An Iron Mic always counts from there. */
+function monthStart(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
 }
 
 /** A fresh competition, saved as-is to ironmic.json. */
@@ -178,6 +187,7 @@ function competitionEmbeds(comp) {
     const lines = [line];
     if (t?.rank) {
       let rank = `🏆 **#${t.rank}** on the network`;
+      if (t.tied) rank += ` · tied with ${t.tied} other${t.tied === 1 ? '' : 's'}`;
       if (t.ahead) rank += ` · ${formatDuration(t.ahead.gapMs)} behind ${t.ahead.callsign}`;
       else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${t.lead.callsign}`;
       lines.push(rank);
@@ -208,6 +218,7 @@ module.exports = {
   statsUrl,
   fetchStats,
   readStats,
+  monthStart,
   newCompetition,
   formatDuration,
   competitionEmbeds,

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, resolveCallsigns, statsUrl, readStats, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { parsePositions, resolveCallsigns, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -91,6 +91,21 @@ test('readStats adds up a position with several callsigns and ranks the total ag
   assert.deepEqual(r.positions.approach, { ms: 11 * HOUR, rank: 2, ahead: { callsign: 'BOS_TWR', gapMs: 1 * HOUR } });
 });
 
+test('callsigns with the same time are tied, and a tie for #1 has no lead', () => {
+  const r = readStats(stats([['SEA', 'CTR', 0.5], ['ATL', 'APP', 0.5], ['LEX', 'TWR', 0.5], ['BOS', 'GND', 0.4], ['LEX', 'GND', 0.4], ['MIA', 'TWR', 0.3]]), {
+    local: ['LEX_TWR'],
+    ground: ['LEX_GND'],
+  });
+  assert.deepEqual(r.positions.local, { ms: 0.5 * HOUR, rank: 1, tied: 2 });
+  assert.deepEqual(r.positions.ground, { ms: 0.4 * HOUR, rank: 4, tied: 1, ahead: { callsign: 'LEX_TWR', gapMs: 0.1 * HOUR } });
+
+  const comp = newCompetition({ facilityId: 'LEX', positions: ['local', 'ground'], callsigns: { local: ['LEX_TWR'], ground: ['LEX_GND'] }, channelId: 'c', startedAt: T0 });
+  comp.totals = r;
+  const [twr, gnd] = competitionEmbeds(comp);
+  assert.equal(twr.description.split('\n')[1], '🏆 **#1** on the network · tied with 2 others');
+  assert.equal(gnd.description.split('\n')[1], '🏆 **#4** on the network · tied with 1 other · 6m behind LEX_TWR');
+});
+
 test('one embed per position, top-down, with totals, percentages and network rank', () => {
   const comp = newCompetition({
     facilityId: 'LEX',
@@ -128,6 +143,12 @@ test('an ended competition says so until its final totals are in', () => {
   comp.final = true;
   [e] = competitionEmbeds(comp);
   assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network');
+});
+
+test('monthStart is midnight UTC on the 1st', () => {
+  assert.equal(monthStart(Date.parse('2026-10-04T02:07:00Z')), Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(monthStart(Date.parse('2026-10-01T00:00:00Z')), Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(monthStart(Date.parse('2026-12-31T23:59:59Z')), Date.parse('2026-12-01T00:00:00Z'));
 });
 
 test('formatDuration', () => {
