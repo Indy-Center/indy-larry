@@ -6,6 +6,7 @@ const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActi
 const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
+const { IronMic } = require('./ironmicCommand');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -40,6 +41,20 @@ if ([notifyConfig.panelChannelId, notifyConfig.alertChannelId].includes(config.c
   console.error('PANEL_CHANNEL_ID and ALERT_CHANNEL_ID must be different from CHANNEL_ID.');
   process.exit(1);
 }
+
+// /ironmic: Iron Mic leaderboard (totals from vNAS Stats). Always on; IRON_MIC_ROLE_ID (if set) is pinged when one starts.
+const ironMicConfig = {
+  stateFile: path.join(__dirname, '..', 'ironmic.json'),
+  statusChannelId: config.channelId,
+  roleId: process.env.IRON_MIC_ROLE_ID,
+  showNames: config.showNames,
+  // Towers and TRACONs from the vNAS ARTCC data, for /ironmic start's facility list.
+  facilities: () =>
+    [...(cache.index?.facilities.values() ?? [])]
+      .filter((f) => f.positionType === 'Atct' || f.positionType === 'Tracon')
+      .map((f) => ({ id: f.id, name: f.name })),
+};
+let ironMic = null;
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -157,6 +172,7 @@ async function refresh() {
     const feed = await fetchFeed();
     if (trackActivations(feed, activeSince, new Date(), firstRefresh, config.artccIds)) saveState();
     firstRefresh = false;
+    await ironMic?.tick(feed); // catches its own errors, so the status embeds still update
     const facilities = groupByFacility(feed, { ...config, activeSince });
     const { bookings, facilityTree } = await getReferenceData();
     const entries = board.update(facilities, bookings, new Date(), facilityTree);
@@ -181,6 +197,11 @@ client.once(Events.ClientReady, async () => {
   if (!channel?.isTextBased()) throw new Error(`Channel ${config.channelId} is not a text channel`);
 
   await loadExistingMessages();
+  ironMic = new IronMic(client, ironMicConfig);
+  await ironMic.start(channel.guild).catch((err) => {
+    console.error('/ironmic failed to start:', err.message);
+    ironMic = null;
+  });
   await refresh();
   setInterval(refresh, config.pollSeconds * 1000);
   console.log(`Polling every ${config.pollSeconds}s${config.artccIds.length ? ` for ${config.artccIds.join(', ')}` : ''}.`);

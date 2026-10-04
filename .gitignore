@@ -2,3 +2,4 @@ node_modules/
 .env
 state.json
 notify.json
+ironmic.json

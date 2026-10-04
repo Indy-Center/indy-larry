@@ -33,6 +33,18 @@ The positions and their roles come from `RELIEF_ROLES`, e.g. `S Ground:111,A Gro
 
 The bot needs **Manage Roles**, and its own role has to sit above every role it hands out. To ping a role it also needs **Mention @everyone, @here and All Roles** in the alert channel, or the role has to allow anyone to mention it. `notify.json` holds the panel message IDs, who has which role until when, and the request alerts that can still be claimed or cancelled. It isn't committed.
 
+## Iron Mic leaderboard
+
+Staff run `/ironmic` in any channel except `CHANNEL_ID` to keep a leaderboard of how long a facility's positions were staffed:
+
+- `/ironmic start facility:LEX positions:local, approach` posts the leaderboard in that channel and pings `IRON_MIC_ROLE_ID`, if set. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Positions are `delivery`, `ground`, `local`, `approach` and `center` (or `del`, `gnd`, `twr`, `app`, `ctr`), any combination.
+- `/ironmic end` stops it. The leaderboard turns gold and shows the final totals within a minute.
+- `/ironmic clear` deletes the leaderboard and its log, after `end`. Only one Iron Mic runs at a time.
+
+Totals come from [vNAS Stats](https://vnas-stats.com) ([source](https://github.com/kengreim/vnas-stats)), fetched every 5 minutes for the time since `start`. It counts active controllers and groups time by callsign prefix and suffix, ignoring the middle part, so `LEX_APP` and `LEX_N_APP` are both LEX approach and two controllers on it at once count once. Its list only has the network's top callsigns; a position that didn't make it shows as "Under" the last one listed. The live 🟢/🔴 line under each position comes from Larry's own feed check and counts each controller's primary, active position only.
+
+By default only members with **Manage Server** see the command; change who can use it under **Server Settings → Integrations → Larry**. The bot needs **View Channel**, **Send Messages** and **Embed Links** where it's run, and the role ping needs the same mention permission as the request alerts. `ironmic.json` holds the running Iron Mic and its message ID, so a restart edits the same message. It isn't committed.
+
 ## Sending messages from other apps
 
 Other Indy Center Workers can send Discord messages as Larry instead of keeping their own webhooks: to a channel by name, or as a DM to a user. A small Cloudflare Worker in `worker/` (`indy-larry`) does the sending with Larry's token, through Discord's REST API, so the bot on the VPS isn't involved. Following the [RPC vs Queue pattern](https://tech.flyindycenter.com/patterns/rpc-vs-queue/), callers reach it over a service binding; it has no HTTP route and isn't on the internet.
@@ -77,6 +89,7 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 ## Project layout
 
 - `src/bot.js`: logs in, polls every `POLL_SECONDS`, and posts, edits and deletes embeds.
+- `src/ironmic.js`: Iron Mic positions, vNAS Stats totals and the leaderboard embed. `src/ironmicCommand.js`: the `/ironmic` command.
 - `src/feed.js`: fetches the [vNAS controller feed](https://docs.virtualnas.net/data-admin/controller-feed/), the vNAS ARTCC data (facility and position list) and [VATSIM ATC bookings](https://atc-bookings.vatsim.net/), groups controllers by facility and tracks activation times.
 - `src/status.js`: decides each facility's status and parses "Online until" from controller info.
 - `src/embeds.js`: the embed layout.
