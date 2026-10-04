@@ -164,4 +164,6 @@ jobs:
             docker compose logs --tail 50
             exit 1
           fi
+          # Startup lines only (the run log is public): login, adopted messages, /ironmic and anything that failed.
+          docker compose logs --no-log-prefix | grep -iE 'logged in|adopted|polling|ironmic|iron mic|failed|error' | tail -n 30 || true
           EOF
