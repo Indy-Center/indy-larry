@@ -133,6 +133,12 @@ function readStats(stats, callsigns) {
   };
 }
 
+/** Midnight UTC on the 1st of the month `ms` falls in. An Iron Mic always counts from there. */
+function monthStart(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+}
+
 /** A fresh competition, saved as-is to ironmic.json. */
 function newCompetition({ facilityId, facilityName = null, positions, callsigns, channelId, startedAt }) {
   return {
@@ -212,6 +218,7 @@ module.exports = {
   statsUrl,
   fetchStats,
   readStats,
+  monthStart,
   newCompetition,
   formatDuration,
   competitionEmbeds,

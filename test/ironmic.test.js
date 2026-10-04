@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, resolveCallsigns, statsUrl, readStats, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { parsePositions, resolveCallsigns, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -143,6 +143,12 @@ test('an ended competition says so until its final totals are in', () => {
   comp.final = true;
   [e] = competitionEmbeds(comp);
   assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network');
+});
+
+test('monthStart is midnight UTC on the 1st', () => {
+  assert.equal(monthStart(Date.parse('2026-10-04T02:07:00Z')), Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(monthStart(Date.parse('2026-10-01T00:00:00Z')), Date.parse('2026-10-01T00:00:00Z'));
+  assert.equal(monthStart(Date.parse('2026-12-31T23:59:59Z')), Date.parse('2026-12-01T00:00:00Z'));
 });
 
 test('formatDuration', () => {
