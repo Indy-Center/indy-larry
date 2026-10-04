@@ -43,7 +43,7 @@ Other Indy Center Workers can send Discord messages as Larry instead of keeping 
 ```
 
 ```ts
-import type { LarryBinding } from '@indy-center/larry'; // sibling checkout: "file:../indy-larry/worker"
+import type { LarryBinding } from '@indy-center/larry'; // npm install @indy-center/larry
 
 // RPC: sends now and returns { channelId, messageId }; throws if Discord refuses it.
 await env.LARRY.send({
@@ -65,6 +65,8 @@ await env.LARRY.enqueueDirect({ userId, embeds: [{ title: 'Request approved' }] 
 - **Delivery**: `send()` waits out a rate limit of 5 seconds or less once, then throws. The queue (`larry-messages`) waits for Discord's `retry_after` on a rate limit, backs off on 5xx and network errors, and drops a message Discord refuses (4xx, e.g. missing permissions), logging why. After 5 attempts a message moves to `larry-messages-dlq`. Each queued message carries a nonce, so a retry can't post twice.
 
 The bot needs **View Channel**, **Send Messages** and **Embed Links** in each channel in `SEND_CHANNELS`.
+
+**Types for callers** are published to npm as [`@indy-center/larry`](https://www.npmjs.com/package/@indy-center/larry), like `@indy-center/identity`: install it as a dependency and type the binding as `LARRY: LarryBinding`. It's types only, built from `worker/src/client/`; callers also need `@cloudflare/workers-types` (or `wrangler types`) for `Service` and `Rpc`. It's public so callers install it with no npm login, and it holds nothing that isn't already in this repo. To publish a change to `src/client/`: bump `version` in `worker/package.json`, then from `worker/` run `npm publish` (needs publish rights on the `@indy-center` npm org; `prepublishOnly` builds `dist/`).
 
 First time only, before the first deploy that includes the Worker:
 
