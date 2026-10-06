@@ -121,6 +121,16 @@ function describe(job: Job, outcome: Outcome & { ok: false }): string {
   return `Discord refused the message: ${outcome.status}${outcome.code ? ` (${outcome.code})` : ''} ${outcome.error}`;
 }
 
+/**
+ * Whether Discord refused a message because of how Larry is set up, rather than because of the message:
+ * a channel in SEND_CHANNELS that Larry can't see or post in (403), one that no longer exists (404), or a
+ * bad token (401). A DM a user won't accept is theirs to change, not ours.
+ */
+function isSetupFault(job: Job, outcome: Outcome & { ok: false }): boolean {
+  if (outcome.status === 401) return true;
+  return 'channelId' in job.target && (outcome.status === 403 || outcome.status === 404);
+}
+
 /** RPC: send now and return where it went. Throws with Discord's reason if it's refused. */
 export async function sendNow(env: SendEnv, kind: Kind, request: ChannelSend | DirectSend): Promise<Sent> {
   return sendJob(env, prepare(env, kind, request));
@@ -143,8 +153,17 @@ export async function enqueue(env: SendEnv, kind: Kind, request: ChannelSend | D
   await env.LARRY_QUEUE.send(prepare(env, kind, request));
 }
 
-/** Queue consumer: send each message, retrying rate limits, Discord outages and network errors. */
+/**
+ * Queue consumer: send each message, retrying rate limits, Discord outages and network errors.
+ *
+ * A message Discord refuses is dropped, since retrying can't help. When the refusal is Larry's own setup
+ * (isSetupFault), the run also throws once the whole batch has been handled, so it shows as a failed
+ * invocation instead of a log line nobody reads. Every message is acked or retried by then, and Queues
+ * honours those whether or not the handler throws, so nothing is redelivered because of it.
+ */
 export async function consume(batch: MessageBatch<Job>, env: Pick<SendEnv, 'DISCORD_TOKEN'>): Promise<void> {
+  const setupFaults: string[] = [];
+
   for (const message of batch.messages) {
     const job = message.body;
     // Same nonce on every attempt of this queue message.
@@ -167,8 +186,14 @@ export async function consume(batch: MessageBatch<Job>, env: Pick<SendEnv, 'DISC
       message.retry({ delaySeconds: 10 * message.attempts });
     } else {
       // A 4xx is about the message itself (missing permissions, closed DMs, bad embed), so retrying won't help.
-      console.error(`${describe(job, outcome)}; dropping message to ${JSON.stringify(job.target)}`);
+      const reason = `${describe(job, outcome)}; dropping message to ${JSON.stringify(job.target)}`;
+      console.error(reason);
       message.ack();
+      if (isSetupFault(job, outcome)) setupFaults.push(reason);
     }
+  }
+
+  if (setupFaults.length > 0) {
+    throw new Error(`Larry can't post where it was asked to. Check the bot's permissions and SEND_CHANNELS. ${setupFaults.join(' | ')}`);
   }
 }
