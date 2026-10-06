@@ -54,7 +54,7 @@ Other Indy Center Workers can send Discord messages as Larry instead of keeping 
 ```
 
 ```ts
-import type { LarryBinding } from '@indy-center/larry'; // npm install @indy-center/larry
+import type { LarryBinding } from '@indy-center/indy-larry-worker'; // npm install @indy-center/indy-larry-worker
 
 // RPC: sends now and returns { channelId, messageId }; throws if Discord refuses it.
 await env.LARRY.send({
@@ -129,7 +129,7 @@ Setup, once:
 2. In the Discord developer portal, switch on **Server Members Intent** for the bot. Without it Larry can't list who holds a role, so it still adds people but never removes anyone, and `canSeeMembers` comes back `false`.
 3. Add the repository variables `ENV_GUILD_ID` (the server) and `ENV_CHANNEL_CATEGORIES` (e.g. `training:123456789`). Until `ENV_GUILD_ID` is set these methods refuse every call.
 
-**Types for callers** are published to npm as [`@indy-center/larry`](https://www.npmjs.com/package/@indy-center/larry), like `@indy-center/identity`: install it as a dependency and type the binding as `LARRY: LarryBinding`. It's types only, built from `worker/src/client/`; callers also need `@cloudflare/workers-types` (or `wrangler types`) for `Service` and `Rpc`. It's public so callers install it with no npm login, and it holds nothing that isn't already in this repo. To publish a change to `src/client/`: bump `version` in `worker/package.json` and merge. The `publish-types` job in `build-and-deploy.yml` publishes any version npm doesn't have yet, and does nothing when the version is unchanged. It needs the `NPM_TOKEN` repository secret, an npm access token allowed to publish the package; without it the job warns and passes. To publish by hand instead, run `npm publish` from `worker/` (needs publish rights on the `@indy-center` npm org; `prepublishOnly` builds `dist/`).
+**Types for callers** are published to npm as [`@indy-center/indy-larry-worker`](https://www.npmjs.com/package/@indy-center/indy-larry-worker), like `@indy-center/identity`: install it as a dependency and type the binding as `LARRY: LarryBinding`. It's types only, built from `worker/src/client/`; callers also need `@cloudflare/workers-types` (or `wrangler types`) for `Service` and `Rpc`. It's public so callers install it with no npm login, and it holds nothing that isn't already in this repo. To publish a change to `src/client/`: bump `version` in `worker/package.json` and merge. The `publish-types` job in `build-and-deploy.yml` publishes any version npm doesn't have yet, and does nothing when the version is unchanged. It uses npm's trusted publishing, so there is no token to keep: on npmjs.com the package's settings name this repository and the workflow file `build-and-deploy.yml`, with no environment. To publish by hand instead, run `npm publish` from `worker/` (needs publish rights on the `@indy-center` npm org; `prepublishOnly` builds `dist/`).
 
 First time only, before the first deploy that includes the Worker:
 
