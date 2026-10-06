@@ -1,5 +1,5 @@
 {
-  "name": "@indy-center/indy-larry",
+  "name": "@indy-center/indy-larry-bot",
   "version": "1.0.0",
   "description": "Discord bot showing which Indy Center (ZID) facilities are online on vNAS",
   "main": "src/bot.js",
