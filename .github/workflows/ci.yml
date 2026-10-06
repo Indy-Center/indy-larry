@@ -65,7 +65,7 @@ jobs:
 
       - run: npm test
 
-      # Builds the published @indy-center/larry types and lists what npm would publish, so a broken
+      # Builds the published @indy-center/indy-larry-worker types and lists what npm would publish, so a broken
       # client package fails here rather than at npm publish.
       - name: Client package
         run: npm run build:lib && npm pack --dry-run
