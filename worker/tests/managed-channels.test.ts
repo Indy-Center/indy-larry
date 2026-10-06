@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { channelName, checkChannels, prepareChannelIdSend, syncChannels } from '../src/managed-channels';
+import { channelName, checkChannels, deleteChannels, prepareChannelIdSend, syncChannels } from '../src/managed-channels';
 import { fakeDiscord, GUILD, LARRY } from './fake-discord';
 
 const CATEGORY = '200000000000000000';
@@ -135,5 +135,40 @@ describe('prepareChannelIdSend', () => {
     fakeDiscord({});
     await expect(prepareChannelIdSend(env, { channelId: CHANNEL })).rejects.toThrow('needs content');
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteChannels', () => {
+  it('deletes a channel under a category Larry looks after, and counts a missing one as done', async () => {
+    const writes = fakeDiscord({ channels: [{ id: CHANNEL, name: 'jo-rivera', type: 0, parent_id: CATEGORY }] });
+    const result = await deleteChannels(env, { ids: [CHANNEL, '700000000000000077'] });
+
+    expect(result.deleted).toEqual([
+      { id: CHANNEL, outcome: 'deleted' },
+      { id: '700000000000000077', outcome: 'gone' },
+    ]);
+    expect(writes).toEqual([{ method: 'DELETE', path: `/channels/${CHANNEL}`, body: undefined }]);
+  });
+
+  // The fence: a caller cannot delete #general, or a category, with this.
+  it('refuses a channel anywhere else on the server', async () => {
+    const writes = fakeDiscord({
+      channels: [
+        { id: CHANNEL, name: 'general', type: 0, parent_id: ELSEWHERE },
+        { id: CATEGORY, name: 'Training Center', type: 4, parent_id: null },
+      ],
+    });
+    const result = await deleteChannels(env, { ids: [CHANNEL, CATEGORY] });
+
+    expect(result.deleted.every((d) => d.error?.includes("isn't a text channel under a category"))).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
+  it('deletes nothing in a dry run', async () => {
+    const writes = fakeDiscord({ channels: [{ id: CHANNEL, name: 'jo-rivera', type: 0, parent_id: CATEGORY }] });
+    const result = await deleteChannels(env, { ids: [CHANNEL], dryRun: true });
+
+    expect(result.deleted).toEqual([{ id: CHANNEL, outcome: 'would-delete' }]);
+    expect(writes).toEqual([]);
   });
 });

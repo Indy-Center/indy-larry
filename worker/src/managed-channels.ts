@@ -1,6 +1,6 @@
 import { parseChannels } from './channels';
-import type { ChannelIdSend, ChannelSyncResult, ChannelsResult, ChannelsSync, ManagedChannel } from './client/api';
-import { discord, guildId, MAX_NAME_LENGTH, SNOWFLAKE, type GuildEnv } from './discord';
+import type { ChannelIdSend, ChannelSyncResult, ChannelsResult, ChannelsSync, DeleteRequest, DeleteResult, Deletion, ManagedChannel } from './client/api';
+import { checkIds, discord, guildId, MAX_NAME_LENGTH, SNOWFLAKE, type GuildEnv } from './discord';
 import { checkMessage, type Job } from './send';
 
 /**
@@ -144,6 +144,45 @@ export async function syncChannels(env: GuildEnv, request: ChannelsSync): Promis
   }
 
   return { dryRun, channels: results };
+}
+
+/** RPC: delete channels, and every message in them. One that is already gone counts as done. */
+export async function deleteChannels(env: GuildEnv, request: DeleteRequest): Promise<DeleteResult> {
+  const guild = guildId(env);
+  const ids = checkIds(request);
+  const dryRun = request.dryRun === true;
+  const token = env.DISCORD_TOKEN;
+  const allowed = new Set(categories(env).values());
+
+  const channels = ids.length > 0 ? await discord<DiscordChannel[]>(token, 'GET', `/guilds/${guild}/channels`) : [];
+  const deleted: Deletion[] = [];
+
+  for (const id of ids) {
+    const channel = channels.find((candidate) => candidate.id === id);
+    if (!channel) {
+      deleted.push({ id, outcome: 'gone' });
+      continue;
+    }
+    // The same fence as posting: only a text channel under a category Larry looks after.
+    if (channel.type !== GUILD_TEXT || !channel.parent_id || !allowed.has(channel.parent_id)) {
+      deleted.push({ id, outcome: 'would-delete', error: `#${channel.name} isn't a text channel under a category in CHANNEL_CATEGORIES` });
+      continue;
+    }
+    if (dryRun) {
+      deleted.push({ id, outcome: 'would-delete' });
+      continue;
+    }
+    try {
+      await discord(token, 'DELETE', `/channels/${id}`, undefined, 'Channel deleted by a caller');
+      deleted.push({ id, outcome: 'deleted' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Channel ${id} could not be deleted: ${message}`);
+      deleted.push({ id, outcome: 'would-delete', error: message });
+    }
+  }
+
+  return { dryRun, deleted };
 }
 
 /**

@@ -117,6 +117,8 @@ await env.LARRY.enqueueToChannel({ channelId: channels[0].channelId, content: `<
 - Store the `roleId` and `channelId` that come back and pass them next time, so a rename in Discord doesn't make Larry create a second one.
 - `rename: true` on an entry keeps the name in step: a role or channel found by its ID under a different name is renamed to the one asked for. Without it Larry never renames anything. Discord allows a channel only two renames in ten minutes.
 
+**`deleteRoles()` and `deleteChannels()`** take IDs and remove them for good: a deleted role is gone for everyone who held it, and a deleted channel takes its messages with it. Neither can be undone. They sit behind the same fences as everything else here: no role with moderation permissions, no bot's role, and only text channels under a category in `CHANNEL_CATEGORIES`. One that is already gone comes back as `gone`, not an error. Both take `dryRun`.
+
 `sendToChannel()` and `enqueueToChannel()` post by channel ID, and refuse any channel that isn't a text channel under a category in `CHANNEL_CATEGORIES`.
 
 Setup, once:

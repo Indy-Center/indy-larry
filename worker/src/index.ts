@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChannelIdSend, ChannelSend, ChannelsSync, DirectSend, LarryRpc, RolesSync } from './client/api';
-import { prepareChannelIdSend, syncChannels } from './managed-channels';
-import { syncRoles } from './roles';
+import type { ChannelIdSend, ChannelSend, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, RolesSync } from './client/api';
+import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
+import { deleteRoles, syncRoles } from './roles';
 import { consume, enqueue, sendJob, sendNow, type Job, type SendEnv } from './send';
 
 /** Larry's send Worker. Other Workers reach these methods over a service binding; there's no fetch handler. */
@@ -28,6 +28,14 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
 
   syncChannels(request: ChannelsSync) {
     return syncChannels(this.env, request);
+  }
+
+  deleteRoles(request: DeleteRequest) {
+    return deleteRoles(this.env, request);
+  }
+
+  deleteChannels(request: DeleteRequest) {
+    return deleteChannels(this.env, request);
   }
 
   async sendToChannel(request: ChannelIdSend) {

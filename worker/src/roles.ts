@@ -1,5 +1,5 @@
-import type { RoleSync, RoleSyncResult, RolesResult, RolesSync } from './client/api';
-import { discord, DiscordError, guildId, MAX_NAME_LENGTH, SNOWFLAKE, type GuildEnv } from './discord';
+import type { DeleteRequest, DeleteResult, Deletion, RoleSync, RoleSyncResult, RolesResult, RolesSync } from './client/api';
+import { checkIds, discord, DiscordError, guildId, MAX_NAME_LENGTH, SNOWFLAKE, type GuildEnv } from './discord';
 
 /**
  * Roles: who holds which. syncRoles() makes Discord match a list of roles and their members, and
@@ -37,6 +37,14 @@ const POWERFUL =
 
 type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean };
 type DiscordMember = { user?: { id: string }; roles: string[] };
+
+/** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
+function refusal(role: DiscordRole, guild: string): string | null {
+  if (role.id === guild) return `"${role.name}" is @everyone`;
+  if (role.managed) return `"${role.name}" belongs to a bot or an integration`;
+  if (BigInt(role.permissions ?? '0') & POWERFUL) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels`;
+  return null;
+}
 
 /** Check a request before anything is asked of Discord. Throws on the first thing wrong. */
 export function checkRoles(request: RolesSync): RoleSync[] {
@@ -114,9 +122,8 @@ export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<Role
       if (!role && named.length > 1) throw new Error(`${named.length} roles are named "${name}"; give the role's ID`);
 
       if (role) {
-        if (role.id === guild) throw new Error(`"${name}" is @everyone`);
-        if (role.managed) throw new Error(`"${role.name}" belongs to a bot or an integration`);
-        if (BigInt(role.permissions ?? '0') & POWERFUL) throw new Error(`"${role.name}" carries moderation permissions; Larry only manages roles that are labels`);
+        const refused = refusal(role, guild);
+        if (refused) throw new Error(refused);
         result.roleId = role.id;
         // Only a role the caller knows by ID can have drifted: one found by name already has it.
         if (wanted.rename && role.name !== name) {
@@ -168,4 +175,42 @@ export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<Role
   }
 
   return { dryRun, canSeeMembers: members !== null, roles: results };
+}
+
+/** RPC: delete roles outright. One that is already gone counts as done. */
+export async function deleteRoles(env: GuildEnv, request: DeleteRequest): Promise<DeleteResult> {
+  const guild = guildId(env);
+  const ids = checkIds(request);
+  const dryRun = request.dryRun === true;
+  const token = env.DISCORD_TOKEN;
+
+  const roles = ids.length > 0 ? await discord<DiscordRole[]>(token, 'GET', `/guilds/${guild}/roles`) : [];
+  const deleted: Deletion[] = [];
+
+  for (const id of ids) {
+    const role = roles.find((candidate) => candidate.id === id);
+    if (!role) {
+      deleted.push({ id, outcome: 'gone' });
+      continue;
+    }
+    const refused = refusal(role, guild);
+    if (refused) {
+      deleted.push({ id, outcome: 'would-delete', error: refused });
+      continue;
+    }
+    if (dryRun) {
+      deleted.push({ id, outcome: 'would-delete' });
+      continue;
+    }
+    try {
+      await discord(token, 'DELETE', `/guilds/${guild}/roles/${id}`, undefined, 'Role deleted by a caller');
+      deleted.push({ id, outcome: 'deleted' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Role ${id} could not be deleted: ${message}`);
+      deleted.push({ id, outcome: 'would-delete', error: message });
+    }
+  }
+
+  return { dryRun, deleted };
 }

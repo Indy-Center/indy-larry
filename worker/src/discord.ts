@@ -51,6 +51,15 @@ export async function discord<T>(token: string, method: string, route: string, b
   }
 }
 
+/** Check a delete request's IDs. Throws on anything that isn't a list of distinct Discord IDs. */
+export function checkIds(request: { ids?: unknown }): string[] {
+  if (!request || !Array.isArray(request.ids)) throw new Error('Expected { ids: [...] }');
+  for (const id of request.ids) {
+    if (typeof id !== 'string' || !SNOWFLAKE.test(id)) throw new Error(`"${id}" isn't a Discord ID`);
+  }
+  return [...new Set(request.ids as string[])];
+}
+
 /** The server roles and channels are managed in. Throws if GUILD_ID isn't set. */
 export function guildId(env: Pick<SendEnv, 'GUILD_ID'>): string {
   if (!env.GUILD_ID || !SNOWFLAKE.test(env.GUILD_ID)) throw new Error("Larry isn't set up to manage roles or channels: GUILD_ID is missing or isn't a Discord ID");

@@ -148,6 +148,24 @@ export type ChannelsResult = {
   channels: ChannelSyncResult[];
 };
 
+/** What happened to one role or channel a caller asked Larry to delete. */
+export type Deletion = {
+  id: string;
+  /** `gone`: Discord no longer had it, which is the state the caller wanted. */
+  outcome: 'deleted' | 'would-delete' | 'gone';
+  /** Why it was not deleted. The others are unaffected. */
+  error?: string;
+};
+
+export type DeleteRequest = {
+  /** Role IDs for deleteRoles(), channel IDs for deleteChannels(). */
+  ids: string[];
+  /** Report what would be deleted, and delete nothing. */
+  dryRun?: boolean;
+};
+
+export type DeleteResult = { dryRun: boolean; deleted: Deletion[] };
+
 /** Where a message was posted. */
 export type Sent = { channelId: string; messageId: string };
 
@@ -174,6 +192,16 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   syncRoles(request: RolesSync): Promise<RolesResult>;
   /** Find each channel or create it under its category, and report which. Never changes a channel it finds. */
   syncChannels(request: ChannelsSync): Promise<ChannelsResult>;
+  /**
+   * Delete roles outright, for everyone who holds them. **Cannot be undone.** Under the same guard as
+   * syncRoles(): Larry refuses a role with moderation permissions, a bot's role and @everyone.
+   */
+  deleteRoles(request: DeleteRequest): Promise<DeleteResult>;
+  /**
+   * Delete channels and every message in them. **Cannot be undone.** Only text channels under a
+   * category in `CHANNEL_CATEGORIES`; anything else is refused.
+   */
+  deleteChannels(request: DeleteRequest): Promise<DeleteResult>;
   /** Post now to a channel by ID. Throws unless it is under a category in `CHANNEL_CATEGORIES`. */
   sendToChannel(request: ChannelIdSend): Promise<Sent>;
   /** Queue a post to a channel by ID, like enqueue(). The channel is checked before it is queued. */

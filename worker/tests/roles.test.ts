@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkRoles, syncRoles } from '../src/roles';
+import { checkRoles, deleteRoles, syncRoles } from '../src/roles';
 import { fakeDiscord, GUILD, LARRY } from './fake-discord';
 
 const TEACHER = '500000000000000001';
@@ -163,5 +163,49 @@ describe('syncRoles', () => {
 
     expect(result.roles[0]).toMatchObject({ roleId: ROLE, role: 'found' });
     expect(writes).toEqual([]);
+  });
+});
+
+describe('deleteRoles', () => {
+  it('deletes a role, and counts one that is already gone as done', async () => {
+    const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'JR', permissions: '0' }] });
+    const result = await deleteRoles(env, { ids: [ROLE, '600000000000000077'] });
+
+    expect(result.deleted).toEqual([
+      { id: ROLE, outcome: 'deleted' },
+      { id: '600000000000000077', outcome: 'gone' },
+    ]);
+    expect(writes).toEqual([{ method: 'DELETE', path: `/guilds/${GUILD}/roles/${ROLE}`, body: undefined }]);
+  });
+
+  it('deletes nothing in a dry run', async () => {
+    const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'JR' }] });
+    const result = await deleteRoles(env, { ids: [ROLE], dryRun: true });
+
+    expect(result.deleted).toEqual([{ id: ROLE, outcome: 'would-delete' }]);
+    expect(writes).toEqual([]);
+  });
+
+  // The same guard as syncing: a caller cannot delete the server's real roles.
+  it('refuses a role with moderation permissions, a bot role and @everyone', async () => {
+    const writes = fakeDiscord({
+      roles: [
+        { id: '600000000000000010', name: 'Admin', permissions: String(1n << 3n) },
+        { id: '600000000000000012', name: 'SomeBot', permissions: '0', managed: true },
+        { id: GUILD, name: '@everyone', permissions: '0' },
+      ],
+    });
+    const result = await deleteRoles(env, { ids: ['600000000000000010', '600000000000000012', GUILD] });
+
+    expect(result.deleted.map((d) => d.error)).toEqual([
+      expect.stringContaining('moderation permissions'),
+      expect.stringContaining('bot or an integration'),
+      expect.stringContaining('@everyone'),
+    ]);
+    expect(writes).toEqual([]);
+  });
+
+  it('refuses anything that is not a Discord ID', async () => {
+    await expect(deleteRoles(env, { ids: ['JR'] })).rejects.toThrow("isn't a Discord ID");
   });
 });
