@@ -3,3 +3,7 @@
 DISCORD_TOKEN=
 # Channels callers may post to, as name:channelId, comma-separated, e.g. events:111,training:222
 SEND_CHANNELS=
+# Rooms: the server, the category room channels live under, and the role that can see every room
+GUILD_ID=
+ROOM_CATEGORY_ID=
+ROOM_ADMIN_ROLE_ID=

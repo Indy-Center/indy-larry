@@ -30,6 +30,10 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_API_KEY }}
       SEND_CHANNELS: ${{ secrets.ENV_SEND_CHANNELS || vars.ENV_SEND_CHANNELS }}
       CHANNEL_ID: ${{ secrets.ENV_CHANNEL_ID || vars.ENV_CHANNEL_ID }}
+      # Rooms (README, Rooms). Left unset, syncRooms() and the room sends refuse every call.
+      GUILD_ID: ${{ vars.ENV_GUILD_ID }}
+      ROOM_CATEGORY_ID: ${{ vars.ENV_ROOM_CATEGORY_ID }}
+      ROOM_ADMIN_ROLE_ID: ${{ vars.ENV_ROOM_ADMIN_ROLE_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +51,12 @@ jobs:
 
       # SEND_CHANNELS goes in as a plain var, quoted by the shell rather than pasted into a command.
       - name: Deploy
-        run: npx wrangler deploy --var "SEND_CHANNELS:$SEND_CHANNELS"
+        run: >-
+          npx wrangler deploy
+          --var "SEND_CHANNELS:$SEND_CHANNELS"
+          --var "GUILD_ID:$GUILD_ID"
+          --var "ROOM_CATEGORY_ID:$ROOM_CATEGORY_ID"
+          --var "ROOM_ADMIN_ROLE_ID:$ROOM_ADMIN_ROLE_ID"
 
       # Same token as the VPS bot, so messages come from Larry. Re-set on every deploy to stay in step with it.
       - name: Set DISCORD_TOKEN

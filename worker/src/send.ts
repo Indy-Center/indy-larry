@@ -15,6 +15,10 @@ export type SendEnv = {
   DISCORD_TOKEN: string;
   SEND_CHANNELS?: string;
   LARRY_QUEUE: Queue<Job>;
+  /** Rooms (rooms.ts): the server, the category rooms live under, and the role that sees every room. */
+  GUILD_ID?: string;
+  ROOM_CATEGORY_ID?: string;
+  ROOM_ADMIN_ROLE_ID?: string;
 };
 
 /** Where a message goes, once its channel name is resolved. */
@@ -51,6 +55,11 @@ export function prepare(env: Pick<SendEnv, 'SEND_CHANNELS'>, kind: Kind, request
     target = { userId: request.userId };
   }
 
+  return { target, message: checkMessage(request) };
+}
+
+/** Check a message's content and embeds, and shape it for Discord. Throws on anything Discord would refuse. */
+export function checkMessage(request: Pick<ChannelSend, 'content' | 'embeds' | 'allowedMentions'>): Job['message'] {
   const { content, embeds } = request;
   if (content != null && typeof content !== 'string') throw new Error('content must be a string');
   if (embeds != null && !Array.isArray(embeds)) throw new Error('embeds must be an array');
@@ -59,13 +68,10 @@ export function prepare(env: Pick<SendEnv, 'SEND_CHANNELS'>, kind: Kind, request
   if (embeds && embeds.length > MAX_EMBEDS) throw new Error(`Messages are limited to ${MAX_EMBEDS} embeds`);
 
   return {
-    target,
-    message: {
-      content: content || undefined,
-      embeds: embeds?.length ? embeds : undefined,
-      // Pinging the users named in the content is the point of mentioning them; anything wider is opt-in.
-      allowed_mentions: (request.allowedMentions ?? { parse: ['users'] }) as APIAllowedMentions,
-    },
+    content: content || undefined,
+    embeds: embeds?.length ? embeds : undefined,
+    // Pinging the users named in the content is the point of mentioning them; anything wider is opt-in.
+    allowed_mentions: (request.allowedMentions ?? { parse: ['users'] }) as APIAllowedMentions,
   };
 }
 
@@ -117,7 +123,11 @@ function describe(job: Job, outcome: Outcome & { ok: false }): string {
 
 /** RPC: send now and return where it went. Throws with Discord's reason if it's refused. */
 export async function sendNow(env: SendEnv, kind: Kind, request: ChannelSend | DirectSend): Promise<Sent> {
-  const job = prepare(env, kind, request);
+  return sendJob(env, prepare(env, kind, request));
+}
+
+/** Send a checked Job now, waiting out one short rate limit. */
+export async function sendJob(env: Pick<SendEnv, 'DISCORD_TOKEN'>, job: Job): Promise<Sent> {
   let outcome = await deliver(env.DISCORD_TOKEN, job);
   const wait = !outcome.ok && outcome.status === 429 ? outcome.retryAfter : undefined;
   if (wait != null && wait <= MAX_RPC_WAIT_SECONDS) {

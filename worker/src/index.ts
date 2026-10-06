@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChannelSend, DirectSend, LarryRpc } from './client/api';
-import { consume, enqueue, sendNow, type Job, type SendEnv } from './send';
+import type { ChannelSend, DirectSend, LarryRpc, RoomSend, RoomsSync } from './client/api';
+import { prepareRoomSend, syncRooms } from './rooms';
+import { consume, enqueue, sendJob, sendNow, type Job, type SendEnv } from './send';
 
 /** Larry's send Worker. Other Workers reach these methods over a service binding; there's no fetch handler. */
 export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc {
@@ -18,6 +19,18 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
 
   enqueueDirect(request: DirectSend) {
     return enqueue(this.env, 'direct', request);
+  }
+
+  syncRooms(request: RoomsSync) {
+    return syncRooms(this.env, request);
+  }
+
+  async sendRoom(request: RoomSend) {
+    return sendJob(this.env, await prepareRoomSend(this.env, request));
+  }
+
+  async enqueueRoom(request: RoomSend) {
+    await this.env.LARRY_QUEUE.send(await prepareRoomSend(this.env, request));
   }
 
   queue(batch: MessageBatch<Job>) {
