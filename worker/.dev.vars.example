@@ -3,3 +3,7 @@
 DISCORD_TOKEN=
 # Channels callers may post to, as name:channelId, comma-separated, e.g. events:111,training:222
 SEND_CHANNELS=
+# The server whose roles and channels callers may manage
+GUILD_ID=
+# Categories callers may create channels under and post into by ID, as name:categoryId, e.g. training:333
+CHANNEL_CATEGORIES=

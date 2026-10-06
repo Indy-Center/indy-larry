@@ -54,7 +54,7 @@ Other Indy Center Workers can send Discord messages as Larry instead of keeping 
 ```
 
 ```ts
-import type { LarryBinding } from '@indy-center/larry'; // npm install @indy-center/larry
+import type { LarryBinding } from '@indy-center/indy-larry-worker'; // npm install @indy-center/indy-larry-worker
 
 // RPC: sends now and returns { channelId, messageId }; throws if Discord refuses it.
 await env.LARRY.send({
@@ -77,7 +77,59 @@ await env.LARRY.enqueueDirect({ userId, embeds: [{ title: 'Request approved' }] 
 
 The bot needs **View Channel**, **Send Messages** and **Embed Links** in each channel in `SEND_CHANNELS`.
 
-**Types for callers** are published to npm as [`@indy-center/larry`](https://www.npmjs.com/package/@indy-center/larry), like `@indy-center/identity`: install it as a dependency and type the binding as `LARRY: LarryBinding`. It's types only, built from `worker/src/client/`; callers also need `@cloudflare/workers-types` (or `wrangler types`) for `Service` and `Rpc`. It's public so callers install it with no npm login, and it holds nothing that isn't already in this repo. To publish a change to `src/client/`: bump `version` in `worker/package.json`, then from `worker/` run `npm publish` (needs publish rights on the `@indy-center` npm org; `prepublishOnly` builds `dist/`).
+### Roles and channels
+
+Two more things callers can ask Larry to keep in step, separately: who holds a role, and private channels under a category. Neither knows what it is for. Training-tools uses both together (a role per teacher, held by the teacher and their students, and a channel only that role and the training admins see), but an app that only needs roles uses only `syncRoles()`.
+
+```ts
+// Roles: who holds which.
+const { roles } = await env.LARRY.syncRoles({
+  roles: [{ key: 'JR', name: 'JR', members: [teacherId, studentId], exclusive: true }],
+  dryRun: true, // report what would change, and change nothing
+});
+
+// Channels: find or create, under a category Larry is allowed to use.
+const { channels } = await env.LARRY.syncChannels({
+  channels: [{ key: 'JR', category: 'training', name: 'Jo Rivera', visibleTo: [roles[0].roleId, trainingAdminRoleId] }],
+});
+
+// Post to one by ID.
+await env.LARRY.enqueueToChannel({ channelId: channels[0].channelId, content: `<@${studentId}> you're with <@${teacherId}>` });
+```
+
+**`syncRoles()`**
+
+- A role is found by `id` when given, otherwise by exact name, otherwise created with no permissions. Two roles of the same name is an error for that entry; Larry won't guess.
+- Everyone in `members` gets the role. With `exclusive: true`, **everyone else holding it loses it**, however they got it. With `exclusive: false` Larry only ever adds. The caller has to say which.
+- Someone not in the server comes back in `notInServer`; call again later and they are picked up once they join.
+- Larry refuses a role that carries moderation permissions (Administrator, Manage Roles, Kick, Ban and the like), one that belongs to a bot or integration, and @everyone. It manages labels, so that a caller with the binding can't make anyone a moderator.
+
+**`setMemberRole()` and `enqueueMemberRole()`** change one role for one person: `{ userId, roleId, has }`. They are for a single change made on the spot, like a button press, where there is no repeating check behind it to put things right later. `setMemberRole()` does it now and throws if Discord refuses. `enqueueMemberRole()` checks the role, queues the change on `larry-messages` and returns; delivery retries rate limits and Discord outages the way queued messages do, and a change for someone not in the server is logged and dropped. Both sit behind the same guard as `syncRoles()`. To keep a whole role's membership in step, use `syncRoles()`, which needs no queue: it is called again on a schedule and only changes what is out of step.
+
+**`syncChannels()`**
+
+- A channel is found by `id`, otherwise by name under its category, otherwise created there. The name is lowercased and hyphenated the way Discord stores it (`Jo Rivera` → `#jo-rivera`).
+- `category` is a name from `CHANNEL_CATEGORIES` (`name:categoryId`, like `SEND_CHANNELS`). Any other category is refused.
+- A channel Larry **creates** is hidden from everyone but the roles in `visibleTo` and Larry itself. A channel it **finds** keeps its permissions exactly as they are.
+
+**Both**
+
+- `dryRun: true` makes no changes and returns what would happen. Run this first against a server where roles or channels were made by hand.
+- One entry failing (returned with `error`) doesn't stop the others.
+- Store the `roleId` and `channelId` that come back and pass them next time, so a rename in Discord doesn't make Larry create a second one.
+- `rename: true` on an entry keeps the name in step: a role or channel found by its ID under a different name is renamed to the one asked for. Without it Larry never renames anything. Discord allows a channel only two renames in ten minutes.
+
+**`deleteRoles()` and `deleteChannels()`** take IDs and remove them for good: a deleted role is gone for everyone who held it, and a deleted channel takes its messages with it. Neither can be undone. They sit behind the same fences as everything else here: no role with moderation permissions, no bot's role, and only text channels under a category in `CHANNEL_CATEGORIES`. One that is already gone comes back as `gone`, not an error. Both take `dryRun`.
+
+`sendToChannel()` and `enqueueToChannel()` post by channel ID, and refuse any channel that isn't a text channel under a category in `CHANNEL_CATEGORIES`.
+
+Setup, once:
+
+1. Give Larry **Manage Channels** as well as Manage Roles, and move its role above every role it should manage. It can't hand out or remove a role that sits above its own.
+2. In the Discord developer portal, switch on **Server Members Intent** for the bot. Without it Larry can't list who holds a role, so it still adds people but never removes anyone, and `canSeeMembers` comes back `false`.
+3. Add the repository variables `ENV_GUILD_ID` (the server) and `ENV_CHANNEL_CATEGORIES` (e.g. `training:123456789`). Until `ENV_GUILD_ID` is set these methods refuse every call.
+
+**Types for callers** are published to npm as [`@indy-center/indy-larry-worker`](https://www.npmjs.com/package/@indy-center/indy-larry-worker), like `@indy-center/identity`: install it as a dependency and type the binding as `LARRY: LarryBinding`. It's types only, built from `worker/src/client/`; callers also need `@cloudflare/workers-types` (or `wrangler types`) for `Service` and `Rpc`. It's public so callers install it with no npm login, and it holds nothing that isn't already in this repo. To publish a change to `src/client/`: bump `version` in `worker/package.json` and merge. The `publish-types` job in `build-and-deploy.yml` publishes any version npm doesn't have yet, and does nothing when the version is unchanged. It uses npm's trusted publishing, so there is no token to keep: on npmjs.com the package's settings name this repository and the workflow file `build-and-deploy.yml`, with no environment. To publish by hand instead, run `npm publish` from `worker/` (needs publish rights on the `@indy-center` npm org; `prepublishOnly` builds `dist/`).
 
 First time only, before the first deploy that includes the Worker:
 

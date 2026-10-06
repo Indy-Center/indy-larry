@@ -1,2 +1,23 @@
-// Public types of @indy-center/larry 1.0.0.
-export type { AllowedMentions, ChannelSend, DirectSend, LarryBinding, LarryRpc, Message, Sent } from './api';
+// Public types of @indy-center/indy-larry-worker 1.1.0.
+export type {
+  AllowedMentions,
+  ChannelIdSend,
+  ChannelSend,
+  ChannelSyncResult,
+  ChannelsResult,
+  ChannelsSync,
+  DeleteRequest,
+  DeleteResult,
+  Deletion,
+  DirectSend,
+  LarryBinding,
+  LarryRpc,
+  ManagedChannel,
+  MemberRole,
+  Message,
+  RoleSync,
+  RoleSyncResult,
+  RolesResult,
+  RolesSync,
+  Sent,
+} from './api';

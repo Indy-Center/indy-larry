@@ -12,7 +12,8 @@
   },
   // SEND_CHANNELS (name:channelId,...) isn't set here: build-and-deploy.yml passes it from the
   // ENV_SEND_CHANNELS repo variable with --var. DISCORD_TOKEN is a Worker secret set by the same deploy.
-  // For wrangler dev, put both in .dev.vars (see .dev.vars.example).
+  // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables.
+  // For wrangler dev, put them all in .dev.vars (see .dev.vars.example).
   "queues": {
     "producers": [{ "binding": "LARRY_QUEUE", "queue": "larry-messages" }],
     "consumers": [
