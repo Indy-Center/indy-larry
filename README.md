@@ -77,31 +77,52 @@ await env.LARRY.enqueueDirect({ userId, embeds: [{ title: 'Request approved' }] 
 
 The bot needs **View Channel**, **Send Messages** and **Embed Links** in each channel in `SEND_CHANNELS`.
 
-### Rooms
+### Roles and channels
 
-A room is a role plus a private channel that only the role and the room admins can see. Training-tools uses one per teacher: the teacher and their current students hold the role. Larry knows nothing about training; a caller describes the rooms it wants and Larry makes Discord match.
+Two more things callers can ask Larry to keep in step, separately: who holds a role, and private channels under a category. Neither knows what it is for. Training-tools uses both together (a role per teacher, held by the teacher and their students, and a channel only that role and the training admins see), but an app that only needs roles uses only `syncRoles()`.
 
 ```ts
-const result = await env.LARRY.syncRooms({
-  rooms: [{ key: 'JR', role: { name: 'JR' }, channel: { name: 'Jo Rivera' }, members: [teacherId, studentId] }],
+// Roles: who holds which.
+const { roles } = await env.LARRY.syncRoles({
+  roles: [{ key: 'JR', name: 'JR', members: [teacherId, studentId], exclusive: true }],
   dryRun: true, // report what would change, and change nothing
 });
-// Then post to the channel it found or made:
-await env.LARRY.enqueueRoom({ channelId: result.rooms[0].channelId, content: `<@${studentId}> you're with <@${teacherId}>` });
+
+// Channels: find or create, under a category Larry is allowed to use.
+const { channels } = await env.LARRY.syncChannels({
+  channels: [{ key: 'JR', category: 'training', name: 'Jo Rivera', visibleTo: [roles[0].roleId, trainingAdminRoleId] }],
+});
+
+// Post to one by ID.
+await env.LARRY.enqueueToChannel({ channelId: channels[0].channelId, content: `<@${studentId}> you're with <@${teacherId}>` });
 ```
 
-- **Role**: found by `role.id` when given, otherwise by exact name, otherwise created with no permissions. Two roles of the same name is an error for that room; Larry won't guess.
-- **Channel**: found by `channel.id`, otherwise by name under the room category, otherwise created there. The name is lowercased and hyphenated the way Discord stores it (`Jo Rivera` → `#jo-rivera`). A channel Larry **creates** is hidden from everyone but the role, the room admins and Larry. A channel it **finds** is left exactly as it is; its permissions are never changed.
-- **Members**: everyone listed gets the role, and **everyone else holding it loses it**, however they got it. Someone not in the server is returned in `notInServer` and picked up on a later call once they join.
-- **Dry run**: `dryRun: true` makes no changes and returns what it would do. Run this first against a server with rooms made by hand.
-- One room failing (returned with `error`) doesn't stop the others. Callers should store the `roleId` and `channelId` they get back and pass them next time, so a rename in Discord doesn't make Larry create a second one.
-- `sendRoom()` and `enqueueRoom()` post to a room's channel by ID. They refuse any channel that isn't a text channel under the room category, so a caller can't use them to post anywhere else.
+**`syncRoles()`**
+
+- A role is found by `id` when given, otherwise by exact name, otherwise created with no permissions. Two roles of the same name is an error for that entry; Larry won't guess.
+- Everyone in `members` gets the role. With `exclusive: true`, **everyone else holding it loses it**, however they got it. With `exclusive: false` Larry only ever adds. The caller has to say which.
+- Someone not in the server comes back in `notInServer`; call again later and they are picked up once they join.
+- Larry refuses a role that carries moderation permissions (Administrator, Manage Roles, Kick, Ban and the like), one that belongs to a bot or integration, and @everyone. It manages labels, so that a caller with the binding can't make anyone a moderator.
+
+**`syncChannels()`**
+
+- A channel is found by `id`, otherwise by name under its category, otherwise created there. The name is lowercased and hyphenated the way Discord stores it (`Jo Rivera` → `#jo-rivera`).
+- `category` is a name from `CHANNEL_CATEGORIES` (`name:categoryId`, like `SEND_CHANNELS`). Any other category is refused.
+- A channel Larry **creates** is hidden from everyone but the roles in `visibleTo` and Larry itself. A channel it **finds** is left exactly as it is; its permissions are never changed.
+
+**Both**
+
+- `dryRun: true` makes no changes and returns what would happen. Run this first against a server where roles or channels were made by hand.
+- One entry failing (returned with `error`) doesn't stop the others.
+- Store the `roleId` and `channelId` that come back and pass them next time, so a rename in Discord doesn't make Larry create a second one.
+
+`sendToChannel()` and `enqueueToChannel()` post by channel ID, and refuse any channel that isn't a text channel under a category in `CHANNEL_CATEGORIES`.
 
 Setup, once:
 
-1. Give Larry **Manage Channels** as well as Manage Roles, and move its role above every room role. It can't hand out or remove a role that sits above its own.
+1. Give Larry **Manage Channels** as well as Manage Roles, and move its role above every role it should manage. It can't hand out or remove a role that sits above its own.
 2. In the Discord developer portal, switch on **Server Members Intent** for the bot. Without it Larry can't list who holds a role, so it still adds people but never removes anyone, and `canSeeMembers` comes back `false`.
-3. Add the repository variables `ENV_GUILD_ID` (the server), `ENV_ROOM_CATEGORY_ID` (the category rooms live under) and `ENV_ROOM_ADMIN_ROLE_ID` (the role that sees every room). Until all three are set, the room methods refuse every call.
+3. Add the repository variables `ENV_GUILD_ID` (the server) and `ENV_CHANNEL_CATEGORIES` (e.g. `training:123456789`). Until `ENV_GUILD_ID` is set these methods refuse every call.
 
 **Types for callers** are published to npm as [`@indy-center/larry`](https://www.npmjs.com/package/@indy-center/larry), like `@indy-center/identity`: install it as a dependency and type the binding as `LARRY: LarryBinding`. It's types only, built from `worker/src/client/`; callers also need `@cloudflare/workers-types` (or `wrangler types`) for `Service` and `Rpc`. It's public so callers install it with no npm login, and it holds nothing that isn't already in this repo. To publish a change to `src/client/`: bump `version` in `worker/package.json`, then from `worker/` run `npm publish` (needs publish rights on the `@indy-center` npm org; `prepublishOnly` builds `dist/`).
 

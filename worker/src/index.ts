@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChannelSend, DirectSend, LarryRpc, RoomSend, RoomsSync } from './client/api';
-import { prepareRoomSend, syncRooms } from './rooms';
+import type { ChannelIdSend, ChannelSend, ChannelsSync, DirectSend, LarryRpc, RolesSync } from './client/api';
+import { prepareChannelIdSend, syncChannels } from './managed-channels';
+import { syncRoles } from './roles';
 import { consume, enqueue, sendJob, sendNow, type Job, type SendEnv } from './send';
 
 /** Larry's send Worker. Other Workers reach these methods over a service binding; there's no fetch handler. */
@@ -21,16 +22,20 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
     return enqueue(this.env, 'direct', request);
   }
 
-  syncRooms(request: RoomsSync) {
-    return syncRooms(this.env, request);
+  syncRoles(request: RolesSync) {
+    return syncRoles(this.env, request);
   }
 
-  async sendRoom(request: RoomSend) {
-    return sendJob(this.env, await prepareRoomSend(this.env, request));
+  syncChannels(request: ChannelsSync) {
+    return syncChannels(this.env, request);
   }
 
-  async enqueueRoom(request: RoomSend) {
-    await this.env.LARRY_QUEUE.send(await prepareRoomSend(this.env, request));
+  async sendToChannel(request: ChannelIdSend) {
+    return sendJob(this.env, await prepareChannelIdSend(this.env, request));
+  }
+
+  async enqueueToChannel(request: ChannelIdSend) {
+    await this.env.LARRY_QUEUE.send(await prepareChannelIdSend(this.env, request));
   }
 
   queue(batch: MessageBatch<Job>) {

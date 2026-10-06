@@ -15,10 +15,10 @@ export type SendEnv = {
   DISCORD_TOKEN: string;
   SEND_CHANNELS?: string;
   LARRY_QUEUE: Queue<Job>;
-  /** Rooms (rooms.ts): the server, the category rooms live under, and the role that sees every room. */
+  /** The server whose roles and channels Larry manages (roles.ts, managed-channels.ts). */
   GUILD_ID?: string;
-  ROOM_CATEGORY_ID?: string;
-  ROOM_ADMIN_ROLE_ID?: string;
+  /** Categories callers may create channels under and post into by ID, as name:categoryId like SEND_CHANNELS. */
+  CHANNEL_CATEGORIES?: string;
 };
 
 /** Where a message goes, once its channel name is resolved. */

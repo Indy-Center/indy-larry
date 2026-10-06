@@ -39,72 +39,99 @@ export type DirectSend = Message & {
   userId: string;
 };
 
-/** A message to a room's channel, by ID. The channel must sit under Larry's room category. */
-export type RoomSend = Message & {
-  /** The channel ID syncRooms() returned for the room. */
+/** A message to a channel by ID. The channel must sit under a category in Larry's `CHANNEL_CATEGORIES`. */
+export type ChannelIdSend = Message & {
+  /** A channel ID, e.g. one syncChannels() returned. */
   channelId: string;
 };
 
-/**
- * A room: a role, and a private channel only that role and the room admins can see. Used for a teacher
- * and their students, but nothing here knows that.
- */
-export type Room = {
-  /** The caller's own name for the room, echoed back in the result. */
+/** One role and who should hold it. */
+export type RoleSync = {
+  /** The caller's own name for this entry, echoed back in the result. */
   key: string;
-  /**
-   * The role. Found by `id` when given and still there, otherwise by exact name; created if neither
-   * finds one. Two roles with the name is an error for this room, not a guess.
-   */
-  role: { id?: string | null; name: string };
-  /**
-   * The channel. Found by `id` when given and still there, otherwise by name under the room category;
-   * created there if neither finds one. The name is lowercased and hyphenated the way Discord does it.
-   * A channel Larry creates is visible to the role and the room admins only. One it finds is left
-   * exactly as it is: its permissions are never changed.
-   */
-  channel: { id?: string | null; name: string };
-  /**
-   * Discord user IDs who should hold the role. **Everyone else holding it loses it**, however they
-   * got it. Someone not in the server is reported in `notInServer` and tried again next time.
-   */
+  /** Found by `id` when given and still there, otherwise by exact `name`; created (with no permissions) if neither finds one. */
+  id?: string | null;
+  name: string;
+  /** Discord user IDs who should hold the role. Someone not in the server is reported and can be tried again later. */
   members: string[];
+  /**
+   * True: **everyone not listed loses the role**, however they got it. False: Larry only adds, and
+   * never takes the role from anyone. Required, because one of those is destructive.
+   */
+  exclusive: boolean;
 };
 
-export type RoomsSync = {
-  rooms: Room[];
+export type RolesSync = {
+  roles: RoleSync[];
   /** Work out and report what would change, and change nothing. */
   dryRun?: boolean;
 };
 
-export type RoomResult = {
+export type RoleSyncResult = {
   key: string;
-  /** Null only when a dry run would create it, or the room failed. */
+  /** Null only when a dry run would create it, or the entry failed. */
   roleId: string | null;
   role: 'found' | 'created' | 'would-create';
+  /** User IDs given the role (or who would be, in a dry run). */
+  added: string[];
+  /** User IDs the role was taken from (or would be). Always empty unless `exclusive`. */
+  removed: string[];
+  /** Wanted members Discord does not have in the server. */
+  notInServer: string[];
+  /** Why this role could not be synced. The others are unaffected. */
+  error?: string;
+};
+
+export type RolesResult = {
+  dryRun: boolean;
+  /**
+   * False when Larry could not list the server's members, which needs the Server Members intent
+   * switched on for the bot. Roles are still added, but **nobody is removed**, and `notInServer` is
+   * only learned by trying.
+   */
+  canSeeMembers: boolean;
+  roles: RoleSyncResult[];
+};
+
+/** One private text channel Larry should find or create. */
+export type ManagedChannel = {
+  /** The caller's own name for this entry, echoed back in the result. */
+  key: string;
+  /** A category name from Larry's `CHANNEL_CATEGORIES` setting, e.g. `'training'`. Any other name is rejected. */
+  category: string;
+  /**
+   * Found by `id` when given and still in the category, otherwise by `name` there; created if neither
+   * finds one. The name is lowercased and hyphenated the way Discord does it.
+   */
+  id?: string | null;
+  name: string;
+  /**
+   * Role IDs that can see and post in the channel **when Larry creates it**; nobody else can. A channel
+   * Larry finds is left exactly as it is: its permissions are never changed.
+   */
+  visibleTo: string[];
+};
+
+export type ChannelsSync = {
+  channels: ManagedChannel[];
+  /** Work out and report what would change, and change nothing. */
+  dryRun?: boolean;
+};
+
+export type ChannelSyncResult = {
+  key: string;
+  /** Null only when a dry run would create it, or the entry failed. */
   channelId: string | null;
   /** The channel's name as Discord has it, or would. */
   channelName: string;
   channel: 'found' | 'created' | 'would-create';
-  /** User IDs given the role (or who would be, in a dry run). */
-  added: string[];
-  /** User IDs the role was taken from (or would be). */
-  removed: string[];
-  /** Wanted members Discord does not have in the server. */
-  notInServer: string[];
-  /** Why the room could not be synced. Other rooms are unaffected. */
+  /** Why this channel could not be synced. The others are unaffected. */
   error?: string;
 };
 
-export type RoomsResult = {
+export type ChannelsResult = {
   dryRun: boolean;
-  /**
-   * False when Larry could not list the server's members, which needs the Server Members intent
-   * switched on for the bot. Roles are still added, but nobody is removed, and `notInServer` is
-   * only learned by trying.
-   */
-  canSeeMembers: boolean;
-  rooms: RoomResult[];
+  channels: ChannelSyncResult[];
 };
 
 /** Where a message was posted. */
@@ -127,14 +154,16 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   /** Queue a DM, like enqueue(). */
   enqueueDirect(request: DirectSend): Promise<void>;
   /**
-   * Make each room's role, channel and membership match what is asked for, and report what changed.
-   * One room failing does not stop the rest. Throws if rooms are not set up on Larry.
+   * Make each role's membership match what is asked for, and report what changed. One role failing
+   * does not stop the rest. Refuses roles that carry moderation permissions. Throws if `GUILD_ID` isn't set.
    */
-  syncRooms(request: RoomsSync): Promise<RoomsResult>;
-  /** Post now to a room's channel. Throws if the channel is not under the room category. */
-  sendRoom(request: RoomSend): Promise<Sent>;
-  /** Queue a post to a room's channel, like enqueue(). The channel is checked before it is queued. */
-  enqueueRoom(request: RoomSend): Promise<void>;
+  syncRoles(request: RolesSync): Promise<RolesResult>;
+  /** Find each channel or create it under its category, and report which. Never changes a channel it finds. */
+  syncChannels(request: ChannelsSync): Promise<ChannelsResult>;
+  /** Post now to a channel by ID. Throws unless it is under a category in `CHANNEL_CATEGORIES`. */
+  sendToChannel(request: ChannelIdSend): Promise<Sent>;
+  /** Queue a post to a channel by ID, like enqueue(). The channel is checked before it is queued. */
+  enqueueToChannel(request: ChannelIdSend): Promise<void>;
 }
 
 /** The binding's type in a caller's `Env`: `LARRY: LarryBinding`. */
