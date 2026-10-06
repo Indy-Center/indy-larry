@@ -1,4 +1,5 @@
-import type { DeleteRequest, DeleteResult, Deletion, RoleSync, RoleSyncResult, RolesResult, RolesSync } from './client/api';
+import type { DeleteRequest, DeleteResult, Deletion, MemberRole, RoleSync, RoleSyncResult, RolesResult, RolesSync } from './client/api';
+import type { RoleJob } from './send';
 import { checkIds, discord, DiscordError, guildId, MAX_NAME_LENGTH, SNOWFLAKE, type GuildEnv } from './discord';
 
 /**
@@ -213,4 +214,45 @@ export async function deleteRoles(env: GuildEnv, request: DeleteRequest): Promis
   }
 
   return { dryRun, deleted };
+}
+
+/**
+ * Check one role change and turn it into a queue job. The role is looked up, so the guard that
+ * protects syncRoles() protects this too: no role with moderation permissions, no bot's role.
+ */
+export async function prepareMemberRole(env: GuildEnv, request: MemberRole): Promise<RoleJob> {
+  const guild = guildId(env);
+  if (!request || typeof request !== 'object') throw new Error('Expected { userId, roleId, has }');
+  if (typeof request.userId !== 'string' || !SNOWFLAKE.test(request.userId)) throw new Error(`"${request.userId}" isn't a Discord user ID`);
+  if (typeof request.roleId !== 'string' || !SNOWFLAKE.test(request.roleId)) throw new Error(`"${request.roleId}" isn't a Discord role ID`);
+  if (typeof request.has !== 'boolean') throw new Error('has must be true or false');
+
+  const roles = await discord<DiscordRole[]>(env.DISCORD_TOKEN, 'GET', `/guilds/${guild}/roles`);
+  const role = roles.find((candidate) => candidate.id === request.roleId);
+  if (!role) throw new Error(`There is no role ${request.roleId} on the server`);
+  const refused = refusal(role, guild);
+  if (refused) throw new Error(refused);
+
+  return { memberRole: { guildId: guild, userId: request.userId, roleId: request.roleId, has: request.has } };
+}
+
+/** What Discord said to one attempt at a role change. Network errors throw. */
+export type MemberRoleOutcome = { ok: true } | { ok: false; status: number; error: string; notInServer: boolean };
+
+/** Make one attempt at a checked role change. Giving a role someone has, or taking one they lack, succeeds. */
+export async function applyMemberRole(token: string, change: RoleJob['memberRole']): Promise<MemberRoleOutcome> {
+  try {
+    await discord(token, change.has ? 'PUT' : 'DELETE', `/guilds/${change.guildId}/members/${change.userId}/roles/${change.roleId}`, undefined, 'Role change by a caller');
+    return { ok: true };
+  } catch (error) {
+    if (!(error instanceof DiscordError)) throw error;
+    return { ok: false, status: error.status, error: error.message, notInServer: error.status === 404 && error.code === UNKNOWN_MEMBER };
+  }
+}
+
+/** RPC: make one role change now. Throws with Discord's reason if it's refused. */
+export async function setMemberRole(env: GuildEnv, request: MemberRole): Promise<void> {
+  const job = await prepareMemberRole(env, request);
+  const outcome = await applyMemberRole(env.DISCORD_TOKEN, job.memberRole);
+  if (!outcome.ok) throw new Error(outcome.notInServer ? `User ${request.userId} isn't in the server` : outcome.error);
 }

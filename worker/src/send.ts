@@ -1,5 +1,6 @@
 import { Routes, type APIAllowedMentions, type RESTPostAPIChannelMessageJSONBody } from 'discord-api-types/v10';
 import { parseChannels } from './channels';
+import { applyMemberRole } from './roles';
 import type { ChannelSend, DirectSend, Sent } from './client/api';
 
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -14,7 +15,7 @@ const CANNOT_DM = 50007;
 export type SendEnv = {
   DISCORD_TOKEN: string;
   SEND_CHANNELS?: string;
-  LARRY_QUEUE: Queue<Job>;
+  LARRY_QUEUE: Queue<QueueJob>;
   /** The server whose roles and channels Larry manages (roles.ts, managed-channels.ts). */
   GUILD_ID?: string;
   /** Categories callers may create channels under and post into by ID, as name:categoryId like SEND_CHANNELS. */
@@ -26,6 +27,12 @@ export type Target = { channelId: string } | { userId: string };
 
 /** A checked message, ready for Discord. Also the body of a message on larry-messages. */
 export type Job = { target: Target; message: RESTPostAPIChannelMessageJSONBody };
+
+/** A checked role change for one person (roles.ts). The other thing larry-messages carries. */
+export type RoleJob = { memberRole: { guildId: string; userId: string; roleId: string; has: boolean } };
+
+/** Anything on larry-messages. A body with no `memberRole` is a message, as every body was before 1.1.0. */
+export type QueueJob = Job | RoleJob;
 
 /** What Discord said to one attempt. */
 type Outcome =
@@ -161,10 +168,16 @@ export async function enqueue(env: SendEnv, kind: Kind, request: ChannelSend | D
  * invocation instead of a log line nobody reads. Every message is acked or retried by then, and Queues
  * honours those whether or not the handler throws, so nothing is redelivered because of it.
  */
-export async function consume(batch: MessageBatch<Job>, env: Pick<SendEnv, 'DISCORD_TOKEN'>): Promise<void> {
+export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 'DISCORD_TOKEN'>): Promise<void> {
   const setupFaults: string[] = [];
 
   for (const message of batch.messages) {
+    if ('memberRole' in message.body) {
+      const fault = await consumeRoleJob(message as Message<RoleJob>, env.DISCORD_TOKEN);
+      if (fault) setupFaults.push(fault);
+      continue;
+    }
+
     const job = message.body;
     // Same nonce on every attempt of this queue message.
     const nonce = message.id.replace(/-/g, '').slice(0, MAX_NONCE_LENGTH);
@@ -194,6 +207,40 @@ export async function consume(batch: MessageBatch<Job>, env: Pick<SendEnv, 'DISC
   }
 
   if (setupFaults.length > 0) {
-    throw new Error(`Larry can't post where it was asked to. Check the bot's permissions and SEND_CHANNELS. ${setupFaults.join(' | ')}`);
+    throw new Error(`Larry can't do what it was asked to. Check the bot's permissions, its role's position and SEND_CHANNELS. ${setupFaults.join(' | ')}`);
   }
+}
+
+/**
+ * One queued role change, by the same rules as a message: retry what might pass, drop what won't.
+ * Returns the reason when the refusal is Larry's own setup, for consume() to fail the run with.
+ */
+async function consumeRoleJob(message: Message<RoleJob>, token: string): Promise<string | null> {
+  const { memberRole } = message.body;
+  const what = `${memberRole.has ? 'Giving' : 'Taking'} role ${memberRole.roleId} ${memberRole.has ? 'to' : 'from'} user ${memberRole.userId}`;
+
+  let outcome: Awaited<ReturnType<typeof applyMemberRole>>;
+  try {
+    outcome = await applyMemberRole(token, memberRole);
+  } catch (error) {
+    console.warn(`${what} failed, retrying: ${String(error)}`);
+    message.retry({ delaySeconds: 10 * message.attempts });
+    return null;
+  }
+
+  if (outcome.ok) {
+    message.ack();
+    return null;
+  }
+  if (outcome.status === 429 || outcome.status >= 500) {
+    message.retry({ delaySeconds: 10 * message.attempts });
+    return null;
+  }
+
+  const reason = `${what} was refused: ${outcome.error}; dropping it`;
+  console.error(reason);
+  message.ack();
+  // Someone who isn't in the server is nobody's fault. Anything else here is permissions, the
+  // role's position or a role that has gone: Larry's setup, or the caller's stale ID.
+  return outcome.notInServer ? null : reason;
 }

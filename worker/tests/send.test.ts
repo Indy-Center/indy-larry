@@ -254,7 +254,7 @@ describe('consume', () => {
       [{ message: '401: Unauthorized', code: 0 }, 401],
     ] as const) {
       vi.mocked(fetch).mockResolvedValue(json(body, status));
-      await expect(consume(makeBatch(makeMessage(channelJob)), makeEnv())).rejects.toThrow("Larry can't post");
+      await expect(consume(makeBatch(makeMessage(channelJob)), makeEnv())).rejects.toThrow("Larry can't do what it was asked to");
     }
   });
 

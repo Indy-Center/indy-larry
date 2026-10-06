@@ -62,6 +62,54 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.ENV_DISCORD_TOKEN }}
         run: printf '%s' "$DISCORD_TOKEN" | npx wrangler secret put DISCORD_TOKEN
 
+  # Publishes the callers' types (worker/src/client) to npm when worker/package.json names a version
+  # npm doesn't have yet. Merging without a version bump publishes nothing. Needs the NPM_TOKEN repo
+  # secret: an npm access token allowed to publish @indy-center/indy-larry-worker. Without it this job
+  # says so and passes, so a missing token never blocks a deploy.
+  publish-types:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets npm record which commit and workflow built the package
+    defaults:
+      run:
+        working-directory: worker
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Is this version on npm already?
+        id: version
+        run: |
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm; nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::$name@$version is not on npm, and the NPM_TOKEN secret is not set, so it was not published."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.version.outputs.publish == 'true'
+        run: npm ci
+
+      # prepublishOnly builds dist/ from src/client first.
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        run: npm publish --provenance --access public
+
   build-and-deploy:
     needs: ci # skipped if any check fails
     runs-on: ubuntu-latest

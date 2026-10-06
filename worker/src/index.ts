@@ -1,8 +1,8 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChannelIdSend, ChannelSend, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, RolesSync } from './client/api';
+import type { ChannelIdSend, ChannelSend, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
-import { deleteRoles, syncRoles } from './roles';
-import { consume, enqueue, sendJob, sendNow, type Job, type SendEnv } from './send';
+import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
+import { consume, enqueue, sendJob, sendNow, type QueueJob, type SendEnv } from './send';
 
 /** Larry's send Worker. Other Workers reach these methods over a service binding; there's no fetch handler. */
 export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc {
@@ -30,6 +30,14 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
     return syncChannels(this.env, request);
   }
 
+  setMemberRole(request: MemberRole) {
+    return setMemberRole(this.env, request);
+  }
+
+  async enqueueMemberRole(request: MemberRole) {
+    await this.env.LARRY_QUEUE.send(await prepareMemberRole(this.env, request));
+  }
+
   deleteRoles(request: DeleteRequest) {
     return deleteRoles(this.env, request);
   }
@@ -46,7 +54,7 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
     await this.env.LARRY_QUEUE.send(await prepareChannelIdSend(this.env, request));
   }
 
-  queue(batch: MessageBatch<Job>) {
+  queue(batch: MessageBatch<QueueJob>) {
     return consume(batch, this.env);
   }
 }

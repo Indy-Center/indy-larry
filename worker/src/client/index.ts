@@ -13,6 +13,7 @@ export type {
   LarryBinding,
   LarryRpc,
   ManagedChannel,
+  MemberRole,
   Message,
   RoleSync,
   RoleSyncResult,

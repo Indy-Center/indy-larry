@@ -148,6 +148,15 @@ export type ChannelsResult = {
   channels: ChannelSyncResult[];
 };
 
+/** One person and one role: whether they should hold it. */
+export type MemberRole = {
+  /** The person's Discord user ID. */
+  userId: string;
+  roleId: string;
+  /** True to give them the role, false to take it away. Saying it again changes nothing. */
+  has: boolean;
+};
+
 /** What happened to one role or channel a caller asked Larry to delete. */
 export type Deletion = {
   id: string;
@@ -192,6 +201,18 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   syncRoles(request: RolesSync): Promise<RolesResult>;
   /** Find each channel or create it under its category, and report which. Never changes a channel it finds. */
   syncChannels(request: ChannelsSync): Promise<ChannelsResult>;
+  /**
+   * Give one person a role, or take it away, now. For a single change made on the spot (a button
+   * press); to keep a whole role's membership in step, use syncRoles(). Under the same guard as
+   * syncRoles(). Throws if Discord refuses, including when the person isn't in the server.
+   */
+  setMemberRole(request: MemberRole): Promise<void>;
+  /**
+   * Queue the same change and return once it's queued. Delivery retries rate limits and Discord
+   * outages, so the caller needs no retry of its own. The role is checked before it is queued; a
+   * change for someone not in the server is logged and dropped.
+   */
+  enqueueMemberRole(request: MemberRole): Promise<void>;
   /**
    * Delete roles outright, for everyone who holds them. **Cannot be undone.** Under the same guard as
    * syncRoles(): Larry refuses a role with moderation permissions, a bot's role and @everyone.

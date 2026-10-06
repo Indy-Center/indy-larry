@@ -10,6 +10,8 @@ export type Server = {
   members?: { user: { id: string }; roles: string[] }[] | null;
   /** User IDs Discord answers "Unknown Member" for when a role is added. */
   unknown?: string[];
+  /** IDs (of anything) Discord answers "Missing Permissions" for on a write. */
+  forbidden?: string[];
 };
 
 export type Write = { method: string; path: string; body?: Record<string, unknown> };
@@ -40,6 +42,7 @@ export function fakeDiscord(server: Server): Write[] {
       writes.push({ method, path, body });
       if (method === 'POST' && path === `/guilds/${GUILD}/roles`) return json({ id: '600000000000000099', name: body!.name, permissions: '0' });
       if (method === 'POST' && path === `/guilds/${GUILD}/channels`) return json({ id: '700000000000000099', ...body });
+      if ((server.forbidden ?? []).some((id) => path.includes(id))) return json({ message: 'Missing Permissions', code: 50013 }, 403);
       if (method === 'PUT' && (server.unknown ?? []).some((id) => path.includes(id))) return json({ message: 'Unknown Member', code: 10007 }, 404);
       return new Response(null, { status: 204 });
     }),

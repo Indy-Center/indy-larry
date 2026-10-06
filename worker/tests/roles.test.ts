@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkRoles, deleteRoles, syncRoles } from '../src/roles';
+import { checkRoles, deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from '../src/roles';
+import { consume, type QueueJob } from '../src/send';
 import { fakeDiscord, GUILD, LARRY } from './fake-discord';
 
 const TEACHER = '500000000000000001';
@@ -207,5 +208,85 @@ describe('deleteRoles', () => {
 
   it('refuses anything that is not a Discord ID', async () => {
     await expect(deleteRoles(env, { ids: ['JR'] })).rejects.toThrow("isn't a Discord ID");
+  });
+});
+
+describe('prepareMemberRole', () => {
+  it('turns a checked request into a queue job', async () => {
+    fakeDiscord({ roles: [{ id: ROLE, name: 'JR', permissions: '0' }] });
+    expect(await prepareMemberRole(env, { userId: STUDENT, roleId: ROLE, has: true })).toEqual({
+      memberRole: { guildId: GUILD, userId: STUDENT, roleId: ROLE, has: true },
+    });
+  });
+
+  // Checked before anything is queued, so a queued job is always one Larry may do.
+  it('refuses a role with moderation permissions, one that does not exist, and a bad request', async () => {
+    fakeDiscord({ roles: [{ id: ROLE, name: 'Admin', permissions: String(1n << 3n) }] });
+    await expect(prepareMemberRole(env, { userId: STUDENT, roleId: ROLE, has: true })).rejects.toThrow('moderation permissions');
+    await expect(prepareMemberRole(env, { userId: STUDENT, roleId: '600000000000000077', has: true })).rejects.toThrow('There is no role');
+    await expect(prepareMemberRole(env, { userId: 'jo', roleId: ROLE, has: true })).rejects.toThrow("isn't a Discord user ID");
+    await expect(prepareMemberRole(env, { userId: STUDENT, roleId: ROLE } as never)).rejects.toThrow('has must be true or false');
+  });
+});
+
+describe('setMemberRole', () => {
+  it('gives the role now, or takes it away', async () => {
+    const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'JR' }] });
+    await setMemberRole(env, { userId: STUDENT, roleId: ROLE, has: true });
+    await setMemberRole(env, { userId: STUDENT, roleId: ROLE, has: false });
+
+    expect(writes.map((w) => `${w.method} ${w.path}`)).toEqual([
+      `PUT /guilds/${GUILD}/members/${STUDENT}/roles/${ROLE}`,
+      `DELETE /guilds/${GUILD}/members/${STUDENT}/roles/${ROLE}`,
+    ]);
+  });
+
+  it('says so when the person is not in the server', async () => {
+    fakeDiscord({ roles: [{ id: ROLE, name: 'JR' }], unknown: [STRANGER] });
+    await expect(setMemberRole(env, { userId: STRANGER, roleId: ROLE, has: true })).rejects.toThrow("isn't in the server");
+  });
+});
+
+describe('consume, for a queued role change', () => {
+  const job = (userId: string): QueueJob => ({ memberRole: { guildId: GUILD, userId, roleId: ROLE, has: true } });
+  const queued = (body: QueueJob, attempts = 1) => ({ id: 'a1b2c3d4-e5f6-4789-abcd-ef0123456789', body, attempts, ack: vi.fn(), retry: vi.fn() });
+  const batch = (...messages: ReturnType<typeof queued>[]) => ({ messages }) as unknown as MessageBatch<QueueJob>;
+
+  it('makes the change, then acks', async () => {
+    const writes = fakeDiscord({});
+    const message = queued(job(STUDENT));
+    await consume(batch(message), { DISCORD_TOKEN: 'token' });
+
+    expect(writes).toEqual([{ method: 'PUT', path: `/guilds/${GUILD}/members/${STUDENT}/roles/${ROLE}`, body: undefined }]);
+    expect(message.ack).toHaveBeenCalledOnce();
+  });
+
+  it('drops a change for someone not in the server without failing the run', async () => {
+    fakeDiscord({ unknown: [STRANGER] });
+    const message = queued(job(STRANGER));
+    await consume(batch(message), { DISCORD_TOKEN: 'token' });
+
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  // The role sits above Larry's, or Manage Roles is gone: someone has to fix Larry.
+  it('fails the run when Larry is not allowed to, after handling the rest of the batch', async () => {
+    fakeDiscord({ forbidden: [STRANGER] });
+    const refused = queued(job(STRANGER));
+    const fine = queued(job(STUDENT));
+
+    await expect(consume(batch(refused, fine), { DISCORD_TOKEN: 'token' })).rejects.toThrow('Missing Permissions');
+    expect(refused.ack).toHaveBeenCalledOnce();
+    expect(fine.ack).toHaveBeenCalledOnce();
+  });
+
+  it('retries when Discord is down', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('oops', { status: 502 })));
+    const message = queued(job(STUDENT), 2);
+    await consume(batch(message), { DISCORD_TOKEN: 'token' });
+
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 20 });
+    expect(message.ack).not.toHaveBeenCalled();
   });
 });
