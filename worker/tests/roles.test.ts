@@ -149,6 +149,14 @@ describe('syncRoles', () => {
     expect(result.roles[1]).toMatchObject({ key: 'SW', role: 'found' });
   });
 
+  it('renames a role it knows by ID when asked to keep the name in step', async () => {
+    const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'JX' }], members: [member(TEACHER, ROLE), member(STUDENT, ROLE)] });
+    const result = await syncRoles(env, { roles: [{ ...role, id: ROLE, rename: true }] });
+
+    expect(result.roles[0]).toMatchObject({ roleId: ROLE, role: 'found', renamedFrom: 'JX' });
+    expect(writes).toEqual([{ method: 'PATCH', path: `/guilds/${GUILD}/roles/${ROLE}`, body: { name: 'JR' } }]);
+  });
+
   it('uses the ID it is given over a name that has since changed', async () => {
     const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'Renamed' }], members: [member(TEACHER, ROLE), member(STUDENT, ROLE)] });
     const result = await syncRoles(env, { roles: [{ ...role, id: ROLE }] });

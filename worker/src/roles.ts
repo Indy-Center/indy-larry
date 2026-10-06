@@ -118,6 +118,12 @@ export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<Role
         if (role.managed) throw new Error(`"${role.name}" belongs to a bot or an integration`);
         if (BigInt(role.permissions ?? '0') & POWERFUL) throw new Error(`"${role.name}" carries moderation permissions; Larry only manages roles that are labels`);
         result.roleId = role.id;
+        // Only a role the caller knows by ID can have drifted: one found by name already has it.
+        if (wanted.rename && role.name !== name) {
+          if (!dryRun) await discord(token, 'PATCH', `/guilds/${guild}/roles/${role.id}`, { name }, 'Role sync: renamed');
+          result.renamedFrom = role.name;
+          role.name = name;
+        }
       } else if (dryRun) {
         result.role = 'would-create';
       } else {

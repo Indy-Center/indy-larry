@@ -79,6 +79,22 @@ describe('syncChannels', () => {
     expect(writes).toEqual([]);
   });
 
+  it('renames a channel it knows by ID when asked to, and touches nothing else', async () => {
+    const writes = fakeDiscord({ channels: [{ id: CHANNEL, name: 'joanna-rivera', type: 0, parent_id: CATEGORY }] });
+    const result = await syncChannels(env, { channels: [{ ...wanted, id: CHANNEL, rename: true }] });
+
+    expect(result.channels[0]).toMatchObject({ channelId: CHANNEL, channel: 'found', channelName: 'jo-rivera', renamedFrom: 'joanna-rivera' });
+    expect(writes).toEqual([{ method: 'PATCH', path: `/channels/${CHANNEL}`, body: { name: 'jo-rivera' } }]);
+  });
+
+  it('only reports the rename in a dry run', async () => {
+    const writes = fakeDiscord({ channels: [{ id: CHANNEL, name: 'joanna-rivera', type: 0, parent_id: CATEGORY }] });
+    const result = await syncChannels(env, { channels: [{ ...wanted, id: CHANNEL, rename: true }], dryRun: true });
+
+    expect(result.channels[0]!.renamedFrom).toBe('joanna-rivera');
+    expect(writes).toEqual([]);
+  });
+
   it('uses the ID it is given over a name that has since changed', async () => {
     const writes = fakeDiscord({ channels: [{ id: CHANNEL, name: 'renamed-by-hand', type: 0, parent_id: CATEGORY }] });
     const result = await syncChannels(env, { channels: [{ ...wanted, id: CHANNEL }] });

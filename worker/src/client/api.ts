@@ -52,6 +52,11 @@ export type RoleSync = {
   /** Found by `id` when given and still there, otherwise by exact `name`; created (with no permissions) if neither finds one. */
   id?: string | null;
   name: string;
+  /**
+   * True: a role found by `id` whose name has drifted from `name` is renamed to it. Leave it out and
+   * Larry never renames a role.
+   */
+  rename?: boolean;
   /** Discord user IDs who should hold the role. Someone not in the server is reported and can be tried again later. */
   members: string[];
   /**
@@ -72,6 +77,8 @@ export type RoleSyncResult = {
   /** Null only when a dry run would create it, or the entry failed. */
   roleId: string | null;
   role: 'found' | 'created' | 'would-create';
+  /** The name it had before Larry renamed it (or would, in a dry run). */
+  renamedFrom?: string;
   /** User IDs given the role (or who would be, in a dry run). */
   added: string[];
   /** User IDs the role was taken from (or would be). Always empty unless `exclusive`. */
@@ -106,8 +113,13 @@ export type ManagedChannel = {
   id?: string | null;
   name: string;
   /**
+   * True: a channel found by `id` whose name has drifted from `name` is renamed to it. Nothing else
+   * about a found channel is ever changed. Leave it out and Larry never renames a channel.
+   */
+  rename?: boolean;
+  /**
    * Role IDs that can see and post in the channel **when Larry creates it**; nobody else can. A channel
-   * Larry finds is left exactly as it is: its permissions are never changed.
+   * Larry finds keeps its permissions exactly as they are.
    */
   visibleTo: string[];
 };
@@ -125,6 +137,8 @@ export type ChannelSyncResult = {
   /** The channel's name as Discord has it, or would. */
   channelName: string;
   channel: 'found' | 'created' | 'would-create';
+  /** The name it had before Larry renamed it (or would, in a dry run). */
+  renamedFrom?: string;
   /** Why this channel could not be synced. The others are unaffected. */
   error?: string;
 };

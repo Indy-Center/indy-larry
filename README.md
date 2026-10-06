@@ -108,13 +108,14 @@ await env.LARRY.enqueueToChannel({ channelId: channels[0].channelId, content: `<
 
 - A channel is found by `id`, otherwise by name under its category, otherwise created there. The name is lowercased and hyphenated the way Discord stores it (`Jo Rivera` → `#jo-rivera`).
 - `category` is a name from `CHANNEL_CATEGORIES` (`name:categoryId`, like `SEND_CHANNELS`). Any other category is refused.
-- A channel Larry **creates** is hidden from everyone but the roles in `visibleTo` and Larry itself. A channel it **finds** is left exactly as it is; its permissions are never changed.
+- A channel Larry **creates** is hidden from everyone but the roles in `visibleTo` and Larry itself. A channel it **finds** keeps its permissions exactly as they are.
 
 **Both**
 
 - `dryRun: true` makes no changes and returns what would happen. Run this first against a server where roles or channels were made by hand.
 - One entry failing (returned with `error`) doesn't stop the others.
 - Store the `roleId` and `channelId` that come back and pass them next time, so a rename in Discord doesn't make Larry create a second one.
+- `rename: true` on an entry keeps the name in step: a role or channel found by its ID under a different name is renamed to the one asked for. Without it Larry never renames anything. Discord allows a channel only two renames in ten minutes.
 
 `sendToChannel()` and `enqueueToChannel()` post by channel ID, and refuse any channel that isn't a text channel under a category in `CHANNEL_CATEGORIES`.
 

@@ -102,9 +102,16 @@ export async function syncChannels(env: GuildEnv, request: ChannelsSync): Promis
       if (!channel && sameName.length > 1) throw new Error(`${sameName.length} channels are named "${name}"; give the channel's ID`);
 
       if (channel) {
-        // Found, so left as it is: its permissions were set by someone and are not Larry's to change.
+        // Found, so its permissions are left as they are: someone set them, and they are not Larry's to change.
         result.channelId = channel.id;
         result.channelName = channel.name;
+        // Only a channel the caller knows by ID can have drifted: one found by name already has it.
+        if (wanted.rename && channel.name !== name) {
+          if (!dryRun) await discord(token, 'PATCH', `/channels/${channel.id}`, { name }, 'Channel sync: renamed');
+          result.renamedFrom = channel.name;
+          result.channelName = name;
+          channel.name = name;
+        }
       } else if (dryRun) {
         result.channel = 'would-create';
       } else {
