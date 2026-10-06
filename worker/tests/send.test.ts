@@ -226,14 +226,60 @@ describe('consume', () => {
   });
 
   it('drops a message Discord refuses (4xx) instead of retrying it', async () => {
-    vi.mocked(fetch).mockResolvedValue(json({ message: 'Missing Permissions', code: 50013 }, 403));
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Invalid Form Body', code: 50035 }, 400));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     const message = makeMessage(channelJob);
     await consume(makeBatch(message), makeEnv());
 
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
-    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('403 (50013) Missing Permissions'));
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('400 (50035) Invalid Form Body'));
+  });
+
+  it('fails the run when Larry lacks permission in a channel, still dropping the message', async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Missing Permissions', code: 50013 }, 403));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const message = makeMessage(channelJob);
+
+    await expect(consume(makeBatch(message), makeEnv())).rejects.toThrow('403 (50013) Missing Permissions');
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('fails the run for a channel Larry cannot see, one that is gone, or a bad token', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    for (const [body, status] of [
+      [{ message: 'Missing Access', code: 50001 }, 403],
+      [{ message: 'Unknown Channel', code: 10003 }, 404],
+      [{ message: '401: Unauthorized', code: 0 }, 401],
+    ] as const) {
+      vi.mocked(fetch).mockResolvedValue(json(body, status));
+      await expect(consume(makeBatch(makeMessage(channelJob)), makeEnv())).rejects.toThrow("Larry can't post");
+    }
+  });
+
+  it('handles the rest of the batch before failing the run', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json({ message: 'Missing Permissions', code: 50013 }, 403))
+      .mockResolvedValueOnce(json({ id: '2' }));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const refused = makeMessage(channelJob, '11111111-0000-0000-0000-000000000000');
+    const fine = makeMessage({ ...channelJob, target: { channelId: '222' } }, '22222222-0000-0000-0000-000000000000');
+
+    await expect(consume(makeBatch(refused, fine), makeEnv())).rejects.toThrow('Missing Permissions');
+    expect(refused.ack).toHaveBeenCalledOnce();
+    expect(fine.ack).toHaveBeenCalledOnce();
+  });
+
+  it('does not fail the run for a user who will not take DMs', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(json({ id: DM_CHANNEL }))
+      .mockResolvedValueOnce(json({ message: 'Cannot send messages to this user', code: 50007 }, 403));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const message = makeMessage({ target: { userId: USER }, message: { content: 'psst' } });
+
+    await consume(makeBatch(message), makeEnv());
+    expect(message.ack).toHaveBeenCalledOnce();
   });
 
   it('handles each message in a batch on its own, with its own nonce', async () => {
