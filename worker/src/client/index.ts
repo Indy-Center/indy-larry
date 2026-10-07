@@ -1,6 +1,7 @@
-// Public types of @indy-center/indy-larry-worker 1.1.0.
+// Public types of @indy-center/indy-larry-worker 1.2.0.
 export type {
   AllowedMentions,
+  ChannelEdit,
   ChannelIdSend,
   ChannelSend,
   ChannelSyncResult,
@@ -12,6 +13,7 @@ export type {
   DirectSend,
   LarryBinding,
   LarryRpc,
+  LinkButton,
   ManagedChannel,
   MemberRole,
   Message,

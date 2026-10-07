@@ -1,6 +1,6 @@
 {
   "name": "@indy-center/indy-larry-worker",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Send Discord messages as Larry from other Indy Center Workers, over RPC or a queue",
   "type": "module",
   "repository": {

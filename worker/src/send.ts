@@ -1,16 +1,22 @@
-import { Routes, type APIAllowedMentions, type RESTPostAPIChannelMessageJSONBody } from 'discord-api-types/v10';
+import { ButtonStyle, ComponentType, Routes, type APIAllowedMentions, type RESTPostAPIChannelMessageJSONBody } from 'discord-api-types/v10';
 import { parseChannels } from './channels';
 import { applyMemberRole } from './roles';
-import type { ChannelSend, DirectSend, Sent } from './client/api';
+import type { ChannelEdit, ChannelSend, DirectSend, LinkButton, Sent } from './client/api';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const MAX_CONTENT_LENGTH = 2000;
 const MAX_EMBEDS = 10;
+const MAX_BUTTONS = 5;
+const MAX_BUTTON_LABEL_LENGTH = 80;
+const MAX_BUTTON_URL_LENGTH = 512;
+const SNOWFLAKE = /^\d{17,20}$/;
 const MAX_NONCE_LENGTH = 25;
 // send() waits out a rate limit this short once instead of failing the call.
 const MAX_RPC_WAIT_SECONDS = 5;
 // Discord error code for "Cannot send messages to this user".
 const CANNOT_DM = 50007;
+// Discord error code for "Unknown Message": the one an edit was for has been deleted.
+const UNKNOWN_MESSAGE = 10008;
 
 export type SendEnv = {
   DISCORD_TOKEN: string;
@@ -25,8 +31,11 @@ export type SendEnv = {
 /** Where a message goes, once its channel name is resolved. */
 export type Target = { channelId: string } | { userId: string };
 
-/** A checked message, ready for Discord. Also the body of a message on larry-messages. */
-export type Job = { target: Target; message: RESTPostAPIChannelMessageJSONBody };
+/**
+ * A checked message, ready for Discord. Also the body of a message on larry-messages. With `edit`, it
+ * changes the message with that ID instead of posting a new one.
+ */
+export type Job = { target: Target; message: RESTPostAPIChannelMessageJSONBody; edit?: string };
 
 /** A checked role change for one person (roles.ts). The other thing larry-messages carries. */
 export type RoleJob = { memberRole: { guildId: string; userId: string; roleId: string; has: boolean } };
@@ -66,7 +75,7 @@ export function prepare(env: Pick<SendEnv, 'SEND_CHANNELS'>, kind: Kind, request
 }
 
 /** Check a message's content and embeds, and shape it for Discord. Throws on anything Discord would refuse. */
-export function checkMessage(request: Pick<ChannelSend, 'content' | 'embeds' | 'allowedMentions'>): Job['message'] {
+export function checkMessage(request: Pick<ChannelSend, 'content' | 'embeds' | 'allowedMentions' | 'buttons'>): Job['message'] {
   const { content, embeds } = request;
   if (content != null && typeof content !== 'string') throw new Error('content must be a string');
   if (embeds != null && !Array.isArray(embeds)) throw new Error('embeds must be an array');
@@ -74,18 +83,55 @@ export function checkMessage(request: Pick<ChannelSend, 'content' | 'embeds' | '
   if (content && content.length > MAX_CONTENT_LENGTH) throw new Error(`Message content is limited to ${MAX_CONTENT_LENGTH} characters`);
   if (embeds && embeds.length > MAX_EMBEDS) throw new Error(`Messages are limited to ${MAX_EMBEDS} embeds`);
 
-  return {
+  const message: Job['message'] = {
     content: content || undefined,
     embeds: embeds?.length ? embeds : undefined,
     // Pinging the users named in the content is the point of mentioning them; anything wider is opt-in.
     allowed_mentions: (request.allowedMentions ?? { parse: ['users'] }) as APIAllowedMentions,
   };
+  // Left out entirely when no buttons were asked for, so an edit keeps the ones the message has.
+  if (request.buttons !== undefined) message.components = linkButtons(request.buttons);
+  return message;
 }
 
-/** POST to Discord as Larry. Network errors throw. */
-async function post(token: string, route: string, body: unknown): Promise<Response> {
+/**
+ * Buttons as one row of Discord link buttons, or no rows for an empty list. Only link buttons: one that
+ * does something when pressed needs something listening for the press, and this Worker has no such thing.
+ */
+function linkButtons(buttons: LinkButton[]): NonNullable<Job['message']['components']> {
+  if (!Array.isArray(buttons)) throw new Error('buttons must be an array');
+  if (buttons.length > MAX_BUTTONS) throw new Error(`Messages are limited to ${MAX_BUTTONS} buttons`);
+  if (buttons.length === 0) return [];
+
+  return [
+    {
+      type: ComponentType.ActionRow,
+      components: buttons.map((button) => {
+        const label = typeof button?.label === 'string' ? button.label.trim() : '';
+        if (!label || label.length > MAX_BUTTON_LABEL_LENGTH) throw new Error(`A button needs a label of up to ${MAX_BUTTON_LABEL_LENGTH} characters`);
+        if (typeof button.url !== 'string' || !/^https?:\/\/\S+$/.test(button.url) || button.url.length > MAX_BUTTON_URL_LENGTH) {
+          throw new Error(`Button "${label}" needs an http(s) address of up to ${MAX_BUTTON_URL_LENGTH} characters`);
+        }
+        return { type: ComponentType.Button, style: ButtonStyle.Link, label, url: button.url };
+      }),
+    },
+  ];
+}
+
+/** Check an edit and turn it into a Job for the message it changes. Throws like prepare(). */
+export function prepareEdit(env: Pick<SendEnv, 'SEND_CHANNELS'>, request: ChannelEdit): Job {
+  const job = prepare(env, 'channel', request);
+  if (typeof request.messageId !== 'string' || !SNOWFLAKE.test(request.messageId)) {
+    throw new Error(`"${request.messageId}" isn't a Discord message ID`);
+  }
+  // An edit is never a reason to ping: whoever the first post named has already been told.
+  return { ...job, message: { ...job.message, allowed_mentions: { parse: [] } }, edit: request.messageId };
+}
+
+/** POST (or PATCH) to Discord as Larry. Network errors throw. */
+async function post(token: string, route: string, body: unknown, method: 'POST' | 'PATCH' = 'POST'): Promise<Response> {
   return fetch(`${DISCORD_API}${route}`, {
-    method: 'POST',
+    method,
     headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -103,6 +149,7 @@ async function failure(res: Response): Promise<Outcome & { ok: false }> {
 /**
  * Make one attempt at sending a Job. A DM opens (or reuses) the user's DM channel first.
  * With a nonce, Discord drops a repeat of the same message, so a retry after a lost response can't double-post.
+ * An edit needs no nonce: making the same change twice leaves the message as it is.
  */
 export async function deliver(token: string, job: Job, nonce?: string): Promise<Outcome> {
   let channelId: string;
@@ -112,6 +159,12 @@ export async function deliver(token: string, job: Job, nonce?: string): Promise<
     const res = await post(token, Routes.userChannels(), { recipient_id: job.target.userId });
     if (!res.ok) return failure(res);
     channelId = ((await res.json()) as { id: string }).id;
+  }
+
+  if (job.edit) {
+    const res = await post(token, Routes.channelMessage(channelId, job.edit), job.message, 'PATCH');
+    if (!res.ok) return failure(res);
+    return { ok: true, sent: { channelId, messageId: job.edit } };
   }
 
   const body: RESTPostAPIChannelMessageJSONBody = nonce ? { ...job.message, nonce, enforce_nonce: true } : job.message;
@@ -135,6 +188,8 @@ function describe(job: Job, outcome: Outcome & { ok: false }): string {
  */
 function isSetupFault(job: Job, outcome: Outcome & { ok: false }): boolean {
   if (outcome.status === 401) return true;
+  // The message an edit was for has been deleted: nobody's setup, and nothing left to change.
+  if (job.edit && outcome.code === UNKNOWN_MESSAGE) return false;
   return 'channelId' in job.target && (outcome.status === 403 || outcome.status === 404);
 }
 
@@ -153,6 +208,16 @@ export async function sendJob(env: Pick<SendEnv, 'DISCORD_TOKEN'>, job: Job): Pr
   }
   if (!outcome.ok) throw new Error(describe(job, outcome));
   return outcome.sent;
+}
+
+/** RPC: change a message now and return it. Throws with Discord's reason if it's refused. */
+export async function editNow(env: SendEnv, request: ChannelEdit): Promise<Sent> {
+  return sendJob(env, prepareEdit(env, request));
+}
+
+/** RPC: check and queue an edit. Resolves once queued, not once made. */
+export async function enqueueEdit(env: SendEnv, request: ChannelEdit): Promise<void> {
+  await env.LARRY_QUEUE.send(prepareEdit(env, request));
 }
 
 /** RPC: check and queue. Resolves once queued, not once sent. */

@@ -10,6 +10,14 @@ export type AllowedMentions = {
   roles?: string[];
 };
 
+/** A button that opens a web address. */
+export type LinkButton = {
+  /** Up to 80 characters. */
+  label: string;
+  /** An http(s) address, up to 512 characters. */
+  url: string;
+};
+
 /** A message to send as Larry. At least one of `content` or `embeds` is required. */
 export type Message = {
   /** Up to 2000 characters. Mention a user with `<@userId>`, a role with `<@&roleId>`. */
@@ -22,6 +30,12 @@ export type Message = {
    * ping more, or `{ parse: [] }` to ping nobody.
    */
   allowedMentions?: AllowedMentions;
+  /**
+   * Up to 5 buttons under the message, each opening a web address. Larry offers no buttons that do
+   * something when pressed. On editMessage()/enqueueEdit(), leave it out to keep the buttons the message
+   * has, or pass `[]` to remove them.
+   */
+  buttons?: LinkButton[];
 };
 
 /** A message to a channel. */
@@ -31,6 +45,15 @@ export type ChannelSend = Message & {
    * can move without a change to the caller. Any other name is rejected.
    */
   channel: string;
+};
+
+/**
+ * A change to a message Larry posted in a channel from `SEND_CHANNELS`. What is given replaces what the
+ * message had; `content` or `embeds` left out stays as it was. An edit pings nobody.
+ */
+export type ChannelEdit = ChannelSend & {
+  /** The message's ID, as send() returned it. */
+  messageId: string;
 };
 
 /** A private message to a user. */
@@ -179,7 +202,7 @@ export type DeleteResult = { dryRun: boolean; deleted: Deletion[] };
 export type Sent = { channelId: string; messageId: string };
 
 /**
- * Larry's RPC surface, version 1.1.0. Every method checks the message first and throws for an unknown
+ * Larry's RPC surface, version 1.2.0. Every method checks the message first and throws for an unknown
  * channel, a bad user ID, an empty message or one over Discord's limits.
  */
 export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
@@ -194,6 +217,13 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   enqueue(request: ChannelSend): Promise<void>;
   /** Queue a DM, like enqueue(). */
   enqueueDirect(request: DirectSend): Promise<void>;
+  /**
+   * Change a message Larry posted, now, and return it. Throws if Discord refuses, including when the
+   * message has been deleted or was not Larry's.
+   */
+  editMessage(request: ChannelEdit): Promise<Sent>;
+  /** Queue the same change, like enqueue(). An edit to a message that has since been deleted is dropped. */
+  enqueueEdit(request: ChannelEdit): Promise<void>;
   /**
    * Make each role's membership match what is asked for, and report what changed. One role failing
    * does not stop the rest. Refuses roles that carry moderation permissions. Throws if `GUILD_ID` isn't set.

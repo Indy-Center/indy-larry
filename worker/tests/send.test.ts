@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { consume, enqueue, prepare, sendNow, type Job } from '../src/send';
+import { consume, editNow, enqueue, enqueueEdit, prepare, prepareEdit, sendNow, type Job } from '../src/send';
 
 const USER = '123456789012345678';
 const DM_CHANNEL = '999999999999999999';
@@ -75,6 +75,66 @@ describe('prepare', () => {
     expect(() => prepare(env, 'channel', { channel: 'events', embeds })).toThrow(/limited to 10 embeds/);
     expect(() => prepare(env, 'channel', { channel: 'events', embeds: {} as never })).toThrow(/embeds must be an array/);
     expect(() => prepare(env, 'channel', null as never)).toThrow(/Expected a message object/);
+  });
+});
+
+describe('buttons', () => {
+  const link = { label: 'Open Teach', url: 'https://training.flyindycenter.com/teach' };
+
+  it('puts link buttons in one row under the message', () => {
+    const job = prepare(makeEnv(), 'channel', { channel: 'events', content: 'x', buttons: [link, { label: ' Wiki ', url: 'http://wiki.test/a' }] });
+    expect(job.message.components).toEqual([
+      {
+        type: 1,
+        components: [
+          { type: 2, style: 5, label: 'Open Teach', url: 'https://training.flyindycenter.com/teach' },
+          { type: 2, style: 5, label: 'Wiki', url: 'http://wiki.test/a' },
+        ],
+      },
+    ]);
+  });
+
+  it('sends no components at all unless buttons are asked for', () => {
+    expect('components' in prepare(makeEnv(), 'channel', { channel: 'events', content: 'x' }).message).toBe(false);
+  });
+
+  it('takes an empty list as "no buttons", which is how an edit removes them', () => {
+    expect(prepare(makeEnv(), 'channel', { channel: 'events', content: 'x', buttons: [] }).message.components).toEqual([]);
+  });
+
+  it('rejects a button with no label, a bad address, or too many of them', () => {
+    const env = makeEnv();
+    const send = (buttons: unknown) => () => prepare(env, 'channel', { channel: 'events', content: 'x', buttons: buttons as never });
+    expect(send([{ label: '', url: link.url }])).toThrow(/needs a label of up to 80 characters/);
+    expect(send([{ label: 'x'.repeat(81), url: link.url }])).toThrow(/needs a label/);
+    expect(send([{ label: 'Go', url: 'javascript:alert(1)' }])).toThrow(/Button "Go" needs an http\(s\) address/);
+    expect(send([{ label: 'Go', url: `https://a.test/${'x'.repeat(512)}` }])).toThrow(/up to 512 characters/);
+    expect(send(Array.from({ length: 6 }, () => link))).toThrow(/limited to 5 buttons/);
+    expect(send('nope')).toThrow(/buttons must be an array/);
+  });
+});
+
+describe('prepareEdit', () => {
+  const MESSAGE = '555555555555555555';
+
+  it('targets the message in its channel, and pings nobody', () => {
+    expect(prepareEdit(makeEnv(), { channel: 'events', messageId: MESSAGE, embeds: [{ title: 'Claimed' }], content: `<@${USER}>` })).toEqual({
+      target: { channelId: '111' },
+      edit: MESSAGE,
+      message: { content: `<@${USER}>`, embeds: [{ title: 'Claimed' }], allowed_mentions: { parse: [] } },
+    });
+  });
+
+  it('never pings, whatever the caller allows', () => {
+    const job = prepareEdit(makeEnv(), { channel: 'events', messageId: MESSAGE, content: '@everyone', allowedMentions: { parse: ['everyone'] } });
+    expect(job.message.allowed_mentions).toEqual({ parse: [] });
+  });
+
+  it('rejects a message ID that is not one, and anything a new message would be refused for', () => {
+    const env = makeEnv();
+    expect(() => prepareEdit(env, { channel: 'events', messageId: 'latest', content: 'x' })).toThrow(`"latest" isn't a Discord message ID`);
+    expect(() => prepareEdit(env, { channel: 'nope', messageId: MESSAGE, content: 'x' })).toThrow('Unknown channel "nope"');
+    expect(() => prepareEdit(env, { channel: 'events', messageId: MESSAGE })).toThrow(/needs content or at least one embed/);
   });
 });
 
@@ -160,6 +220,45 @@ describe('sendNow', () => {
   it("doesn't call Discord for a bad request", async () => {
     await expect(sendNow(makeEnv(), 'channel', { channel: 'nope', content: 'x' })).rejects.toThrow(/Unknown channel/);
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('editNow and enqueueEdit', () => {
+  const MESSAGE = '555555555555555555';
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('patches the message and returns it', async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ id: MESSAGE }));
+    await expect(editNow(makeEnv(), { channel: 'events', messageId: MESSAGE, embeds: [{ title: 'Passed' }], buttons: [] })).resolves.toEqual({
+      channelId: '111',
+      messageId: MESSAGE,
+    });
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`https://discord.com/api/v10/channels/111/messages/${MESSAGE}`);
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual({ embeds: [{ title: 'Passed' }], allowed_mentions: { parse: [] }, components: [] });
+  });
+
+  it("throws with Discord's reason when the message is gone", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Unknown Message', code: 10008 }, 404));
+    await expect(editNow(makeEnv(), { channel: 'events', messageId: MESSAGE, content: 'x' })).rejects.toThrow('404 (10008) Unknown Message');
+  });
+
+  it('queues the edit, and nothing when it is bad', async () => {
+    const env = makeEnv();
+    await enqueueEdit(env, { channel: 'events', messageId: MESSAGE, content: 'hello' });
+    expect(env.LARRY_QUEUE.send).toHaveBeenCalledWith({ target: { channelId: '111' }, edit: MESSAGE, message: { content: 'hello', allowed_mentions: { parse: [] } } });
+
+    await expect(enqueueEdit(env, { channel: 'events', messageId: 'x', content: 'hello' })).rejects.toThrow();
+    expect(env.LARRY_QUEUE.send).toHaveBeenCalledOnce();
   });
 });
 
@@ -280,6 +379,28 @@ describe('consume', () => {
 
     await consume(makeBatch(message), makeEnv());
     expect(message.ack).toHaveBeenCalledOnce();
+  });
+
+  it('makes a queued edit with a PATCH and no nonce', async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ id: '555555555555555555' }));
+    const message = makeMessage({ ...channelJob, edit: '555555555555555555' });
+    await consume(makeBatch(message), makeEnv());
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://discord.com/api/v10/channels/111/messages/555555555555555555');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body as string)).toEqual(channelJob.message);
+    expect(message.ack).toHaveBeenCalledOnce();
+  });
+
+  it('drops an edit to a message that has been deleted, without failing the run', async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Unknown Message', code: 10008 }, 404));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const message = makeMessage({ ...channelJob, edit: '555555555555555555' });
+
+    await expect(consume(makeBatch(message), makeEnv())).resolves.toBeUndefined();
+    expect(message.ack).toHaveBeenCalledOnce();
+    expect(message.retry).not.toHaveBeenCalled();
   });
 
   it('handles each message in a batch on its own, with its own nonce', async () => {
