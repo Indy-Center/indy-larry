@@ -56,6 +56,14 @@ export type ChannelEdit = ChannelSend & {
   messageId: string;
 };
 
+/** A message Larry posted in a channel from `SEND_CHANNELS`, to delete. */
+export type MessageRef = {
+  /** The channel name it was sent to, as in ChannelSend. */
+  channel: string;
+  /** The message's ID, as send() returned it. */
+  messageId: string;
+};
+
 /** A private message to a user. */
 export type DirectSend = Message & {
   /** The user's Discord ID. They must share a server with Larry and allow DMs from it. */
@@ -224,6 +232,13 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   editMessage(request: ChannelEdit): Promise<Sent>;
   /** Queue the same change, like enqueue(). An edit to a message that has since been deleted is dropped. */
   enqueueEdit(request: ChannelEdit): Promise<void>;
+  /**
+   * Delete a message Larry posted, now. **Cannot be undone.** A message that is already gone counts as
+   * deleted. Throws if Discord refuses, e.g. for someone else's message without Manage Messages.
+   */
+  deleteMessage(request: MessageRef): Promise<void>;
+  /** Queue the same deletion and return once it's queued. Delivery retries rate limits and Discord outages. */
+  enqueueDelete(request: MessageRef): Promise<void>;
   /**
    * Make each role's membership match what is asked for, and report what changed. One role failing
    * does not stop the rest. Refuses roles that carry moderation permissions. Throws if `GUILD_ID` isn't set.

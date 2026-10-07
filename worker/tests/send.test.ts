@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { consume, editNow, enqueue, enqueueEdit, prepare, prepareEdit, sendNow, type Job } from '../src/send';
+import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, prepare, prepareDelete, prepareEdit, sendNow, type Job, type QueueJob } from '../src/send';
 
 const USER = '123456789012345678';
 const DM_CHANNEL = '999999999999999999';
@@ -259,6 +259,78 @@ describe('editNow and enqueueEdit', () => {
 
     await expect(enqueueEdit(env, { channel: 'events', messageId: 'x', content: 'hello' })).rejects.toThrow();
     expect(env.LARRY_QUEUE.send).toHaveBeenCalledOnce();
+  });
+});
+
+describe('deleting a message', () => {
+  const MESSAGE = '555555555555555555';
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('resolves the channel name and checks the message ID', () => {
+    expect(prepareDelete(makeEnv(), { channel: 'events', messageId: MESSAGE })).toEqual({ deleteMessage: { channelId: '111', messageId: MESSAGE } });
+    expect(() => prepareDelete(makeEnv(), { channel: 'nope', messageId: MESSAGE })).toThrow('Unknown channel "nope"');
+    expect(() => prepareDelete(makeEnv(), { channel: 'events', messageId: 'all' })).toThrow(`"all" isn't a Discord message ID`);
+  });
+
+  it('deletes the message now, with bot auth', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+    await expect(deleteNow(makeEnv(), { channel: 'events', messageId: MESSAGE })).resolves.toBeUndefined();
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`https://discord.com/api/v10/channels/111/messages/${MESSAGE}`);
+    expect(init.method).toBe('DELETE');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bot token');
+  });
+
+  it('counts a message that is already gone as deleted', async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Unknown Message', code: 10008 }, 404));
+    await expect(deleteNow(makeEnv(), { channel: 'events', messageId: MESSAGE })).resolves.toBeUndefined();
+  });
+
+  it("throws with Discord's reason when it refuses", async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Missing Permissions', code: 50013 }, 403));
+    await expect(deleteNow(makeEnv(), { channel: 'events', messageId: MESSAGE })).rejects.toThrow('403 (50013) Missing Permissions');
+  });
+
+  it('queues the deletion, and nothing when it is bad', async () => {
+    const env = makeEnv();
+    await enqueueDelete(env, { channel: 'events', messageId: MESSAGE });
+    expect(env.LARRY_QUEUE.send).toHaveBeenCalledWith({ deleteMessage: { channelId: '111', messageId: MESSAGE } });
+    await expect(enqueueDelete(env, { channel: 'events', messageId: '' })).rejects.toThrow();
+    expect(env.LARRY_QUEUE.send).toHaveBeenCalledOnce();
+  });
+
+  it('makes a queued deletion, acks it, and retries a rate limit', async () => {
+    const job = { deleteMessage: { channelId: '111', messageId: MESSAGE } };
+    const batch = (message: { body: unknown }) => ({ messages: [message] }) as unknown as MessageBatch<QueueJob>;
+
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const done = { id: 'a', body: job, attempts: 1, ack: vi.fn(), retry: vi.fn() };
+    await consume(batch(done), makeEnv());
+    expect(done.ack).toHaveBeenCalledOnce();
+
+    vi.mocked(fetch).mockResolvedValueOnce(json({ message: 'rate limited', retry_after: 2.2 }, 429));
+    const limited = { id: 'b', body: job, attempts: 1, ack: vi.fn(), retry: vi.fn() };
+    await consume(batch(limited), makeEnv());
+    expect(limited.retry).toHaveBeenCalledWith({ delaySeconds: 3 });
+    expect(limited.ack).not.toHaveBeenCalled();
+  });
+
+  it('drops a deletion Discord refuses, and fails the run when it is a permission', async () => {
+    vi.mocked(fetch).mockResolvedValue(json({ message: 'Missing Permissions', code: 50013 }, 403));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const message = { id: 'c', body: { deleteMessage: { channelId: '111', messageId: MESSAGE } }, attempts: 1, ack: vi.fn(), retry: vi.fn() };
+
+    await expect(consume({ messages: [message] } as unknown as MessageBatch<QueueJob>, makeEnv())).rejects.toThrow(/Missing Permissions/);
+    expect(message.ack).toHaveBeenCalledOnce();
   });
 });
 

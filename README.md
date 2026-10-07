@@ -75,6 +75,7 @@ const { messageId } = await env.LARRY.send({
   buttons: [{ label: 'Open Teach', url: 'https://training.flyindycenter.com/teach' }],
 });
 await env.LARRY.enqueueEdit({ channel: 'events', messageId, embeds: [{ title: 'Rating exam', fields: [{ name: 'Status', value: 'Claimed' }] }] });
+await env.LARRY.enqueueDelete({ channel: 'events', messageId }); // once it has nothing left to say
 ```
 
 - **Channels**: callers name a channel from `SEND_CHANNELS` (`name:channelId`, like `RELIEF_ROLES`), e.g. `SEND_CHANNELS=events:111,training:222`. Any other name, or a channel ID, is refused, so a channel moves by changing the setting and redeploying, with no change to the callers. The deploy fails on a malformed entry, a repeated name, or `CHANNEL_ID`, where the status loop would delete the message.
@@ -82,6 +83,7 @@ await env.LARRY.enqueueEdit({ channel: 'events', messageId, embeds: [{ title: 'R
 - **Mentions**: `allowedMentions` goes to Discord as `allowed_mentions`, unchanged. Without it, the users mentioned in the content (`<@id>`) are pinged and nobody else is.
 - **Buttons**: `buttons` puts up to 5 link buttons under a message, each opening an http(s) address. There are no buttons that do something when pressed: nothing in this Worker listens for a press.
 - **Edits**: `editMessage()` changes a message Larry posted in a `SEND_CHANNELS` channel now; `enqueueEdit()` queues the change. What is given replaces what the message had, and `content` or `embeds` left out stays as it was. `buttons` left out keeps the buttons; `[]` removes them. An edit never pings. An edit to a message that has been deleted throws from `editMessage()` and is dropped from the queue.
+- **Deleting**: `deleteMessage()` removes a message Larry posted in a `SEND_CHANNELS` channel now; `enqueueDelete()` queues it. It cannot be undone. A message that is already gone counts as deleted.
 - **Checks**: every method throws straight away for an unknown channel, a bad user ID, an empty message, more than 2000 characters or more than 10 embeds; the queue methods queue nothing then.
 - **Delivery**: `send()` waits out a rate limit of 5 seconds or less once, then throws. The queue (`larry-messages`) waits for Discord's `retry_after` on a rate limit, backs off on 5xx and network errors, and drops a message Discord refuses (4xx), logging why. When the refusal is Larry's own setup, the queue run also **fails**, so it shows as an error on the Worker's dashboard: a channel Larry can't see or post in (403), one that no longer exists (404), or a bad token (401). The message is still dropped, not retried. A bad embed or a user who won't take DMs is logged only. After 5 attempts a message moves to `larry-messages-dlq`. Each queued message carries a nonce, so a retry can't post twice.
 

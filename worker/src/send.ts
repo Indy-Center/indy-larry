@@ -1,7 +1,7 @@
 import { ButtonStyle, ComponentType, Routes, type APIAllowedMentions, type RESTPostAPIChannelMessageJSONBody } from 'discord-api-types/v10';
 import { parseChannels } from './channels';
 import { applyMemberRole } from './roles';
-import type { ChannelEdit, ChannelSend, DirectSend, LinkButton, Sent } from './client/api';
+import type { ChannelEdit, ChannelSend, DirectSend, LinkButton, MessageRef, Sent } from './client/api';
 
 const DISCORD_API = 'https://discord.com/api/v10';
 const MAX_CONTENT_LENGTH = 2000;
@@ -40,8 +40,11 @@ export type Job = { target: Target; message: RESTPostAPIChannelMessageJSONBody; 
 /** A checked role change for one person (roles.ts). The other thing larry-messages carries. */
 export type RoleJob = { memberRole: { guildId: string; userId: string; roleId: string; has: boolean } };
 
-/** Anything on larry-messages. A body with no `memberRole` is a message, as every body was before 1.1.0. */
-export type QueueJob = Job | RoleJob;
+/** A checked request to delete one message Larry posted. */
+export type DeleteJob = { deleteMessage: { channelId: string; messageId: string } };
+
+/** Anything on larry-messages. A body with neither `memberRole` nor `deleteMessage` is a message, as every body was before 1.1.0. */
+export type QueueJob = Job | RoleJob | DeleteJob;
 
 /** What Discord said to one attempt. */
 type Outcome =
@@ -220,6 +223,43 @@ export async function enqueueEdit(env: SendEnv, request: ChannelEdit): Promise<v
   await env.LARRY_QUEUE.send(prepareEdit(env, request));
 }
 
+/** Check a deletion and turn it into a DeleteJob. Throws for an unknown channel or a bad message ID. */
+export function prepareDelete(env: Pick<SendEnv, 'SEND_CHANNELS'>, request: MessageRef): DeleteJob {
+  if (!request || typeof request !== 'object') throw new Error('Expected a message to delete');
+  const channels = parseChannels(env.SEND_CHANNELS);
+  const channelId = channels.get(request.channel);
+  if (!channelId) {
+    throw new Error(`Unknown channel "${request.channel}". Known channels: ${[...channels.keys()].join(', ') || 'none'}`);
+  }
+  if (typeof request.messageId !== 'string' || !SNOWFLAKE.test(request.messageId)) {
+    throw new Error(`"${request.messageId}" isn't a Discord message ID`);
+  }
+  return { deleteMessage: { channelId, messageId: request.messageId } };
+}
+
+/** Make one attempt at deleting a message. One that is already gone is what was wanted, so it counts as done. */
+async function applyDelete(token: string, job: DeleteJob['deleteMessage']): Promise<{ ok: true } | (Outcome & { ok: false })> {
+  const res = await fetch(`${DISCORD_API}${Routes.channelMessage(job.channelId, job.messageId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bot ${token}` },
+  });
+  if (res.ok) return { ok: true };
+  const outcome = await failure(res);
+  return outcome.code === UNKNOWN_MESSAGE ? { ok: true } : outcome;
+}
+
+/** RPC: delete a message now. Throws with Discord's reason if it's refused. */
+export async function deleteNow(env: SendEnv, request: MessageRef): Promise<void> {
+  const { deleteMessage } = prepareDelete(env, request);
+  const outcome = await applyDelete(env.DISCORD_TOKEN, deleteMessage);
+  if (!outcome.ok) throw new Error(`Discord refused to delete the message: ${outcome.status}${outcome.code ? ` (${outcome.code})` : ''} ${outcome.error}`);
+}
+
+/** RPC: check and queue a deletion. Resolves once queued, not once deleted. */
+export async function enqueueDelete(env: SendEnv, request: MessageRef): Promise<void> {
+  await env.LARRY_QUEUE.send(prepareDelete(env, request));
+}
+
 /** RPC: check and queue. Resolves once queued, not once sent. */
 export async function enqueue(env: SendEnv, kind: Kind, request: ChannelSend | DirectSend): Promise<void> {
   await env.LARRY_QUEUE.send(prepare(env, kind, request));
@@ -239,6 +279,12 @@ export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 
   for (const message of batch.messages) {
     if ('memberRole' in message.body) {
       const fault = await consumeRoleJob(message as Message<RoleJob>, env.DISCORD_TOKEN);
+      if (fault) setupFaults.push(fault);
+      continue;
+    }
+
+    if ('deleteMessage' in message.body) {
+      const fault = await consumeDeleteJob(message as Message<DeleteJob>, env.DISCORD_TOKEN);
       if (fault) setupFaults.push(fault);
       continue;
     }
@@ -274,6 +320,43 @@ export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 
   if (setupFaults.length > 0) {
     throw new Error(`Larry can't do what it was asked to. Check the bot's permissions, its role's position and SEND_CHANNELS. ${setupFaults.join(' | ')}`);
   }
+}
+
+/**
+ * One queued deletion, by the same rules as a message: retry what might pass, drop what won't.
+ * Returns the reason when the refusal is Larry's own setup, for consume() to fail the run with.
+ */
+async function consumeDeleteJob(message: Message<DeleteJob>, token: string): Promise<string | null> {
+  const { deleteMessage } = message.body;
+  const what = `Deleting message ${deleteMessage.messageId} in channel ${deleteMessage.channelId}`;
+
+  let outcome: Awaited<ReturnType<typeof applyDelete>>;
+  try {
+    outcome = await applyDelete(token, deleteMessage);
+  } catch (error) {
+    console.warn(`${what} failed, retrying: ${String(error)}`);
+    message.retry({ delaySeconds: 10 * message.attempts });
+    return null;
+  }
+
+  if (outcome.ok) {
+    message.ack();
+    return null;
+  }
+  if (outcome.status === 429) {
+    message.retry({ delaySeconds: Math.max(1, Math.ceil(outcome.retryAfter ?? 5)) });
+    return null;
+  }
+  if (outcome.status >= 500) {
+    message.retry({ delaySeconds: 10 * message.attempts });
+    return null;
+  }
+
+  const reason = `${what} was refused: ${outcome.status}${outcome.code ? ` (${outcome.code})` : ''} ${outcome.error}; dropping it`;
+  console.error(reason);
+  message.ack();
+  // A channel Larry cannot see or act in, or a bad token, is Larry's setup.
+  return outcome.status === 401 || outcome.status === 403 || outcome.status === 404 ? reason : null;
 }
 
 /**

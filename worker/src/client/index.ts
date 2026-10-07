@@ -17,6 +17,7 @@ export type {
   ManagedChannel,
   MemberRole,
   Message,
+  MessageRef,
   RoleSync,
   RoleSyncResult,
   RolesResult,
