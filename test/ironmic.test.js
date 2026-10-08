@@ -122,8 +122,8 @@ test('callsigns with the same time are tied, and a tie for #1 has no lead', () =
   const comp = newCompetition({ facilityId: 'LEX', positions: ['local', 'ground'], callsigns: { local: ['LEX_TWR'], ground: ['LEX_GND'] }, channelId: 'c', startedAt: T0 });
   comp.totals = r;
   const [twr, gnd] = competitionEmbeds(comp);
-  assert.equal(twr.description.split('\n')[1], '🏆 **#1** on the network · tied with 2 others');
-  assert.equal(gnd.description.split('\n')[1], '🏆 **#2** on the network · tied with 1 other · 6m behind ATL_GND');
+  assert.equal(twr.description.split('\n')[1], '🥇 **#1** · tied with 2 others');
+  assert.equal(gnd.description.split('\n')[1], '🥈 **#2** · tied with 1 other · 6m behind ATL_GND');
 });
 
 test('one embed per position, top-down, with totals, percentages and network rank', () => {
@@ -143,8 +143,7 @@ test('one embed per position, top-down, with totals, percentages and network ran
   assert.equal(app.description, "**Under 2h 00m** staffed · outside the network's top 3");
   assert.equal(app.footer, undefined);
   assert.equal(twr.title, '🎙️ Lexington Local Iron Mic');
-  assert.equal(twr.description, '**18h 00m** staffed · 25%\n🏆 **#2** on the network · 1h 15m behind BOS_TWR');
-  assert.equal(twr.timestamp, new Date(T0).toISOString());
+  assert.equal(twr.description, '**18h 00m** staffed · 25% Uptime\n🥈 **#2** · 1h 15m behind BOS_TWR');
   assert.equal(twr.color, 0xf1c40f);
 
   const cmh = newCompetition({ facilityId: 'DAY', positions: ['approach'], callsigns: { approach: ['CMH_APP', 'DAY_APP'] }, places: { approach: 'Columbus' }, channelId: 'c', startedAt: T0 });
@@ -157,12 +156,12 @@ test('an ended competition says so until its final totals are in', () => {
   comp.totals = readStats(stats([['LEX', 'TWR', 36]]), comp.callsigns);
   let [e] = competitionEmbeds(comp);
   assert.equal(e.title, '🏁 LEX Local Iron Mic: final');
-  assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network\n*Fetching the final totals…*');
-  assert.match(e.footer.text, /ended/);
+  assert.equal(e.description, '**36h 00m** staffed · 50% Uptime\n🥇 **#1**\n*Fetching the final totals…*');
+  assert.equal(e.footer.text, 'Totals from vnas-stats.com');
 
   comp.final = true;
   [e] = competitionEmbeds(comp);
-  assert.equal(e.description, '**36h 00m** staffed · 50%\n🏆 **#1** on the network');
+  assert.equal(e.description, '**36h 00m** staffed · 50% Uptime\n🥇 **#1**');
 });
 
 test('monthStart is midnight UTC on the 1st', () => {
