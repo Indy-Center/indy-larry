@@ -16,6 +16,20 @@ test('parseClosing converts ET-only times with daylight saving', () => {
   assert.equal(at('Online until 8pm ET', '2026-12-01T22:00:00Z'), '2026-12-02T01:00:00.000Z'); // EST
 });
 
+test('parseClosing understands Central, Mountain and Pacific', () => {
+  assert.equal(at('Online until 8pm CT', '2026-09-27T22:00:00Z'), '2026-09-28T01:00:00.000Z'); // CDT
+  assert.equal(at('Online until 8pm MST (0300z)', '2026-09-27T22:00:00Z'), '2026-09-28T03:00:00.000Z');
+  assert.equal(at('Online until 8pm PT', '2026-09-27T22:00:00Z'), '2026-09-28T03:00:00.000Z'); // PDT
+  assert.equal(at('Online until 8pm PT', '2026-12-01T22:00:00Z'), '2026-12-02T04:00:00.000Z'); // PST
+});
+
+test('parseClosing understands Central, Mountain and Pacific', () => {
+  assert.equal(at('Online until 8pm CT', '2026-09-27T22:00:00Z'), '2026-09-28T01:00:00.000Z'); // CDT
+  assert.equal(at('Online until 8pm MST (0300z)', '2026-09-27T22:00:00Z'), '2026-09-28T03:00:00.000Z');
+  assert.equal(at('Online until 8pm PT', '2026-09-27T22:00:00Z'), '2026-09-28T03:00:00.000Z'); // PDT
+  assert.equal(at('Online until 8pm PT', '2026-12-01T22:00:00Z'), '2026-12-02T04:00:00.000Z'); // PST
+});
+
 test('parseClosing keeps a time up to an hour past (running over)', () => {
   assert.equal(at('Online until 8pm ET (2400z)', '2026-09-28T00:20:00Z'), '2026-09-28T00:00:00.000Z');
 });
@@ -23,7 +37,6 @@ test('parseClosing keeps a time up to an hour past (running over)', () => {
 test('parseClosing still accepts the older styles', () => {
   assert.equal(at('Closing at 0200z', '2026-09-27T22:00:00Z'), '2026-09-28T02:00:00.000Z');
   assert.equal(at('Closing in 20 min', '2026-09-27T22:00:00Z'), '2026-09-27T22:20:00.000Z');
-  assert.deepEqual(parseClosing('Closing soon', new Date()), { at: null });
 });
 
 test('parseClosing ignores lines that only look like closing', () => {
@@ -33,6 +46,9 @@ test('parseClosing ignores lines that only look like closing', () => {
     'Student Solo Valid Until 9/27',
     'Online since 6pm ET',
     'Close attention to readbacks',
+    'Closing at ???',
+    'Online until ???',
+    'Closing soon',
     '/// OTS IN PROGRESS ///',
   ]) {
     assert.equal(parseClosing(info, new Date('2026-09-27T22:00:00Z')), null, info);

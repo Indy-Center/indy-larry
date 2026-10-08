@@ -15,11 +15,11 @@ One embed per facility (e.g. "Indianapolis ATCT/TRACON is online"), listing each
 
 ### SOP: "Online until"
 
-Controllers add this line to their controller info, with the Eastern time and the zulu time in brackets:
+Controllers add this line to their controller info, with your local time and the zulu time in brackets. Eastern, Central, Mountain and Pacific are understood (ET, CT, MT, PT, or the EST/CDT-style forms):
 
     Online until 8pm ET (2400z)
 
-The bot marks the position as closing 15 minutes before that time. If both times are given, the zulu one is used. A booked position is also marked closing 15 minutes before its booking ends, even without this line.
+The bot marks the position as closing 15 minutes before that time. If both times are given, the zulu one is used. A line without a readable time, such as `Closing at ???`, is ignored. A booked position is also marked closing 15 minutes before its booking ends, even without this line.
 
 ## Notification panels
 

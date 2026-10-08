@@ -146,13 +146,13 @@ const CLOSING_PHRASE =
 /**
  * Looks for a closing announcement in controller info text.
  *   "Online until 8pm ET (2400z)" -> 0000z (the zulu time wins when both are given)
- *   "Online until 8:30pm ET"      -> converted from Eastern time
+ *   "Online until 8:30pm ET"      -> converted from the zone given (ET, CT, MT or PT)
  *   "Closing at 0200z"            -> 0200z
  *   "Closing in 15 min"           -> now + 15 min
- *   "Closing soon"                -> { at: null }
+ * Anything without a readable time ("Closing soon", "Closing at ???") returns null.
  * Times that have passed today are read as tomorrow, unless they're under an hour ago
  * (the controller is running over).
- * @returns {{ at: Date|null } | null}
+ * @returns {{ at: Date } | null}
  */
 function parseClosing(info, now = new Date()) {
   if (!info) return null;
@@ -165,14 +165,16 @@ function parseClosing(info, now = new Date()) {
     const zulu = rest.match(/\b([01]\d|2[0-4]):?([0-5]\d)\s*(z|zulu|utc)\b/i);
     if (zulu) return { at: nextOccurrence(Number(zulu[1]) % 24, Number(zulu[2]), 0, now) };
 
-    // 8pm ET / 8:30 pm EST / 20:00 EDT
-    const eastern = rest.match(/\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)?\s*(et|est|edt|eastern)\b/i);
-    if (eastern) {
-      let hour = Number(eastern[1]);
-      const ampm = eastern[3]?.toLowerCase();
+    // 8pm ET / 8:30 pm CST / 20:00 PDT
+    const local = rest.match(
+      /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)?\s*(et|ct|mt|pt|[ecmp][sd]t|eastern|central|mountain|pacific)\b/i,
+    );
+    if (local) {
+      let hour = Number(local[1]);
+      const ampm = local[3]?.toLowerCase();
       if (ampm === 'pm' && hour < 12) hour += 12;
       if (ampm === 'am' && hour === 12) hour = 0;
-      if (hour <= 24) return { at: nextOccurrence(hour % 24, Number(eastern[2] ?? 0), easternOffsetHours(now), now) };
+      if (hour <= 24) return { at: nextOccurrence(hour % 24, Number(local[2] ?? 0), zoneOffsetHours(local[4], now), now) };
     }
 
     const rel = rest.match(/\bin\s+(\d{1,3})\s*(m|min|mins|minutes?|h|hr|hrs|hours?)\b/i);
@@ -181,7 +183,7 @@ function parseClosing(info, now = new Date()) {
       return { at: new Date(+now + mins * MINUTE) };
     }
 
-    return { at: null };
+    // No usable time (e.g. "Closing at ???"): don't treat the controller as closing.
   }
   return null;
 }
@@ -195,9 +197,17 @@ function nextOccurrence(hour, minute, offsetHours, now) {
   return at;
 }
 
-/** Current US Eastern offset from UTC: -4 in summer (EDT), -5 in winter (EST). */
-function easternOffsetHours(now) {
-  const name = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', timeZoneName: 'shortOffset' })
+const US_ZONES = {
+  e: 'America/New_York',
+  c: 'America/Chicago',
+  m: 'America/Denver',
+  p: 'America/Los_Angeles',
+};
+
+/** Current offset from UTC for a US zone abbreviation or name (ET, CST, Pacific...); follows daylight saving. */
+function zoneOffsetHours(zone, now) {
+  const timeZone = US_ZONES[zone[0].toLowerCase()];
+  const name = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })
     .formatToParts(now)
     .find((p) => p.type === 'timeZoneName').value; // e.g. "GMT-4"
   return Number(name.replace('GMT', '')) || 0;
