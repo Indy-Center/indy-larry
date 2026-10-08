@@ -29,7 +29,10 @@ class StatusBoard {
 
       // Each controller can be closing on their own (from their info text or their booking).
       // The whole facility only goes yellow when everyone on it is closing.
-      for (const c of f.controllers) c.closing = this.controllerClosing(c, f.key, bookings, now);
+      for (const c of f.controllers) {
+        c.closing = this.controllerClosing(c, f.key, bookings, now);
+        c.announcedEnd = parseClosing(c.info, now)?.at ?? null; // shown even before the closing window
+      }
       const closing = f.controllers.every((c) => c.closing);
       const times = f.controllers.map((c) => c.closing?.at).filter(Boolean);
 
