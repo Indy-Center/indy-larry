@@ -182,6 +182,24 @@ test('facility only turns yellow when every controller is closing', () => {
   assert.equal(closing.status, 'closing');
 });
 
+test('the end time shows on its own line before the closing window', () => {
+  const { statusEmbed } = require('../src/embeds');
+  const now = new Date('2026-09-27T20:00:00Z');
+  const feed = {
+    controllers: [
+      controller('1', 'IND_N_APP', 'ApproachDeparture', { info: 'Online until 8pm ET (2400z)' }),
+      controller('2', 'IND_E_TWR', 'Tower'),
+    ],
+  };
+  const [entry] = new StatusBoard().update(groupByFacility(feed), [], now);
+  const [app, twr] = statusEmbed(entry, { showNames: false }).data.description.split('\n\n');
+  const end = Date.parse('2026-09-28T00:00:00Z') / 1000;
+  assert.equal(entry.status, 'online');
+  assert.match(app, new RegExp(`\\n└ Online until <t:${end}:t> \\(<t:${end}:R>\\)$`));
+  assert.doesNotMatch(app, /🟡/);
+  assert.doesNotMatch(twr, /Online until/);
+});
+
 test('a closed facility shows offline, then drops off', () => {
   const board = new StatusBoard({ offlineMinutes: 30 });
   const feed = { controllers: [controller('1', 'EVV_TWR', 'Tower', { facilityId: 'EVV' })] };

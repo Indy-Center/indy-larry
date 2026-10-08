@@ -15,7 +15,9 @@ function controllerLine(c, { showNames }) {
   const who = showNames && c.name && c.name !== c.cid ? `${c.name} (${c.rating})` : `${c.cid} (${c.rating})`;
   let line = `**${c.callsign}** · ${c.positionName}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.activeSince ?? c.loginTime)}:t>`;
   if (!c.isActive) line += ' · *inactive*';
-  if (c.closing) line += ` · 🟡 closing${c.closing.at ? ` <t:${unix(c.closing.at)}:R>` : ' soon'}`;
+  const until = c.announcedEnd ?? c.closing?.at;
+  if (until) line += `\n└ ${c.closing ? '🟡 ' : ''}Online until <t:${unix(until)}:t> (<t:${unix(until)}:R>)`;
+  else if (c.closing) line += '\n└ 🟡 closing soon';
   if (c.extraPositions.length) {
     line += `\n└ also covering ${c.extraPositions.map((p) => `**${p.callsign}**`).join(', ')}`;
   }
