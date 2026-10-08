@@ -191,6 +191,8 @@ function formatDuration(ms) {
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
 }
 
+const MEDALS = { 1: '🥇', 2: '🥈', 3: '🥉' };
+
 function percent(ms, elapsed) {
   if (elapsed <= 0) return 0;
   return Math.min(100, Math.round((ms / elapsed) * 100));
@@ -198,7 +200,7 @@ function percent(ms, elapsed) {
 
 /**
  * One embed per tracked position, in POSITIONS order (Center first), as plain JSON (discord.js accepts it
- * as-is). They go out together in one message. The last one's footer says when it started or ended.
+ * as-is). They go out together in one message. The last one's footer credits vnas-stats.com.
  */
 function competitionEmbeds(comp) {
   const ended = Boolean(comp.endedAt);
@@ -210,11 +212,11 @@ function competitionEmbeds(comp) {
     let line;
     if (!t) line = '*Waiting for the first totals…*';
     else if (t.underMs != null) line = `**Under ${formatDuration(t.underMs)}** staffed · outside the network's top ${totals.ranked}`;
-    else line = `**${formatDuration(t.ms)}** staffed · ${percent(t.ms, totals.elapsedMs)}%`;
+    else line = `**${formatDuration(t.ms)}** staffed · ${percent(t.ms, totals.elapsedMs)}% Uptime`;
 
     const lines = [line];
     if (t?.rank) {
-      let rank = `🏆 **#${t.rank}** on the network`;
+      let rank = `${MEDALS[t.rank] ? `${MEDALS[t.rank]} ` : ''}**#${t.rank}**`;
       if (t.tied) rank += ` · tied with ${t.tied} other${t.tied === 1 ? '' : 's'}`;
       if (t.ahead) rank += ` · ${formatDuration(t.ahead.gapMs)} behind ${t.ahead.callsign}`;
       else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${t.lead.callsign}`;
@@ -232,8 +234,7 @@ function competitionEmbeds(comp) {
 
   const last = embeds[embeds.length - 1];
   if (last) {
-    last.footer = { text: `Totals from vnas-stats.com · Iron Mic ${ended ? 'ended' : 'started'}` };
-    last.timestamp = new Date(comp.endedAt ?? comp.startedAt).toISOString();
+    last.footer = { text: 'Totals from vnas-stats.com' };
   }
   return embeds;
 }
