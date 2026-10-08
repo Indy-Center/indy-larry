@@ -1,4 +1,4 @@
-# vnas-discord-bot
+# indy-lary
 
 A Discord bot that shows which Indy Center (ZID) facilities are staffed on vNAS. It polls the vNAS controller feed every 30 seconds and keeps one embed per facility up to date in a Discord channel.
 
