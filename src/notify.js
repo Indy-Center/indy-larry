@@ -7,6 +7,8 @@ const {
   reliefPanel,
   hoursModal,
   parseHours,
+  parseZulu,
+  zuluNow,
   requestPanel,
   ironMicPanel,
   requestModal,
@@ -293,6 +295,12 @@ class Notifications {
     if (!area) return this.reply(interaction, 'That area is no longer set up.');
     if (interaction.isFromMessage()) await this.resetPanel(interaction, requestPanel(this.config.areas));
     const f = interaction.fields;
+    const now = Date.now();
+    // A break request stays open until the Zulu time the controller can stay on until.
+    const stayUntil = type === 'break' ? parseZulu(f.getTextInputValue('stay'), now) : null;
+    if (type === 'break' && !stayUntil) {
+      return this.reply(interaction, `Enter the time in Zulu as four digits, like 0200. It is ${zuluNow(now)}Z now.`);
+    }
     const fields =
       type === 'break'
         ? { position: f.getTextInputValue('position'), stay: f.getTextInputValue('stay') }
@@ -301,7 +309,6 @@ class Notifications {
     const picked = area.roles.length > 1 ? f.getStringSelectValues('notify') : area.roles.map((r) => r.roleId);
     const roles = area.roles.filter((r) => picked.includes(r.roleId));
 
-    const now = Date.now();
     const { expireMinutes } = this.config;
     const alert = {
       channelId: this.alertChannel.id,
@@ -311,7 +318,7 @@ class Notifications {
       fields,
       roleIds: roles.map((r) => r.roleId),
       createdAt: now,
-      expiresAt: expireMinutes ? now + expireMinutes * MINUTE : null,
+      expiresAt: stayUntil ?? (expireMinutes ? now + expireMinutes * MINUTE : null),
       status: 'open',
       claimedBy: null,
     };

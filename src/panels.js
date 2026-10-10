@@ -101,8 +101,27 @@ function ironMicPanel() {
     );
 }
 
-const shortInput = (id, placeholder, { required = true, max = 50 } = {}) =>
-  new TextInputBuilder().setCustomId(id).setStyle(TextInputStyle.Short).setPlaceholder(placeholder).setRequired(required).setMaxLength(max);
+const shortInput = (id, placeholder, { required = true, max = 50, min = 0 } = {}) =>
+  new TextInputBuilder().setCustomId(id).setStyle(TextInputStyle.Short).setPlaceholder(placeholder).setRequired(required).setMinLength(min).setMaxLength(max);
+
+/** The clock in Zulu as "HHMM", e.g. "0245". */
+function zuluNow(now = Date.now()) {
+  const d = new Date(now);
+  return `${String(d.getUTCHours()).padStart(2, '0')}${String(d.getUTCMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * "0200" -> the next time the Zulu clock reads 0200, as a timestamp (tomorrow if it has already passed).
+ * Anything but exactly four digits from 0000 to 2359 -> null.
+ */
+function parseZulu(value, now = Date.now()) {
+  const m = String(value).trim().match(/^([01]\d|2[0-3])([0-5]\d)$/);
+  if (!m) return null;
+  const at = new Date(now);
+  at.setUTCHours(Number(m[1]), Number(m[2]), 0, 0);
+  if (+at <= now) at.setUTCDate(at.getUTCDate() + 1);
+  return +at;
+}
 
 /** The form a controller fills in after picking a request type and a position. */
 /** Who to ping. Left out when the area has only one role, which is then always pinged. */
@@ -129,8 +148,8 @@ function requestModal(type, area) {
     return modal.setTitle(`Break request · ${area.label}`).addLabelComponents(
       new LabelBuilder().setLabel('Position you need relief from').setTextInputComponent(shortInput('position', 'e.g. IND_GND', { max: 20 })),
       new LabelBuilder()
-        .setLabel('How long can you stay on?')
-        .setTextInputComponent(shortInput('stay', 'e.g. 30 minutes, or until 0200z')),
+        .setLabel(`Stay on until (Zulu HHMM) · now ${zuluNow()}Z`)
+        .setTextInputComponent(shortInput('stay', 'e.g. 0200', { min: 4, max: 4 })),
       ...notifyPicker(area),
     );
   }
@@ -171,7 +190,7 @@ function requestAlert(alert, { final = false } = {}) {
       .addFields(
         { name: 'Requested by', value: `<@${userId}>`, inline: true },
         { name: 'Relief needed on', value: fields.position, inline: true },
-        { name: 'Can stay on', value: fields.stay, inline: true },
+        { name: 'Can stay on until', value: /^\d{4}$/.test(fields.stay) ? `${fields.stay}Z` : fields.stay, inline: true },
       );
   } else {
     embed
@@ -216,6 +235,8 @@ module.exports = {
   reliefPanel,
   hoursModal,
   parseHours,
+  parseZulu,
+  zuluNow,
   requestPanel,
   ironMicPanel,
   requestModal,
