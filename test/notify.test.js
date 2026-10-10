@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { parseRoles, parseAreas, reliefAction, expiredGrants, isPanelMessage } = require('../src/notify');
-const { reliefPanel, hoursModal, parseHours, requestPanel, ironMicPanel, requestModal, requestAlert, alertStatus } = require('../src/panels');
+const { reliefPanel, hoursModal, parseHours, parseZulu, zuluNow,requestPanel, ironMicPanel, requestModal, requestAlert, alertStatus } = require('../src/panels');
 
 const positions = parseRoles('S Ground:1, A Ground:2, S Local:3, A Local:4, T Radar:5, E Radar:6');
 const areas = parseAreas({ CAB_ROLES: 'S-GC:1,A-GC:2,S-LC:3,A-LC:4', TRACON_ROLES: 'T-RC:5', ENROUTE_ROLES: 'E-RC:6' });
@@ -77,6 +77,17 @@ test('request forms ask who to notify only when the area has a choice', () => {
   assert.ok(picker(requestModal('staffing', cab)));
   assert.equal(picker(requestModal('break', tracon)), undefined);
   assert.equal(picker(requestModal('staffing', tracon)), undefined);
+});
+
+test('Zulu times: HHMM only, next occurrence, shown in the break form', () => {
+  const now = Date.UTC(2026, 9, 9, 1, 30);
+  assert.equal(zuluNow(now), '0130');
+  assert.equal(parseZulu('0200', now), Date.UTC(2026, 9, 9, 2, 0));
+  assert.equal(parseZulu('0100', now), Date.UTC(2026, 9, 10, 1, 0)); // already passed: tomorrow
+  for (const bad of ['200', '2400', '0260', '02:00', '2pm', '0200z', '30 minutes', '']) assert.equal(parseZulu(bad, now), null, bad);
+  const stay = requestModal('break', cab).toJSON().components.find((c) => c.component?.custom_id === 'stay');
+  assert.match(stay.label, /Zulu HHMM\) · now \d{4}Z/);
+  assert.deepEqual([stay.component.min_length, stay.component.max_length], [4, 4]);
 });
 
 const record = (over = {}) => ({
