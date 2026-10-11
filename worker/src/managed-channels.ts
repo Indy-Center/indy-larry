@@ -202,6 +202,7 @@ export async function prepareChannelIdSend(env: GuildEnv, request: ChannelIdSend
     channel = await discord<DiscordChannel>(env.DISCORD_TOKEN, 'GET', `/channels/${request.channelId}`);
     console.log(`[debug prepareChannelIdSend ${request.channelId}] got type ${channel.type}, parent ${channel.parent_id}, guild ${channel.guild_id}`);
   } catch (error) {
+    console.log(`[debug prepareChannelIdSend ${request.channelId}] the lookup threw: ${String(error)}`);
     throw new Error(`Larry can't see channel ${request.channelId}: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (channel.guild_id !== guild || channel.type !== GUILD_TEXT || !channel.parent_id || !allowed.has(channel.parent_id)) {
