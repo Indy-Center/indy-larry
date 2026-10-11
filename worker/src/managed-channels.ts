@@ -198,7 +198,9 @@ export async function prepareChannelIdSend(env: GuildEnv, request: ChannelIdSend
 
   let channel: DiscordChannel;
   try {
+    console.log(`[debug prepareChannelIdSend ${request.channelId}] message ok; asking Discord for the channel`);
     channel = await discord<DiscordChannel>(env.DISCORD_TOKEN, 'GET', `/channels/${request.channelId}`);
+    console.log(`[debug prepareChannelIdSend ${request.channelId}] got type ${channel.type}, parent ${channel.parent_id}, guild ${channel.guild_id}`);
   } catch (error) {
     throw new Error(`Larry can't see channel ${request.channelId}: ${error instanceof Error ? error.message : String(error)}`);
   }

@@ -35,6 +35,8 @@ export async function discord<T>(token: string, method: string, route: string, b
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    // DEBUG (hung enqueueToChannel): remove once the hang is found.
+    console.log(`[debug discord] ${method} ${route} -> ${res.status} (attempt ${attempt})`);
     if (res.ok) return (res.status === 204 ? undefined : await res.json()) as T;
 
     const text = await res.text();
@@ -44,6 +46,7 @@ export async function discord<T>(token: string, method: string, route: string, b
     } catch {}
     const wait = parsed.retry_after;
     if (res.status === 429 && attempt === 0 && wait != null && wait <= MAX_WAIT_SECONDS) {
+      console.log(`[debug discord] rate limited; waiting ${wait}s before trying ${method} ${route} again`);
       await new Promise((resolve) => setTimeout(resolve, Math.ceil(wait * 1000)));
       continue;
     }

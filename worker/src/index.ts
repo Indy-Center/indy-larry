@@ -67,7 +67,14 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
   }
 
   async enqueueToChannel(request: ChannelIdSend) {
-    await this.env.LARRY_QUEUE.send(await prepareChannelIdSend(this.env, request));
+    // DEBUG (hung enqueueToChannel): remove once the hang is found.
+    const started = Date.now();
+    const step = (what: string) => console.log(`[debug enqueueToChannel ${request?.channelId}] ${what} +${Date.now() - started}ms`);
+    step('called');
+    const job = await prepareChannelIdSend(this.env, request);
+    step('channel checked; writing to the queue');
+    await this.env.LARRY_QUEUE.send(job);
+    step('queued');
   }
 
   queue(batch: MessageBatch<QueueJob>) {
