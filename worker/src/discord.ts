@@ -40,6 +40,7 @@ export async function discord<T>(token: string, method: string, route: string, b
     if (res.ok) return (res.status === 204 ? undefined : await res.json()) as T;
 
     const text = await res.text();
+    console.log(`[debug discord] read the ${res.status} body: ${text.length} characters`);
     let parsed: { message?: string; code?: number; retry_after?: number } = {};
     try {
       parsed = JSON.parse(text);
@@ -50,6 +51,7 @@ export async function discord<T>(token: string, method: string, route: string, b
       await new Promise((resolve) => setTimeout(resolve, Math.ceil(wait * 1000)));
       continue;
     }
+    console.log(`[debug discord] throwing for ${method} ${route}: ${res.status} (${parsed.code}) ${parsed.message}`);
     throw new DiscordError(res.status, parsed.code, parsed.message ?? text);
   }
 }

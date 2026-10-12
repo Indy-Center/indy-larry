@@ -71,10 +71,15 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
     const started = Date.now();
     const step = (what: string) => console.log(`[debug enqueueToChannel ${request?.channelId}] ${what} +${Date.now() - started}ms`);
     step('called');
-    const job = await prepareChannelIdSend(this.env, request);
-    step('channel checked; writing to the queue');
-    await this.env.LARRY_QUEUE.send(job);
-    step('queued');
+    try {
+      const job = await prepareChannelIdSend(this.env, request);
+      step('channel checked; writing to the queue');
+      await this.env.LARRY_QUEUE.send(job);
+      step('queued');
+    } catch (error) {
+      step(`refusing the call with: ${String(error)}`);
+      throw error;
+    }
   }
 
   queue(batch: MessageBatch<QueueJob>) {
