@@ -246,7 +246,7 @@ function competitionEmbeds(comp, now = Date.now()) {
   const last = embeds[embeds.length - 1];
   if (last) {
     const credit = 'Totals from vnas-stats.com';
-    last.footer = { text: ended ? credit : `${monthRemaining(comp.startedAt, now)} · ${credit}` };
+    last.footer = { text: ended ? credit : `${monthRemaining(comp.startedAt, now)}\n${credit}` };
   }
   return embeds;
 }
