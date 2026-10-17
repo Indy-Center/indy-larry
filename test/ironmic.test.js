@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { pickPositions,resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -34,13 +34,13 @@ function zid() {
   return { facilities, positions };
 }
 
-test('parsePositions reads names and aliases, top-down', () => {
-  assert.deepEqual(parsePositions('local, approach'), ['approach', 'local']);
-  assert.deepEqual(parsePositions('twr APP'), ['approach', 'local']);
-  assert.deepEqual(parsePositions('local and approach and local'), ['approach', 'local']);
-  assert.deepEqual(parsePositions('del/gnd + tower, ctr'), ['center', 'local', 'ground', 'delivery']);
-  assert.throws(() => parsePositions('local, oceanic'), /"oceanic" isn't a position/);
-  assert.throws(() => parsePositions('  '), /at least one/);
+test('pickPositions keeps the True ones, top-down', () => {
+  assert.deepEqual(pickPositions({ local: true, approach: true }), ['approach', 'local']);
+  assert.deepEqual(pickPositions({ ground: true, local: false, center: true }), ['center', 'ground']);
+  assert.deepEqual(pickPositions({ ground: true, local: true, approach: true, center: true }), ['center', 'approach', 'local', 'ground']);
+  assert.deepEqual(pickPositions({ ground: true, delivery: true }), ['ground']); // delivery isn't offered
+  assert.throws(() => pickPositions({ local: false, approach: null }), /at least one/);
+  assert.throws(() => pickPositions({}), /at least one/);
 });
 
 test('resolveCallsigns: center from the ARTCC, approach from the TRACON over it, the rest its own', () => {

@@ -1,8 +1,8 @@
 // The /ironmic command and its leaderboard embed. The counting itself is in ironmic.js.
 //
-//   /ironmic start facility:LEX positions:local, approach   posts the embeds and starts counting
-//   /ironmic end                                            stops counting; the embed shows the final standings
-//   /ironmic clear                                          deletes the embed and the log, ready for the next one
+//   /ironmic start facility:LEX local:True approach:True   posts the embeds and starts counting
+//   /ironmic end                                           stops counting; the embed shows the final standings
+//   /ironmic clear                                         deletes the embed and the log, ready for the next one
 //
 // The embeds go in IRON_MIC_CHANNEL_ID (the status channel unless set), one message with an embed per
 // position; bot.js keeps that message above the status embeds when they share a channel.
@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, parsePositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
+const { POSITIONS, PICKABLE, pickPositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -29,25 +29,15 @@ const COMMAND = {
       description: 'Start an Iron Mic and post its leaderboard',
       options: [
         { type: 3, name: 'facility', description: 'Facility ID, e.g. LEX', required: true, autocomplete: true, max_length: 4 },
-        { type: 3, name: 'positions', description: 'Positions to track, e.g. local, approach', required: true, autocomplete: true, max_length: 100 },
+        // One True/False option per position (type 5 = boolean); set any combination to True.
+        ...PICKABLE.map((key) => ({ type: 5, name: key, description: `Track ${POSITIONS[key].label}` })),
+        { type: 5, name: 'ping', description: 'Ping the Iron Mic role (default True); False for quiet updates' },
       ],
     },
     { type: 1, name: 'end', description: 'End the Iron Mic; the leaderboard shows the final standings' },
     { type: 1, name: 'clear', description: 'Delete the leaderboard and clear its log, after /ironmic end' },
   ],
 };
-
-// Suggested position sets for the positions box; anything typed by hand works too.
-const POSITION_SETS = [
-  'local, approach',
-  'local',
-  'approach',
-  'ground, local',
-  'ground, local, approach',
-  'delivery, ground, local',
-  'delivery, ground, local, approach',
-  'center',
-];
 
 class IronMic {
   /**
@@ -200,20 +190,13 @@ class IronMic {
   }
 
   async autocomplete(interaction) {
-    const focused = interaction.options.getFocused(true);
-    const typed = String(focused.value ?? '').trim().toLowerCase();
-    let choices;
-
-    if (focused.name === 'facility') {
-      choices = this.facilities()
-        .filter((f) => !typed || f.id.toLowerCase().startsWith(typed) || f.name.toLowerCase().includes(typed))
-        .sort((a, b) => a.id.localeCompare(b.id))
-        .map((f) => ({ name: `${f.id} · ${f.name}`.slice(0, 100), value: f.id }));
-      if (!choices.length && typed) choices = [{ name: typed.toUpperCase(), value: typed.toUpperCase() }];
-    } else {
-      choices = POSITION_SETS.filter((s) => !typed || s.includes(typed)).map((s) => ({ name: s, value: s }));
-      if (typed && !POSITION_SETS.includes(typed)) choices.unshift({ name: typed.slice(0, 100), value: typed.slice(0, 100) });
-    }
+    // Only the facility box autocompletes; the positions are True/False options.
+    const typed = String(interaction.options.getFocused() ?? '').trim().toLowerCase();
+    let choices = this.facilities()
+      .filter((f) => !typed || f.id.toLowerCase().startsWith(typed) || f.name.toLowerCase().includes(typed))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((f) => ({ name: `${f.id} · ${f.name}`.slice(0, 100), value: f.id }));
+    if (!choices.length && typed) choices = [{ name: typed.toUpperCase(), value: typed.toUpperCase() }];
     return interaction.respond(choices.slice(0, 25));
   }
 
@@ -236,7 +219,7 @@ class IronMic {
 
     let positions;
     try {
-      positions = parsePositions(interaction.options.getString('positions'));
+      positions = pickPositions(Object.fromEntries(PICKABLE.map((key) => [key, interaction.options.getBoolean(key)])));
     } catch (err) {
       return this.reply(interaction, err.message);
     }
@@ -265,7 +248,8 @@ class IronMic {
     this.save();
 
     const what = `**${facilityId}** ${positions.map((k) => POSITIONS[k].label).join(' + ')}`;
-    const { roleId } = this.config;
+    // ping:False (e.g. restarting one to change its positions) posts the reply without the role mention.
+    const roleId = interaction.options.getBoolean('ping') === false ? null : this.config.roleId;
     // The ping goes in a reply everyone sees, so the role hears about it; the leaderboard is its own message.
     return interaction.reply({
       content: `🎙️ Iron Mic is on for ${what}!${roleId ? ` <@&${roleId}>` : ''}`,

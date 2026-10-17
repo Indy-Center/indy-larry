@@ -37,7 +37,7 @@ The bot needs **Manage Roles**, and its own role has to sit above every role it 
 
 Staff run `/ironmic` in any channel except `CHANNEL_ID` to keep a leaderboard of how long a facility's positions were staffed. The leaderboard is one message at the top of `CHANNEL_ID`, above the status embeds, with an embed per position in the order Center, Approach, Local, Ground, Delivery. Set `IRON_MIC_CHANNEL_ID` to post it somewhere else instead, such as a test channel.
 
-- `/ironmic start facility:LEX positions:local, approach` posts the leaderboard (reposting the status embeds below it) and pings `IRON_MIC_ROLE_ID`, if set, in the channel it was run in. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Positions are `center`, `approach`, `local`, `ground` and `delivery` (or `ctr`, `app`, `twr`, `gnd`, `del`), any combination.
+- `/ironmic start facility:LEX local:True approach:True` posts the leaderboard (reposting the status embeds below it) and pings `IRON_MIC_ROLE_ID`, if set, in the channel it was run in. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Each of `center`, `approach`, `local` and `ground` is its own True/False option; set any combination to True (at least one). Add `ping:False` to skip the role ping, e.g. when restarting one to change its positions.
 - `/ironmic end` stops it. The leaderboard shows the final totals within a minute.
 - `/ironmic clear` deletes the leaderboard and its log, after `end`. Only one Iron Mic runs at a time.
 
