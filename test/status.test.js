@@ -200,6 +200,25 @@ test('the end time shows on its own line before the closing window', () => {
   assert.doesNotMatch(twr, /Online until/);
 });
 
+test('a center does not list also covering, but an approach does', () => {
+  const { statusEmbed } = require('../src/embeds');
+  const display = {
+    isPrimary: false, isActive: true, facilityId: 'EVV', facilityName: 'TRACON', positionType: 'Tracon',
+    positionName: 'EVV', defaultCallsign: 'EVV_APP', frequency: 1,
+  };
+  const feed = {
+    controllers: [
+      controller('1', 'IND_83_CTR', 'Center', { facilityId: 'ZID' }),
+      controller('2', 'IND_N_APP', 'ApproachDeparture'),
+    ],
+  };
+  for (const c of feed.controllers) c.positions.push(display);
+  // Sorted by facility name here: IND (the approach) before ZID (the center).
+  const [app, ctr] = groupByFacility(feed).map((f) => statusEmbed({ status: 'online', facilityName: f.facilityName, facility: f }, {}).data.description);
+  assert.doesNotMatch(ctr, /also covering/);
+  assert.match(app, /also covering \*\*EVV_APP\*\*/);
+});
+
 test('a closed facility shows offline, then drops off', () => {
   const board = new StatusBoard({ offlineMinutes: 30 });
   const feed = { controllers: [controller('1', 'EVV_TWR', 'Tower', { facilityId: 'EVV' })] };

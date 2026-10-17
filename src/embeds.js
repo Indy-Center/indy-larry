@@ -18,7 +18,8 @@ function controllerLine(c, { showNames }) {
   const until = c.announcedEnd ?? c.closing?.at;
   if (until) line += `\n└ ${c.closing ? '🟡 ' : ''}Online until <t:${unix(until)}:t> (<t:${unix(until)}:R>)`;
   else if (c.closing) line += '\n└ 🟡 closing soon';
-  if (c.extraPositions.length) {
+  // A center's "also covering" would repeat the Top-down line, so only the other positions show it.
+  if (c.extraPositions.length && c.facilityType !== 'Center') {
     line += `\n└ also covering ${c.extraPositions.map((p) => `**${p.callsign}**`).join(', ')}`;
   }
   return line;
