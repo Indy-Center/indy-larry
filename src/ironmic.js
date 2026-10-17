@@ -8,35 +8,27 @@
 const STATS_URL = 'https://api.vnas-stats.com/v1/callsigns/top';
 const MINUTE = 60_000;
 
-// Position names staff type in /ironmic, in display order (top-down). suffixes are the callsign suffixes
+// Positions an Iron Mic can track, in display order (top-down). suffixes are the callsign suffixes
 // vNAS Stats groups by.
 const POSITIONS = {
-  center: { label: 'Center', suffixes: ['CTR'], aliases: ['ctr', 'enroute'] },
-  approach: { label: 'Approach', suffixes: ['APP', 'DEP'], aliases: ['app', 'radar', 'tracon'] },
-  local: { label: 'Local', suffixes: ['TWR'], aliases: ['tower', 'twr', 'lc'] },
-  ground: { label: 'Ground', suffixes: ['GND'], aliases: ['gnd', 'gc'] },
-  delivery: { label: 'Delivery', suffixes: ['DEL'], aliases: ['del', 'clearance', 'cd'] },
+  center: { label: 'Center', suffixes: ['CTR'] },
+  approach: { label: 'Approach', suffixes: ['APP', 'DEP'] },
+  local: { label: 'Local', suffixes: ['TWR'] },
+  ground: { label: 'Ground', suffixes: ['GND'] },
+  delivery: { label: 'Delivery', suffixes: ['DEL'] }, // no longer offered; kept so older Iron Mics still show
 };
 
-/**
- * "local, approach" -> ['local', 'approach'], in POSITIONS order with repeats dropped.
- * Accepts the aliases too ("twr app"). Throws with a message staff can read on anything else.
- */
-function parsePositions(text) {
-  const words = String(text ?? '')
-    .toLowerCase()
-    .split(/[\s,+/&]+|\band\b/)
-    .map((w) => w.trim())
-    .filter(Boolean);
-  if (!words.length) throw new Error('Pick at least one position, e.g. `local, approach`.');
+// The positions /ironmic start offers, each its own True/False option, so any combination works.
+const PICKABLE = ['center', 'approach', 'local', 'ground'];
 
-  const picked = new Set();
-  for (const word of words) {
-    const key = Object.keys(POSITIONS).find((k) => k === word || POSITIONS[k].aliases.includes(word));
-    if (!key) throw new Error(`"${word}" isn't a position. Use ${Object.keys(POSITIONS).join(', ')}.`);
-    picked.add(key);
-  }
-  return Object.keys(POSITIONS).filter((k) => picked.has(k));
+/**
+ * { local: true, approach: true, ground: false } -> ['approach', 'local'], in POSITIONS order.
+ * Throws with a message staff can read when none is picked.
+ */
+function pickPositions(choices) {
+  const picked = PICKABLE.filter((k) => choices?.[k]);
+  if (!picked.length) throw new Error('Pick at least one position: set center, approach, local or ground to True.');
+  return picked;
 }
 
 /**
@@ -242,7 +234,8 @@ function competitionEmbeds(comp) {
 module.exports = {
   STATS_URL,
   POSITIONS,
-  parsePositions,
+  PICKABLE,
+  pickPositions,
   resolveCallsigns,
   resolvePlaces,
   placeName,
