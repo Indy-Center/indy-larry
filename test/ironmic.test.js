@@ -164,6 +164,18 @@ test('an ended competition says so until its final totals are in', () => {
   assert.equal(e.description, '**36h 00m** staffed · 50% Uptime\n🥇 **#1**');
 });
 
+test('a running competition counts down the Zulu hours left in the month', () => {
+  const comp = newCompetition({ facilityId: 'LEX', positions: ['local'], callsigns: { local: ['LEX_TWR'] }, channelId: 'c', startedAt: T0 });
+  const footer = (now) => competitionEmbeds(comp, now)[0].footer.text;
+  // October has 744h; 3h 30m in leaves 740h 30m, shown as whole hours.
+  assert.equal(footer(T0 + 3.5 * HOUR), '740h left in the month (until 0000Z Nov 1) · Totals from vnas-stats.com');
+  assert.equal(footer(Date.parse('2026-10-31T23:15:00Z')), 'Under 1h left in the month (until 0000Z Nov 1) · Totals from vnas-stats.com');
+  assert.equal(footer(Date.parse('2026-11-01T00:05:00Z')), 'Month over (ended 0000Z Nov 1) · Totals from vnas-stats.com');
+
+  const dec = newCompetition({ facilityId: 'LEX', positions: ['local'], callsigns: { local: ['LEX_TWR'] }, channelId: 'c', startedAt: Date.parse('2026-12-01T00:00:00Z') });
+  assert.match(competitionEmbeds(dec, Date.parse('2026-12-31T22:00:00Z'))[0].footer.text, /^2h left in the month \(until 0000Z Jan 1\)/);
+});
+
 test('monthStart is midnight UTC on the 1st', () => {
   assert.equal(monthStart(Date.parse('2026-10-04T02:07:00Z')), Date.parse('2026-10-01T00:00:00Z'));
   assert.equal(monthStart(Date.parse('2026-10-01T00:00:00Z')), Date.parse('2026-10-01T00:00:00Z'));
