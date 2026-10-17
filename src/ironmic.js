@@ -152,6 +152,21 @@ function readStats(stats, callsigns) {
   };
 }
 
+/**
+ * The callsigns with an active (non-observer) controller on the vNAS feed, cut to prefix and suffix the way
+ * vNAS Stats groups them, so LEX_N_APP is LEX_APP.
+ * @returns {Set<string>}
+ */
+function onlineCallsigns(feed) {
+  const online = new Set();
+  for (const c of feed?.controllers ?? []) {
+    if (c.isObserver || !c.isActive) continue;
+    const parts = String(c.vatsimData?.callsign ?? '').split('_');
+    if (parts.length > 1) online.add(`${parts[0]}_${parts[parts.length - 1]}`);
+  }
+  return online;
+}
+
 /** Midnight UTC on the 1st of the month `ms` falls in. An Iron Mic always counts from there. */
 function monthStart(ms) {
   const d = new Date(ms);
@@ -210,10 +225,11 @@ function percent(ms, elapsed) {
 
 /**
  * One embed per tracked position, in POSITIONS order (Center first), as plain JSON (discord.js accepts it
- * as-is). They go out together in one message. The last one's footer credits vnas-stats.com and, while
+ * as-is). While it runs, a 🟢 goes before the callsign ahead of or behind a position if someone is on it
+ * right now (`online`, from onlineCallsigns()). They go out together in one message. The last one's footer credits vnas-stats.com and, while
  * it runs, counts down the Zulu hours left in the month.
  */
-function competitionEmbeds(comp, now = Date.now()) {
+function competitionEmbeds(comp, now = Date.now(), online = new Set()) {
   const ended = Boolean(comp.endedAt);
   const totals = comp.totals;
   const fallback = placeName(comp.facilityName) || comp.facilityId;
@@ -229,8 +245,9 @@ function competitionEmbeds(comp, now = Date.now()) {
     if (t?.rank) {
       let rank = `${MEDALS[t.rank] ? `${MEDALS[t.rank]} ` : ''}**#${t.rank}**`;
       if (t.tied) rank += ` · tied with ${t.tied} other${t.tied === 1 ? '' : 's'}`;
-      if (t.ahead) rank += ` · ${formatDuration(t.ahead.gapMs)} behind ${t.ahead.callsign}`;
-      else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${t.lead.callsign}`;
+      const dot = (callsign) => (!ended && online.has(callsign) ? `🟢 ${callsign}` : callsign);
+      if (t.ahead) rank += ` · ${formatDuration(t.ahead.gapMs)} behind ${dot(t.ahead.callsign)}`;
+      else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${dot(t.lead.callsign)}`;
       lines.push(rank);
     }
     if (ended && !comp.final) lines.push('*Fetching the final totals…*');
@@ -262,6 +279,7 @@ module.exports = {
   statsUrl,
   fetchStats,
   readStats,
+  onlineCallsigns,
   monthStart,
   newCompetition,
   formatDuration,

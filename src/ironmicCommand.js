@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, PICKABLE, pickPositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
+const { POSITIONS, PICKABLE, pickPositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, onlineCallsigns, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -55,6 +55,7 @@ class IronMic {
     this.competition = null;
     this.signature = null;
     this.lastFetchAttempt = 0;
+    this.online = new Set(); // callsigns on the vNAS feed as of the last tick
     this.load();
   }
 
@@ -92,10 +93,11 @@ class IronMic {
     );
   }
 
-  /** Called with every feed check. Errors are caught here so they never hold up the status embeds. */
-  async tick(now = Date.now()) {
+  /** Called with every feed check, and the feed itself for who's online. Errors are caught here so they never hold up the status embeds. */
+  async tick(now = Date.now(), feed = null) {
     const c = this.competition;
     if (!c || c.final) return;
+    if (feed) this.online = onlineCallsigns(feed);
     try {
       if (!c.callsigns || !c.places) {
         // Started before callsigns and titles were worked out from the vNAS data; work them out now.
@@ -145,7 +147,7 @@ class IronMic {
       c.channelId = this.config.channelId;
       c.messageId = null;
     }
-    const embeds = competitionEmbeds(c);
+    const embeds = competitionEmbeds(c, Date.now(), this.online);
     const signature = JSON.stringify(embeds);
     if (signature === this.signature && c.messageId) return;
 
