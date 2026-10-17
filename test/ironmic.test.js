@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { pickPositions,resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { pickPositions,resolveCallsigns, resolvePlaces, statsUrl, readStats, onlineCallsigns, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -174,6 +174,20 @@ test('a running competition counts down the Zulu hours left in the month', () =>
 
   const dec = newCompetition({ facilityId: 'LEX', positions: ['local'], callsigns: { local: ['LEX_TWR'] }, channelId: 'c', startedAt: Date.parse('2026-12-01T00:00:00Z') });
   assert.match(competitionEmbeds(dec, Date.parse('2026-12-31T22:00:00Z'))[0].footer.text, /^2h left in the month \(until 0000Z Jan 1\)/);
+});
+
+test('a green circle marks the callsign ahead or behind while someone is on it', () => {
+  const comp = newCompetition({ facilityId: 'ATL', positions: ['local'], callsigns: { local: ['ATL_TWR'] }, channelId: 'c', startedAt: T0 });
+  comp.totals = readStats(stats([['BOS', 'TWR', 20], ['ATL', 'TWR', 10]]), comp.callsigns);
+  const online = onlineCallsigns({
+    controllers: [
+      { isActive: true, isObserver: false, vatsimData: { callsign: 'BOS_E_TWR' } },
+      { isActive: false, isObserver: false, vatsimData: { callsign: 'ATL_TWR' } },
+    ],
+  });
+  assert.deepEqual([...online], ['BOS_TWR']);
+  assert.match(competitionEmbeds(comp, T0 + HOUR, online)[0].description, /behind 🟢 BOS_TWR$/);
+  assert.match(competitionEmbeds(comp, T0 + HOUR)[0].description, /behind BOS_TWR$/);
 });
 
 test('monthStart is midnight UTC on the 1st', () => {
