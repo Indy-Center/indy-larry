@@ -158,6 +158,24 @@ function monthStart(ms) {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
 }
 
+/** Midnight UTC on the 1st of the month after the one `ms` falls in, when that month's totals stop. */
+function monthEnd(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
+/**
+ * "371h left in the month (until 0000Z Nov 1)". Whole hours only, so the leaderboard is edited once an
+ * hour for it rather than every minute; the last hour reads "Under 1h".
+ */
+function monthRemaining(startedAt, now) {
+  const end = monthEnd(startedAt);
+  const hours = Math.floor(Math.max(0, end - now) / (60 * MINUTE));
+  const until = `until 0000Z ${new Date(end).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} 1`;
+  if (now >= end) return `Month over (${until.replace('until', 'ended')})`;
+  return `${hours ? `${hours}h` : 'Under 1h'} left in the month (${until})`;
+}
+
 /** A fresh competition, saved as-is to ironmic.json. */
 function newCompetition({ facilityId, facilityName = null, positions, callsigns, places, channelId, startedAt }) {
   return {
@@ -192,9 +210,10 @@ function percent(ms, elapsed) {
 
 /**
  * One embed per tracked position, in POSITIONS order (Center first), as plain JSON (discord.js accepts it
- * as-is). They go out together in one message. The last one's footer credits vnas-stats.com.
+ * as-is). They go out together in one message. The last one's footer credits vnas-stats.com and, while
+ * it runs, counts down the Zulu hours left in the month.
  */
-function competitionEmbeds(comp) {
+function competitionEmbeds(comp, now = Date.now()) {
   const ended = Boolean(comp.endedAt);
   const totals = comp.totals;
   const fallback = placeName(comp.facilityName) || comp.facilityId;
@@ -226,7 +245,8 @@ function competitionEmbeds(comp) {
 
   const last = embeds[embeds.length - 1];
   if (last) {
-    last.footer = { text: 'Totals from vnas-stats.com' };
+    const credit = 'Totals from vnas-stats.com';
+    last.footer = { text: ended ? credit : `${monthRemaining(comp.startedAt, now)} · ${credit}` };
   }
   return embeds;
 }
