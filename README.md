@@ -245,7 +245,7 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json` and `ironmic.json`. After a restore the bot edits the same status messages and panels, keeps its role timers and request alerts, and carries on any running Iron Mic.
 
 - `deploy/backup.sh` writes the volume's files into one archive, `indy-larry-state.tar.gz`, while the bot keeps running. The bot rewrites its files in place, so a copy can catch one half-written; each JSON file that doesn't parse is copied again, up to 10 times, and the backup fails if it never reads whole.
-- `deploy/restore.sh <file>` takes a decrypted archive. It checks the archive first and changes nothing if it is damaged. Then it stops the bot, replaces the volume's files with the archive's, and starts the bot again (also if the restore fails part-way).
+- `deploy/restore.sh <file>` takes a decrypted archive. It checks the archive first and changes nothing if it is damaged. Then it stops the bot, unpacks the archive inside the volume, swaps its files in for the old ones by renaming, and starts the bot again. If the swap fails part-way, the old files are put back before the bot starts. A restore killed part-way leaves `.restore-new` or `.restore-old` in the volume, and the next restore refuses to run until they have been checked and removed by hand.
 
 To restore by hand on the VPS, as `deploy`, with an archive fetched and decrypted by the runner's helpers:
 
