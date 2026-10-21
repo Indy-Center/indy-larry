@@ -7,6 +7,11 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 sample="$root/test/backup/sample"
 
+# The sample state the test seeds the volume with, and checks comes back.
+for f in state.json notify.json ironmic.json; do
+  [ -f "$sample/$f" ] || { echo "FAIL: the sample file $sample/$f is missing" >&2; exit 1; }
+done
+
 # The scripts run from the app's folder, as the backup runner runs them. The test compose file swaps the bot
 # for fake-bot.js, and the project name keeps the test's volume apart from any real one on this machine.
 cd "$root/deploy"
