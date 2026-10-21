@@ -95,6 +95,18 @@ done
 archive="$work/out1/$(ls "$work/out1")"
 echo "ok: five backups, each a whole copy of the state ($(cat "$work"/backup*.log | grep -c "trying again" || true) copies caught mid-write and taken again)"
 
+echo "--- a state.json that never reads whole fails the backup"
+# With the bot stopped, a half-written state.json stays half-written, so every retry finds it broken.
+docker compose stop bot >/dev/null 2>&1
+docker compose run --rm --no-deps -T --entrypoint sh bot -c 'printf "{\"marker\": \"sample-st" >/data/state.json'
+mkdir "$work/out-truncated"
+if bash backup.sh "$work/out-truncated" 2>"$work/backup-truncated.log"; then
+  fail "backup.sh succeeded with a half-written state.json"
+fi
+grep -q "state.json never read as whole JSON" "$work/backup-truncated.log" ||
+  { cat "$work/backup-truncated.log" >&2; fail "backup.sh failed, but not because state.json never read whole"; }
+echo "ok"
+
 echo "--- wipe the volume"
 docker compose down -v >/dev/null 2>&1
 docker compose up -d --quiet-pull bot
