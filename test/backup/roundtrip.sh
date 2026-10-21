@@ -120,6 +120,15 @@ copy_volume "$work/after-bad"
 [ ! -e "$work/after-bad/notify.json" ] || fail "restore.sh changed the volume for a bad archive"
 echo "ok"
 
+echo "--- a restore that did not finish blocks the next one, which changes nothing"
+docker compose exec -T bot mkdir /data/.restore-old
+if bash restore.sh "$archive"; then fail "restore.sh ran over a restore that did not finish"; fi
+[ "$(docker compose ps -q --status running bot)" ] || fail "restore.sh left the bot stopped"
+copy_volume "$work/after-blocked"
+[ ! -e "$work/after-blocked/notify.json" ] || fail "restore.sh changed the volume over a restore that did not finish"
+docker compose exec -T bot rmdir /data/.restore-old
+echo "ok"
+
 echo "--- restore"
 bash restore.sh "$archive" || fail "restore.sh exited non-zero"
 [ "$(docker compose ps -q --status running bot)" ] || fail "the bot is not running after restore"

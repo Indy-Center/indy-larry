@@ -33,6 +33,7 @@ cd /data
 for name in * .[!.]*; do
   [ -e "$name" ] || continue # the pattern matched nothing
   case "$name" in
+    .restore-new | .restore-old) ;; # left by a restore.sh that did not finish, not state of the bot
     *.json) copy_json "$name" ;;
     *) cp -a "$name" /tmp/copy/ ;; # anything else the bot keeps, copied as it is
   esac
