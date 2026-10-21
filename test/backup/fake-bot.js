@@ -19,6 +19,10 @@ delete loaded.padding;
 const padding = 'x'.repeat(64 * 1024);
 let seq = 0;
 
+// Exit on a stop signal only between writes, so the test's checks with the stand-in stopped find whole files.
+// Node runs this handler once the current write has finished.
+process.on('SIGTERM', () => process.exit(0));
+
 function write() {
   const text = JSON.stringify({ ...loaded, seq: seq++, padding }, null, 2);
   const half = Math.floor(text.length / 2);
