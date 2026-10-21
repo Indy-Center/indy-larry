@@ -1,9 +1,8 @@
 // Stands in for the bot in the backup round-trip test (it needs no Discord token).
-// Like the real bot, it reads state.json once at start and then keeps rewriting the whole file in place
-// (opening it empties it), through the same /app/state.json link into the volume.
-// The real bot's write is quick, so it rarely leaves a half-written file for long. This one writes the file in
-// two halves with 30 ms between them, every 100 ms, so about one copy in three lands mid-write and a backup
-// has to notice and copy again.
+// Like the real bot, it reads state.json once at start and then keeps rewriting it, through the same
+// /app/state.json link into the volume. Unlike the real bot, which saves by rename (src/stateFile.js), it
+// rewrites the file in place (opening it empties it), in two halves with 30 ms between them, every 100 ms,
+// so about one copy in three lands mid-write and the test proves a backup notices and copies again.
 const fs = require('fs');
 
 const STATE_FILE = '/app/state.json';

@@ -3,9 +3,10 @@
 # The backup runner calls it as `bash backup.sh <empty folder>` from ~/apps/indy-larry/, and it writes one file
 # there: indy-larry-state.tar.gz, everything in the bot-state volume (state.json, notify.json, ironmic.json).
 #
-# The bot stays up. It saves each file with fs.writeFileSync, which empties the file and then writes it again
-# in place, so a copy taken at the wrong moment holds an empty or half-written file. Each JSON file is copied,
-# then parsed; one that doesn't parse was caught mid-write and is copied again. Each file is whole, but the
+# The bot stays up. It saves each file whole, by writing a temporary file and renaming it over the old one
+# (src/stateFile.js), but a file left half-written by an older version of the bot, or anything else writing in
+# place, is still caught: each JSON file is copied, then parsed, and one that doesn't parse is copied again,
+# up to 10 times, before the backup fails. Each file is whole, but the
 # files are copied one after another, not at one moment: fine, as the bot never relies on them agreeing.
 set -euo pipefail
 

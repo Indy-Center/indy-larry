@@ -7,6 +7,7 @@ const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
 const { IronMic } = require('./ironmicCommand');
+const { saveStateFile } = require('./stateFile');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -76,7 +77,7 @@ function saveState() {
   const messages = Object.fromEntries([...posted].map(([key, { message }]) => [key, message.id]));
   const state = { channelId: config.channelId, messages, activeSince: Object.fromEntries(activeSince) };
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    saveStateFile(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (err) {
     console.error('Could not save state.json:', err.message);
   }

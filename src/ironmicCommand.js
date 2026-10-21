@@ -11,6 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
+const { saveStateFile } = require('./stateFile');
 const { POSITIONS, PICKABLE, pickPositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, onlineCallsigns, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
@@ -75,7 +76,7 @@ class IronMic {
 
   save() {
     try {
-      fs.writeFileSync(this.config.stateFile, JSON.stringify({ competition: this.competition }, null, 2));
+      saveStateFile(this.config.stateFile, JSON.stringify({ competition: this.competition }, null, 2));
     } catch (err) {
       console.error(`Could not save ${path.basename(this.config.stateFile)}:`, err.message);
     }
