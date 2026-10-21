@@ -88,6 +88,7 @@ for i in 1 2 3 4 5; do
   bash backup.sh "$out" 2>"$work/backup$i.log" || { cat "$work/backup$i.log" >&2; fail "backup.sh exited non-zero"; }
   files=("$out"/*)
   [ "${#files[@]}" -eq 1 ] && [ -f "${files[0]}" ] || fail "backup.sh must write exactly one file, wrote: $(ls -A "$out")"
+  [ "$(stat -c %a "${files[0]}")" = 600 ] || fail "the backup's mode is $(stat -c %a "${files[0]}"), not 600"
   mkdir "$work/got$i"
   tar -C "$work/got$i" -xzf "${files[0]}" || fail "backup $i is not a gzipped tar"
   check_state "$work/got$i" "backup $i"
@@ -105,6 +106,7 @@ if bash backup.sh "$work/out-truncated" 2>"$work/backup-truncated.log"; then
 fi
 grep -q "state.json never read as whole JSON" "$work/backup-truncated.log" ||
   { cat "$work/backup-truncated.log" >&2; fail "backup.sh failed, but not because state.json never read whole"; }
+[ -z "$(ls -A "$work/out-truncated")" ] || fail "a failed backup left files behind: $(ls -A "$work/out-truncated")"
 echo "ok"
 
 echo "--- wipe the volume"

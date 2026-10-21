@@ -46,4 +46,12 @@ tar -C /tmp/copy -czf - .
 # `docker compose run` starts the container from this folder's compose file, so it gets the right image and
 # the right volume (named after the folder: indy-larry_bot-state on the VPS). --no-deps leaves the running bot
 # alone, -T passes the archive through untouched, and --rm removes the container afterwards.
-docker compose run --rm --no-deps -T --entrypoint sh bot -c "$copy" >"$out/indy-larry-state.tar.gz"
+# The archive is written under a temporary name, readable only by its owner, and renamed once complete, so a
+# failed or stopped backup never leaves a partial archive where the runner would take it for a backup.
+partial="$out/.indy-larry-state.tar.gz.partial"
+trap 'rm -f "$partial"' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+umask 077
+docker compose run --rm --no-deps -T --entrypoint sh bot -c "$copy" >"$partial"
+mv "$partial" "$out/indy-larry-state.tar.gz"
