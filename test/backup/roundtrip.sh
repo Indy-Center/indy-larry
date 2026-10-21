@@ -141,4 +141,11 @@ copy_volume "$work/restored"
 check_state "$work/restored" "after restore"
 echo "ok: the bot is running with the backed-up state"
 
+echo "--- restore on a rebuilt VPS: no bot container and no volume yet, run from another folder"
+docker compose down -v >/dev/null 2>&1
+(cd "$work" && bash "$root/deploy/restore.sh" out1/"$(basename "$archive")") || fail "restore.sh exited non-zero"
+[ "$(docker compose ps -q --status running bot)" ] || fail "the bot is not running after restore"
+[ "$(wait_for_writes)" = sample-state ] || fail "the bot did not start with the restored state"
+echo "ok"
+
 echo "PASS"

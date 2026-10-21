@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # indy-larry's restore, the reverse of backup.sh (see docker-infrastructure's README, "What an app ships").
 # Called as `bash restore.sh <file>` from ~/apps/indy-larry/, with a decrypted indy-larry-state.tar.gz.
 # It stops the bot, replaces everything in the bot-state volume with the archive's files, and starts the bot.
@@ -5,6 +6,11 @@ set -euo pipefail
 
 archive=${1:?usage: bash restore.sh <indy-larry-state.tar.gz>}
 [ -f "$archive" ] || { echo "No such file: $archive" >&2; exit 1; }
+# Made absolute before the cd below, so a file given relative to where it was called still works.
+archive="$(cd "$(dirname "$archive")" && pwd)/$(basename "$archive")"
+
+# Compose finds docker-compose.yml, and the bot's volume, from this script's folder.
+cd "$(dirname "$0")"
 
 # Shell for the throwaway containers below. unpack_to unpacks the archive (read from stdin) into a folder and
 # checks every JSON file in it parses, so a damaged backup is refused before anything is changed.
