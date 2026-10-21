@@ -237,7 +237,7 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 6. Run **Build and Deploy** again, then check the run's log, or on the VPS:
 
    ```bash
-   cd /home/deploy/apps/vnas-discord-bot && docker compose ps && docker compose logs --tail 50
+   cd /home/deploy/apps/indy-larry && docker compose ps && docker compose logs --tail 50
    ```
 
 ## Backups
