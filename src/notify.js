@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
+const { saveStateFile } = require('./stateFile');
 const {
   MIN_HOURS,
   MAX_HOURS,
@@ -108,7 +109,7 @@ class Notifications {
 
   save() {
     try {
-      fs.writeFileSync(this.config.stateFile, JSON.stringify(this.state, null, 2));
+      saveStateFile(this.config.stateFile, JSON.stringify(this.state, null, 2));
     } catch (err) {
       console.error(`Could not save ${path.basename(this.config.stateFile)}:`, err.message);
     }

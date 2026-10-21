@@ -163,12 +163,13 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/embeds.js`: the embed layout.
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
-- `test/`: unit tests.
+- `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
 - `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint and queue consumer, `src/send.ts` checks and sends messages, `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
-- `.github/workflows/ci.yml`: tests, compose validation and an image build, plus the Worker's typecheck, tests and bundle, on every pull request.
+- `deploy/backup.sh`, `deploy/restore.sh`: back up and restore the `bot-state` volume (see [Backups](#backups)).
+- `.github/workflows/ci.yml`: tests, compose validation, an image build and the backup round trip, plus the Worker's typecheck, tests and bundle, on every pull request.
 - `.github/workflows/build-and-deploy.yml`: runs CI, pushes the image to GHCR, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH. Alongside that it deploys the Worker to Cloudflare.
 
 ## Local development
@@ -196,6 +197,7 @@ Use a test channel, or stop the production bot first. Two copies with the same t
 
 ```bash
 npm test
+bash test/backup/roundtrip.sh # the backup round trip; needs Docker
 ```
 
 ## Deployment
@@ -235,8 +237,23 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 6. Run **Build and Deploy** again, then check the run's log, or on the VPS:
 
    ```bash
-   cd /home/deploy/apps/vnas-discord-bot && docker compose ps && docker compose logs --tail 50
+   cd /home/deploy/apps/indy-larry && docker compose ps && docker compose logs --tail 50
    ```
+
+## Backups
+
+The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json` and `ironmic.json`. After a restore the bot edits the same status messages and panels, keeps its role timers and request alerts, and carries on any running Iron Mic.
+
+- `deploy/backup.sh` writes the volume's files into one archive, `indy-larry-state.tar.gz`, while the bot keeps running. The bot rewrites its files in place, so a copy can catch one half-written; each JSON file that doesn't parse is copied again, up to 10 times, and the backup fails if it never reads whole.
+- `deploy/restore.sh <file>` takes a decrypted archive. It checks the archive first and changes nothing if it is damaged. Then it stops the bot, unpacks the archive inside the volume, swaps its files in for the old ones by renaming, and starts the bot again. If the swap fails part-way, the old files are put back before the bot starts. A restore killed part-way leaves `.restore-new` or `.restore-old` in the volume, and the next restore refuses to run until they have been checked and removed by hand.
+
+To restore by hand on the VPS, as `deploy`, with an archive fetched and decrypted by the runner's helpers:
+
+```bash
+cd ~/apps/indy-larry && bash restore.sh /path/to/indy-larry-state.tar.gz
+```
+
+CI proves both on every pull request: `test/backup/roundtrip.sh` seeds a volume with the sample files in `test/backup/sample/`, backs it up five times while a stand-in bot rewrites `state.json`, wipes the volume, restores, and checks the bot starts with the backed-up state.
 
 ## Disclaimer
 

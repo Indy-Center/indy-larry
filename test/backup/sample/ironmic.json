@@ -1,0 +1,7 @@
+{
+  "competition": {
+    "facility": "LEX",
+    "positions": ["local", "approach"],
+    "messageId": "600000000000000001"
+  }
+}

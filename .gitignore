@@ -1,6 +1,7 @@
 node_modules/
 worker/dist/
 .env
-state.json
-notify.json
-ironmic.json
+# The bot's state, written next to src/ when it runs locally. Anchored, so test/backup/sample/ is still committed.
+/state.json
+/notify.json
+/ironmic.json
