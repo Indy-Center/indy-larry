@@ -150,8 +150,10 @@ const CLOSING_PHRASE =
  * Looks for a closing announcement in controller info text.
  *   "Online until 8pm ET (2400z)" -> 0000z (the zulu time wins when both are given)
  *   "Online until 8:30pm ET"      -> converted from the zone given (ET, CT, MT or PT)
+ *   "Online until 8pm"            -> no zone given, so Eastern is assumed
  *   "Closing at 0200z"            -> 0200z
  *   "Closing in 15 min"           -> now + 15 min
+ * A "~" (approximate time) is ignored: "Online until ~8pm ET" reads as "8pm ET".
  * Anything without a readable time ("Closing soon", "Closing at ???") returns null.
  * Times that have passed today are read as tomorrow, unless they're under an hour ago
  * (the controller is running over).
@@ -159,7 +161,7 @@ const CLOSING_PHRASE =
  */
 function parseClosing(info, now = new Date()) {
   if (!info) return null;
-  for (const line of info.split(/\r?\n/)) {
+  for (const line of info.replace(/[^\S\r\n]*~[^\S\r\n]*/g, ' ').split(/\r?\n/)) {
     const phrase = line.match(CLOSING_PHRASE);
     if (!phrase) continue;
     const rest = line.slice(phrase.index);
@@ -170,14 +172,16 @@ function parseClosing(info, now = new Date()) {
 
     // 8pm ET / 8:30 pm CST / 20:00 PDT
     const local = rest.match(
-      /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)?\s*(et|ct|mt|pt|[ecmp][sd]t|eastern|central|mountain|pacific)\b/i,
+      /\b(\d{1,2})(?::([0-5]\d))?\s*(am|pm)?(?:\s*(et|ct|mt|pt|[ecmp][sd]t|eastern|central|mountain|pacific)\b)?/i,
     );
-    if (local) {
+    // Without a zone, assume Eastern, but only for something that clearly is a clock time
+    // ("8pm", "20:00"), not a stray number.
+    if (local && (local[4] || local[3] || local[2])) {
       let hour = Number(local[1]);
       const ampm = local[3]?.toLowerCase();
       if (ampm === 'pm' && hour < 12) hour += 12;
       if (ampm === 'am' && hour === 12) hour = 0;
-      if (hour <= 24) return { at: nextOccurrence(hour % 24, Number(local[2] ?? 0), zoneOffsetHours(local[4], now), now) };
+      if (hour <= 24) return { at: nextOccurrence(hour % 24, Number(local[2] ?? 0), zoneOffsetHours(local[4] ?? 'ET', now), now) };
     }
 
     const rel = rest.match(/\bin\s+(\d{1,3})\s*(m|min|mins|minutes?|h|hr|hrs|hours?)\b/i);
