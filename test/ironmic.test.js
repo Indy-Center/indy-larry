@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePositions, resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { parseTargets, resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -34,13 +34,27 @@ function zid() {
   return { facilities, positions };
 }
 
-test('parsePositions reads names and aliases, top-down', () => {
-  assert.deepEqual(parsePositions('local, approach'), ['approach', 'local']);
-  assert.deepEqual(parsePositions('twr APP'), ['approach', 'local']);
-  assert.deepEqual(parsePositions('local and approach and local'), ['approach', 'local']);
-  assert.deepEqual(parsePositions('del/gnd + tower, ctr'), ['center', 'local', 'ground', 'delivery']);
-  assert.throws(() => parsePositions('local, oceanic'), /"oceanic" isn't a position/);
-  assert.throws(() => parsePositions('  '), /at least one/);
+test('parseTargets reads names and aliases, top-down, for the default facility', () => {
+  const keys = (text, fac = 'LEX') => parseTargets(text, fac).map((t) => t.key);
+  assert.deepEqual(keys('local, approach'), ['LEX:approach', 'LEX:local']);
+  assert.deepEqual(keys('twr APP'), ['LEX:approach', 'LEX:local']);
+  assert.deepEqual(keys('local and approach and local'), ['LEX:approach', 'LEX:local']);
+  assert.deepEqual(keys('del/gnd + tower, ctr'), ['LEX:center', 'LEX:local', 'LEX:ground', 'LEX:delivery']);
+  assert.throws(() => parseTargets('local, oceanic', 'LEX'), /"oceanic" isn't a position/);
+  assert.throws(() => parseTargets('  ', 'LEX'), /at least one/);
+});
+
+test('parseTargets lets a facility ID switch the facility for the positions after it', () => {
+  assert.deepEqual(parseTargets('IND ground, sdf local, approach, CVG app'), [
+    { key: 'SDF:approach', facilityId: 'SDF', position: 'approach' },
+    { key: 'CVG:approach', facilityId: 'CVG', position: 'approach' },
+    { key: 'SDF:local', facilityId: 'SDF', position: 'local' },
+    { key: 'IND:ground', facilityId: 'IND', position: 'ground' },
+  ]);
+  // A default facility covers positions before the first ID, and the same position at two facilities is kept.
+  assert.deepEqual(parseTargets('ground, SDF ground', 'IND').map((t) => t.key), ['IND:ground', 'SDF:ground']);
+  assert.throws(() => parseTargets('local'), /which facility "local" is for/);
+  assert.throws(() => parseTargets('local, SDF', 'IND'), /Which position at SDF/);
 });
 
 test('resolveCallsigns: center from the ARTCC, approach from the TRACON over it, the rest its own', () => {
@@ -174,4 +188,19 @@ test('formatDuration', () => {
   assert.equal(formatDuration(0), '0m');
   assert.equal(formatDuration(35 * MIN + 59_000), '35m');
   assert.equal(formatDuration((42 * 60 + 5) * MIN), '42h 05m');
+});
+
+test('positions at different facilities rank by their position type and are titled by their own facility', () => {
+  const comp = newCompetition({
+    facilityId: 'IND/SDF',
+    positions: ['IND:ground', 'SDF:local'],
+    callsigns: { 'IND:ground': ['IND_GND'], 'SDF:local': ['SDF_TWR'] },
+    places: { 'IND:ground': 'Indianapolis', 'SDF:local': 'Louisville' },
+    channelId: 'c',
+    startedAt: T0,
+  });
+  comp.totals = readStats(stats([['BOS', 'TWR', 20], ['SDF', 'TWR', 10], ['IND', 'GND', 4]]), comp.callsigns);
+  assert.equal(comp.totals.positions['IND:ground'].rank, 1);
+  assert.equal(comp.totals.positions['SDF:local'].rank, 2);
+  assert.deepEqual(competitionEmbeds(comp).map((e) => e.title), ['🎙️ Indianapolis Ground Iron Mic', '🎙️ Louisville Local Iron Mic']);
 });

@@ -18,11 +18,24 @@ const POSITIONS = {
   delivery: { label: 'Delivery', suffixes: ['DEL'], aliases: ['del', 'clearance', 'cd'] },
 };
 
+/** The position type of a key: 'local' for 'local' (older runs) and for 'SDF:local'. */
+function positionOf(key) {
+  return key.split(':').pop();
+}
+
+/** The facility ID in a 'SDF:local' key, or null for a plain 'local'. */
+function facilityOf(key) {
+  return key.includes(':') ? key.split(':')[0] : null;
+}
+
 /**
- * "local, approach" -> ['local', 'approach'], in POSITIONS order with repeats dropped.
- * Accepts the aliases too ("twr app"). Throws with a message staff can read on anything else.
+ * "local, approach" -> one entry per position, in POSITIONS order with repeats dropped, all at defaultFacility.
+ * A facility ID switches the facility for the positions after it: "IND ground, SDF local, approach, CVG app"
+ * is IND ground, SDF local, SDF approach and CVG approach. Positions can use their aliases ("twr app").
+ * Throws with a message staff can read on anything else.
+ * @returns {{ key: string, facilityId: string, position: string }[]} key is like 'SDF:local'
  */
-function parsePositions(text) {
+function parseTargets(text, defaultFacility = null) {
   const words = String(text ?? '')
     .toLowerCase()
     .split(/[\s,+/&]+|\band\b/)
@@ -30,13 +43,25 @@ function parsePositions(text) {
     .filter(Boolean);
   if (!words.length) throw new Error('Pick at least one position, e.g. `local, approach`.');
 
-  const picked = new Set();
+  const find = (word) => Object.keys(POSITIONS).find((k) => k === word || POSITIONS[k].aliases.includes(word));
+  const picked = new Map();
+  let facilityId = defaultFacility ? defaultFacility.toUpperCase() : null;
+  let waiting = null; // a facility ID typed but not yet followed by a position
   for (const word of words) {
-    const key = Object.keys(POSITIONS).find((k) => k === word || POSITIONS[k].aliases.includes(word));
-    if (!key) throw new Error(`"${word}" isn't a position. Use ${Object.keys(POSITIONS).join(', ')}.`);
-    picked.add(key);
+    const position = find(word);
+    if (position) {
+      if (!facilityId) throw new Error(`Say which facility "${word}" is for, like \`LEX ${word}\`, or fill in the facility box.`);
+      waiting = null;
+      picked.set(`${facilityId}:${position}`, { key: `${facilityId}:${position}`, facilityId, position });
+    } else if (/^[a-z0-9]{2,4}$/.test(word)) {
+      facilityId = waiting = word.toUpperCase();
+    } else {
+      throw new Error(`"${word}" isn't a position. Use ${Object.keys(POSITIONS).join(', ')}, with a facility ID before them for another facility.`);
+    }
   }
-  return Object.keys(POSITIONS).filter((k) => picked.has(k));
+  if (waiting) throw new Error(`Which position at ${waiting}? e.g. \`${waiting} local\`.`);
+  const order = Object.keys(POSITIONS);
+  return [...picked.values()].sort((a, b) => order.indexOf(a.position) - order.indexOf(b.position));
 }
 
 /**
@@ -142,7 +167,7 @@ function readStats(stats, callsigns) {
     }
     const seconds = mine.reduce((sum, c) => sum + c.durationSeconds, 0);
     // Ranked like vnas-stats.com: against the same kind of position only, so a tower against towers.
-    const others = list.filter((c) => !mine.includes(c) && POSITIONS[key].suffixes.includes(c.suffix));
+    const others = list.filter((c) => !mine.includes(c) && POSITIONS[positionOf(key)].suffixes.includes(c.suffix));
     const above = others.filter((c) => c.durationSeconds > seconds);
     const tied = others.filter((c) => c.durationSeconds === seconds).length;
     const t = { ms: seconds * 1000, rank: above.length + 1 };
@@ -169,9 +194,9 @@ function monthStart(ms) {
 /** A fresh competition, saved as-is to ironmic.json. */
 function newCompetition({ facilityId, facilityName = null, positions, callsigns, places, channelId, startedAt }) {
   return {
-    facilityId,
+    facilityId, // 'LEX', or 'IND/SDF' when the positions are at several facilities
     facilityName,
-    positions,
+    positions, // keys like 'SDF:local'; older runs have plain 'local' and take facilityId
     callsigns, // resolveCallsigns() output, fixed for the whole run
     places, // resolvePlaces() output, for the titles
     channelId,
@@ -224,7 +249,7 @@ function competitionEmbeds(comp) {
     }
     if (ended && !comp.final) lines.push('*Fetching the final totals…*');
 
-    const title = `${comp.places?.[key] ?? fallback} ${POSITIONS[key].label} Iron Mic`;
+    const title = `${comp.places?.[key] ?? facilityOf(key) ?? fallback} ${POSITIONS[positionOf(key)].label} Iron Mic`;
     return {
       color: 0xf1c40f,
       title: ended ? `🏁 ${title}: final` : `🎙️ ${title}`,
@@ -242,7 +267,9 @@ function competitionEmbeds(comp) {
 module.exports = {
   STATS_URL,
   POSITIONS,
-  parsePositions,
+  parseTargets,
+  positionOf,
+  facilityOf,
   resolveCallsigns,
   resolvePlaces,
   placeName,
