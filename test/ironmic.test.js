@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseTargets, resolveCallsigns, resolvePlaces, statsUrl, readStats, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { pickTargets, resolveCallsigns, resolvePlaces, statsUrl, readStats, onlineCallsigns, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -34,27 +34,15 @@ function zid() {
   return { facilities, positions };
 }
 
-test('parseTargets reads names and aliases, top-down, for the default facility', () => {
-  const keys = (text, fac = 'LEX') => parseTargets(text, fac).map((t) => t.key);
-  assert.deepEqual(keys('local, approach'), ['LEX:approach', 'LEX:local']);
-  assert.deepEqual(keys('twr APP'), ['LEX:approach', 'LEX:local']);
-  assert.deepEqual(keys('local and approach and local'), ['LEX:approach', 'LEX:local']);
-  assert.deepEqual(keys('del/gnd + tower, ctr'), ['LEX:center', 'LEX:local', 'LEX:ground', 'LEX:delivery']);
-  assert.throws(() => parseTargets('local, oceanic', 'LEX'), /"oceanic" isn't a position/);
-  assert.throws(() => parseTargets('  ', 'LEX'), /at least one/);
-});
-
-test('parseTargets lets a facility ID switch the facility for the positions after it', () => {
-  assert.deepEqual(parseTargets('IND ground, sdf local, approach, CVG app'), [
-    { key: 'SDF:approach', facilityId: 'SDF', position: 'approach' },
-    { key: 'CVG:approach', facilityId: 'CVG', position: 'approach' },
-    { key: 'SDF:local', facilityId: 'SDF', position: 'local' },
-    { key: 'IND:ground', facilityId: 'IND', position: 'ground' },
-  ]);
-  // A default facility covers positions before the first ID, and the same position at two facilities is kept.
-  assert.deepEqual(parseTargets('ground, SDF ground', 'IND').map((t) => t.key), ['IND:ground', 'SDF:ground']);
-  assert.throws(() => parseTargets('local'), /which facility "local" is for/);
-  assert.throws(() => parseTargets('local, SDF', 'IND'), /Which position at SDF/);
+test('pickTargets keeps the positions that have a facility, top-down', () => {
+  const keys = (choices) => pickTargets(choices).map((t) => t.key);
+  assert.deepEqual(keys({ local: 'lex', approach: 'LEX' }), ['LEX:approach', 'LEX:local']);
+  assert.deepEqual(keys({ ground: 'IND', local: ' ', center: 'ind' }), ['IND:center', 'IND:ground']);
+  assert.deepEqual(keys({ ground: 'IND', local: 'SDF', approach: 'CVG', center: 'IND' }), ['IND:center', 'CVG:approach', 'SDF:local', 'IND:ground']);
+  assert.deepEqual(pickTargets({ local: 'sdf' }), [{ key: 'SDF:local', facilityId: 'SDF', position: 'local' }]);
+  assert.deepEqual(keys({ ground: 'IND', delivery: 'IND' }), ['IND:ground']); // delivery isn't offered
+  assert.throws(() => pickTargets({ local: '', approach: null }), /at least one/);
+  assert.throws(() => pickTargets({}), /at least one/);
 });
 
 test('resolveCallsigns: center from the ARTCC, approach from the TRACON over it, the rest its own', () => {
@@ -176,6 +164,32 @@ test('an ended competition says so until its final totals are in', () => {
   comp.final = true;
   [e] = competitionEmbeds(comp);
   assert.equal(e.description, '**36h 00m** staffed · 50% Uptime\n🥇 **#1**');
+});
+
+test('a running competition counts down the Zulu hours left in the month', () => {
+  const comp = newCompetition({ facilityId: 'LEX', positions: ['local'], callsigns: { local: ['LEX_TWR'] }, channelId: 'c', startedAt: T0 });
+  const footer = (now) => competitionEmbeds(comp, now)[0].footer.text;
+  // October has 744h; 3h 30m in leaves 740h 30m, shown as whole hours.
+  assert.equal(footer(T0 + 3.5 * HOUR), '740h left in the month (until 0000Z Nov 1)\nTotals from vnas-stats.com');
+  assert.equal(footer(Date.parse('2026-10-31T23:15:00Z')), 'Under 1h left in the month (until 0000Z Nov 1)\nTotals from vnas-stats.com');
+  assert.equal(footer(Date.parse('2026-11-01T00:05:00Z')), 'Month over (ended 0000Z Nov 1)\nTotals from vnas-stats.com');
+
+  const dec = newCompetition({ facilityId: 'LEX', positions: ['local'], callsigns: { local: ['LEX_TWR'] }, channelId: 'c', startedAt: Date.parse('2026-12-01T00:00:00Z') });
+  assert.match(competitionEmbeds(dec, Date.parse('2026-12-31T22:00:00Z'))[0].footer.text, /^2h left in the month \(until 0000Z Jan 1\)/);
+});
+
+test('a green circle marks the callsign ahead or behind while someone is on it', () => {
+  const comp = newCompetition({ facilityId: 'ATL', positions: ['local'], callsigns: { local: ['ATL_TWR'] }, channelId: 'c', startedAt: T0 });
+  comp.totals = readStats(stats([['BOS', 'TWR', 20], ['ATL', 'TWR', 10]]), comp.callsigns);
+  const online = onlineCallsigns({
+    controllers: [
+      { isActive: true, isObserver: false, vatsimData: { callsign: 'BOS_E_TWR' } },
+      { isActive: false, isObserver: false, vatsimData: { callsign: 'ATL_TWR' } },
+    ],
+  });
+  assert.deepEqual([...online], ['BOS_TWR']);
+  assert.match(competitionEmbeds(comp, T0 + HOUR, online)[0].description, /behind 🟢 BOS_TWR$/);
+  assert.match(competitionEmbeds(comp, T0 + HOUR)[0].description, /behind BOS_TWR$/);
 });
 
 test('monthStart is midnight UTC on the 1st', () => {

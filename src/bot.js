@@ -7,6 +7,7 @@ const { statusEmbed, noneOnlineEmbed } = require('./embeds');
 const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
 const { IronMic } = require('./ironmicCommand');
+const { saveStateFile } = require('./stateFile');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -76,7 +77,7 @@ function saveState() {
   const messages = Object.fromEntries([...posted].map(([key, { message }]) => [key, message.id]));
   const state = { channelId: config.channelId, messages, activeSince: Object.fromEntries(activeSince) };
   try {
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    saveStateFile(STATE_FILE, JSON.stringify(state, null, 2));
   } catch (err) {
     console.error('Could not save state.json:', err.message);
   }
@@ -181,7 +182,7 @@ async function refresh() {
     if (trackActivations(feed, activeSince, new Date(), firstRefresh, config.artccIds)) saveState();
     firstRefresh = false;
     const { bookings, facilityTree } = await getReferenceData(); // first, so Iron Mic has the facility data
-    await ironMic?.tick(); // catches its own errors, so the status embeds still update
+    await ironMic?.tick(Date.now(), feed); // catches its own errors, so the status embeds still update
 
     // The Iron Mic leaderboard sits on top. If it's newer than any status message (just started, reposted,
     // or the order got lost), take the status messages down so they're posted again below it.

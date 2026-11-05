@@ -44,6 +44,10 @@ jobs:
             console.log('ok');
           "
 
+      # deploy/backup.sh and deploy/restore.sh against a real volume: back up while the bot writes, wipe, restore.
+      - name: Backup round trip
+        run: bash test/backup/roundtrip.sh
+
   # The send Worker in worker/ (Cloudflare, deployed by build-and-deploy.yml's deploy-worker job).
   worker:
     runs-on: ubuntu-latest

@@ -1,9 +1,9 @@
 // The /ironmic command and its leaderboard embed. The counting itself is in ironmic.js.
 //
-//   /ironmic start facility:LEX positions:local, approach   posts the embeds and starts counting
-//   /ironmic start positions:IND ground, SDF local, CVG approach   the same across facilities
-//   /ironmic end                                            stops counting; the embed shows the final standings
-//   /ironmic clear                                          deletes the embed and the log, ready for the next one
+//   /ironmic start local:LEX approach:LEX   posts the embeds and starts counting
+//   /ironmic start local:SDF ground:IND   positions can be at different facilities
+//   /ironmic end                                           stops counting; the embed shows the final standings
+//   /ironmic clear                                         deletes the embed and the log, ready for the next one
 //
 // The embeds go in IRON_MIC_CHANNEL_ID (the status channel unless set), one message with an embed per
 // position; bot.js keeps that message above the status embeds when they share a channel.
@@ -12,7 +12,8 @@
 const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
-const { POSITIONS, parseTargets, resolveCallsigns, resolvePlaces, fetchStats, readStats, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
+const { saveStateFile } = require('./stateFile');
+const { POSITIONS, PICKABLE, pickTargets, resolveCallsigns, resolvePlaces, fetchStats, readStats, onlineCallsigns, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -29,26 +30,21 @@ const COMMAND = {
       name: 'start',
       description: 'Start an Iron Mic and post its leaderboard',
       options: [
-        { type: 3, name: 'positions', description: 'Positions to track, e.g. local, approach or IND ground, SDF local', required: true, autocomplete: true, max_length: 100 },
-        { type: 3, name: 'facility', description: 'Facility ID for positions without one, e.g. LEX', required: false, autocomplete: true, max_length: 4 },
+        // One option per position (type 3 = string) holding the facility to track it at; fill in any combination.
+        ...PICKABLE.map((key) => ({
+          type: 3,
+          name: key,
+          description: `Facility to track ${POSITIONS[key].label} at, e.g. LEX`,
+          autocomplete: true,
+          max_length: 4,
+        })),
+        { type: 5, name: 'ping', description: 'Ping the Iron Mic role (default True); False for quiet updates' },
       ],
     },
     { type: 1, name: 'end', description: 'End the Iron Mic; the leaderboard shows the final standings' },
     { type: 1, name: 'clear', description: 'Delete the leaderboard and clear its log, after /ironmic end' },
   ],
 };
-
-// Suggested position sets for the positions box; anything typed by hand works too.
-const POSITION_SETS = [
-  'local, approach',
-  'local',
-  'approach',
-  'ground, local',
-  'ground, local, approach',
-  'delivery, ground, local',
-  'delivery, ground, local, approach',
-  'center',
-];
 
 class IronMic {
   /**
@@ -66,6 +62,7 @@ class IronMic {
     this.competition = null;
     this.signature = null;
     this.lastFetchAttempt = 0;
+    this.online = new Set(); // callsigns on the vNAS feed as of the last tick
     this.load();
   }
 
@@ -85,7 +82,7 @@ class IronMic {
 
   save() {
     try {
-      fs.writeFileSync(this.config.stateFile, JSON.stringify({ competition: this.competition }, null, 2));
+      saveStateFile(this.config.stateFile, JSON.stringify({ competition: this.competition }, null, 2));
     } catch (err) {
       console.error(`Could not save ${path.basename(this.config.stateFile)}:`, err.message);
     }
@@ -103,10 +100,11 @@ class IronMic {
     );
   }
 
-  /** Called with every feed check. Errors are caught here so they never hold up the status embeds. */
-  async tick(now = Date.now()) {
+  /** Called with every feed check, and the feed itself for who's online. Errors are caught here so they never hold up the status embeds. */
+  async tick(now = Date.now(), feed = null) {
     const c = this.competition;
     if (!c || c.final) return;
+    if (feed) this.online = onlineCallsigns(feed);
     try {
       if (!c.callsigns || !c.places) {
         // Started before callsigns and titles were worked out from the vNAS data; work them out now.
@@ -156,7 +154,7 @@ class IronMic {
       c.channelId = this.config.channelId;
       c.messageId = null;
     }
-    const embeds = competitionEmbeds(c);
+    const embeds = competitionEmbeds(c, Date.now(), this.online);
     const signature = JSON.stringify(embeds);
     if (signature === this.signature && c.messageId) return;
 
@@ -201,20 +199,13 @@ class IronMic {
   }
 
   async autocomplete(interaction) {
-    const focused = interaction.options.getFocused(true);
-    const typed = String(focused.value ?? '').trim().toLowerCase();
-    let choices;
-
-    if (focused.name === 'facility') {
-      choices = this.facilities()
-        .filter((f) => !typed || f.id.toLowerCase().startsWith(typed) || f.name.toLowerCase().includes(typed))
-        .sort((a, b) => a.id.localeCompare(b.id))
-        .map((f) => ({ name: `${f.id} · ${f.name}`.slice(0, 100), value: f.id }));
-      if (!choices.length && typed) choices = [{ name: typed.toUpperCase(), value: typed.toUpperCase() }];
-    } else {
-      choices = POSITION_SETS.filter((s) => !typed || s.includes(typed)).map((s) => ({ name: s, value: s }));
-      if (typed && !POSITION_SETS.includes(typed)) choices.unshift({ name: typed.slice(0, 100), value: typed.slice(0, 100) });
-    }
+    // Only the facility box autocompletes; the positions are True/False options.
+    const typed = String(interaction.options.getFocused() ?? '').trim().toLowerCase();
+    let choices = this.facilities()
+      .filter((f) => !typed || f.id.toLowerCase().startsWith(typed) || f.name.toLowerCase().includes(typed))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((f) => ({ name: `${f.id} · ${f.name}`.slice(0, 100), value: f.id }));
+    if (!choices.length && typed) choices = [{ name: typed.toUpperCase(), value: typed.toUpperCase() }];
     return interaction.respond(choices.slice(0, 25));
   }
 
@@ -228,10 +219,9 @@ class IronMic {
       return this.reply(interaction, 'Run this in another channel; my ping would land between the status embeds.');
     }
 
-    const defaultFacility = interaction.options.getString('facility')?.trim().toUpperCase() || null;
     let targets;
     try {
-      targets = parseTargets(interaction.options.getString('positions'), defaultFacility);
+      targets = pickTargets(Object.fromEntries(PICKABLE.map((key) => [key, interaction.options.getString(key)])));
     } catch (err) {
       return this.reply(interaction, err.message);
     }
@@ -279,7 +269,8 @@ class IronMic {
       facilityIds.length === 1
         ? `**${facilityId}** ${targets.map((t) => POSITIONS[t.position].label).join(' + ')}`
         : targets.map((t) => `**${t.facilityId}** ${POSITIONS[t.position].label}`).join(' + ');
-    const { roleId } = this.config;
+    // ping:False (e.g. restarting one to change its positions) posts the reply without the role mention.
+    const roleId = interaction.options.getBoolean('ping') === false ? null : this.config.roleId;
     // The ping goes in a reply everyone sees, so the role hears about it; the leaderboard is its own message.
     return interaction.reply({
       content: `🎙️ Iron Mic is on for ${what}!${roleId ? ` <@&${roleId}>` : ''}`,

@@ -1,4 +1,4 @@
-# indy-lary
+# indy-larry
 
 A Discord bot that shows which Indy Center (ZID) facilities are staffed on vNAS. It polls the vNAS controller feed every 30 seconds and keeps one embed per facility up to date in a Discord channel.
 
@@ -35,13 +35,16 @@ The bot needs **Manage Roles**, and its own role has to sit above every role it 
 
 ## Iron Mic leaderboard
 
-Staff run `/ironmic` in any channel except `CHANNEL_ID` to keep a leaderboard of how long positions at one or more facilities were staffed. The leaderboard is one message at the top of `CHANNEL_ID`, above the status embeds, with an embed per position in the order Center, Approach, Local, Ground, Delivery. Set `IRON_MIC_CHANNEL_ID` to post it somewhere else instead, such as a test channel.
+Staff run `/ironmic` in any channel except `CHANNEL_ID` to keep a leaderboard of how long positions at one or more facilities were staffed. The leaderboard is one message at the top of `CHANNEL_ID`, above the status embeds, with an embed per position in the order Center, Approach, Local, Ground. Set `IRON_MIC_CHANNEL_ID` to post it somewhere else instead, such as a test channel.
 
-- `/ironmic start facility:LEX positions:local, approach` posts the leaderboard (reposting the status embeds below it) and pings `IRON_MIC_ROLE_ID`, if set, in the channel it was run in. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Positions are `center`, `approach`, `local`, `ground` and `delivery` (or `ctr`, `app`, `twr`, `gnd`, `del`), any combination. Positions can be at different facilities: put a facility ID before them, e.g. `/ironmic start positions:IND ground, SDF local, CVG approach`; an ID applies to the positions after it, and `facility` fills in for any positions without one.
+- `/ironmic start local:LEX approach:LEX` posts the leaderboard (reposting the status embeds below it) and pings `IRON_MIC_ROLE_ID`, if set, in the channel it was run in. The facility list comes from the vNAS ARTCC data (towers and TRACONs in `ARTCC_IDS`). Each of `center`, `approach`, `local` and `ground` is its own option holding the facility to track it at; fill in any combination (at least one). Positions can be at different facilities, e.g. `local:SDF ground:IND approach:CVG`. Add `ping:False` to skip the role ping, e.g. when restarting one to change its positions.
 - `/ironmic end` stops it. The leaderboard shows the final totals within a minute.
 - `/ironmic clear` deletes the leaderboard and its log, after `end`. Only one Iron Mic runs at a time.
 
-Totals come from [vNAS Stats](https://vnas-stats.com) ([source](https://github.com/kengreim/vnas-stats)), fetched every 5 minutes. An Iron Mic always counts from midnight UTC on the 1st of the month `start` was run in, so it matches the site's month view. It counts active controllers and groups time by callsign prefix and suffix, ignoring the middle part, so `LEX_APP` and `LEX_N_APP` are both LEX approach and two controllers on it at once count once. Which callsigns a position covers comes from the vNAS ARTCC data: Center is the ARTCC's (`IND_CTR`), Approach is the TRACON over the facility (DAY's is CMH's, `CMH_APP` + `DAY_APP`), and Local, Ground and Delivery are the facility's own. A position with several callsigns adds them up. `start` refuses a position the facility doesn't have, like PKB approach. Its list only has the network's top callsigns; a position that didn't make it shows as "Under" the last one listed.
+Totals come from [vNAS Stats](https://vnas-stats.com) ([source](https://github.com/kengreim/vnas-stats)), fetched every 5 minutes. An Iron Mic always counts from midnight UTC on the 1st of the month `start` was run in, so it matches the site's month view. While it runs, the leaderboard's footer shows the whole hours left in that month in Zulu, e.g. `371h left in the month (until 0000Z Nov 1)`. It counts active controllers and groups time by callsign prefix and suffix, ignoring the middle part, so `LEX_APP` and `LEX_N_APP` are both LEX approach and two controllers on it at once count once. Which callsigns a position covers comes from the vNAS ARTCC data: Center is the ARTCC's (`IND_CTR`), Approach is the TRACON over the facility (DAY's is CMH's, `CMH_APP` + `DAY_APP`), and Local and Ground are the facility's own. A position with several callsigns adds them up. `start` refuses a position the facility doesn't have, like PKB approach. Its list only has the network's top callsigns; a position that didn't make it shows as "Under" the last one listed.
+
+Each embed shows the position's staffed time, its Uptime, and its rank among the same kind of position on the network (towers against towers, approaches against approaches), with the gap to the callsign just above it, or its lead over the one below at #1. While the Iron Mic runs, that callsign gets a 🟢 when someone is actively controlling it on the vNAS feed right now, so you can see who you're chasing or holding off. The circles go away once the Iron Mic has ended.
+
 By default only members with **Manage Server** see the command; change who can use it under **Server Settings → Integrations → Larry**. The bot needs **View Channel**, **Send Messages** and **Embed Links** where it's run and in the leaderboard's channel, and the role ping needs the same mention permission as the request alerts. `ironmic.json` holds the running Iron Mic and its message ID, so a restart edits the same message. It isn't committed.
 
 ## Sending messages from other apps
@@ -160,12 +163,13 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/embeds.js`: the embed layout.
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
-- `test/`: unit tests.
+- `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
 - `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint and queue consumer, `src/send.ts` checks and sends messages, `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
-- `.github/workflows/ci.yml`: tests, compose validation and an image build, plus the Worker's typecheck, tests and bundle, on every pull request.
+- `deploy/backup.sh`, `deploy/restore.sh`: back up and restore the `bot-state` volume (see [Backups](#backups)).
+- `.github/workflows/ci.yml`: tests, compose validation, an image build and the backup round trip, plus the Worker's typecheck, tests and bundle, on every pull request.
 - `.github/workflows/build-and-deploy.yml`: runs CI, pushes the image to GHCR, then rsyncs `deploy/` to the VPS and runs `docker compose up -d` over SSH. Alongside that it deploys the Worker to Cloudflare.
 
 ## Local development
@@ -193,6 +197,7 @@ Use a test channel, or stop the production bot first. Two copies with the same t
 
 ```bash
 npm test
+bash test/backup/roundtrip.sh # the backup round trip; needs Docker
 ```
 
 ## Deployment
@@ -232,8 +237,23 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 6. Run **Build and Deploy** again, then check the run's log, or on the VPS:
 
    ```bash
-   cd /home/deploy/apps/vnas-discord-bot && docker compose ps && docker compose logs --tail 50
+   cd /home/deploy/apps/indy-larry && docker compose ps && docker compose logs --tail 50
    ```
+
+## Backups
+
+The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json` and `ironmic.json`. After a restore the bot edits the same status messages and panels, keeps its role timers and request alerts, and carries on any running Iron Mic.
+
+- `deploy/backup.sh` writes the volume's files into one archive, `indy-larry-state.tar.gz`, while the bot keeps running. The bot rewrites its files in place, so a copy can catch one half-written; each JSON file that doesn't parse is copied again, up to 10 times, and the backup fails if it never reads whole.
+- `deploy/restore.sh <file>` takes a decrypted archive. It checks the archive first and changes nothing if it is damaged. Then it stops the bot, unpacks the archive inside the volume, swaps its files in for the old ones by renaming, and starts the bot again. If the swap fails part-way, the old files are put back before the bot starts. A restore killed part-way leaves `.restore-new` or `.restore-old` in the volume, and the next restore refuses to run until they have been checked and removed by hand.
+
+To restore by hand on the VPS, as `deploy`, with an archive fetched and decrypted by the runner's helpers:
+
+```bash
+cd ~/apps/indy-larry && bash restore.sh /path/to/indy-larry-state.tar.gz
+```
+
+CI proves both on every pull request: `test/backup/roundtrip.sh` seeds a volume with the sample files in `test/backup/sample/`, backs it up five times while a stand-in bot rewrites `state.json`, wipes the volume, restores, and checks the bot starts with the backed-up state.
 
 ## Disclaimer
 

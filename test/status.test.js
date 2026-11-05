@@ -30,6 +30,20 @@ test('parseClosing understands Central, Mountain and Pacific', () => {
   assert.equal(at('Online until 8pm PT', '2026-12-01T22:00:00Z'), '2026-12-02T04:00:00.000Z'); // PST
 });
 
+test('parseClosing ignores the ~ character', () => {
+  assert.equal(at('Online until ~8pm ET', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online until 8pm~ET', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online ~until ~ 8pm ET (~2400z)', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online until~2400z', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+});
+
+test('parseClosing assumes Eastern when no zone is given', () => {
+  assert.equal(at('Online until ~8pm', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z'); // EDT
+  assert.equal(at('Online until 8:30pm', '2026-12-01T22:00:00Z'), '2026-12-02T01:30:00.000Z'); // EST
+  assert.equal(at('Online until 20:00', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online until 8', '2026-09-27T22:00:00Z'), null);
+});
+
 test('parseClosing keeps a time up to an hour past (running over)', () => {
   assert.equal(at('Online until 8pm ET (2400z)', '2026-09-28T00:20:00Z'), '2026-09-28T00:00:00.000Z');
 });
@@ -198,6 +212,25 @@ test('the end time shows on its own line before the closing window', () => {
   assert.match(app, new RegExp(`\\n└ Online until <t:${end}:t> \\(<t:${end}:R>\\)$`));
   assert.doesNotMatch(app, /🟡/);
   assert.doesNotMatch(twr, /Online until/);
+});
+
+test('a center does not list also covering, but an approach does', () => {
+  const { statusEmbed } = require('../src/embeds');
+  const display = {
+    isPrimary: false, isActive: true, facilityId: 'EVV', facilityName: 'TRACON', positionType: 'Tracon',
+    positionName: 'EVV', defaultCallsign: 'EVV_APP', frequency: 1,
+  };
+  const feed = {
+    controllers: [
+      controller('1', 'IND_83_CTR', 'Center', { facilityId: 'ZID' }),
+      controller('2', 'IND_N_APP', 'ApproachDeparture'),
+    ],
+  };
+  for (const c of feed.controllers) c.positions.push(display);
+  // Sorted by facility name here: IND (the approach) before ZID (the center).
+  const [app, ctr] = groupByFacility(feed).map((f) => statusEmbed({ status: 'online', facilityName: f.facilityName, facility: f }, {}).data.description);
+  assert.doesNotMatch(ctr, /also covering/);
+  assert.match(app, /also covering \*\*EVV_APP\*\*/);
 });
 
 test('a closed facility shows offline, then drops off', () => {

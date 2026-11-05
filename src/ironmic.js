@@ -8,60 +8,41 @@
 const STATS_URL = 'https://api.vnas-stats.com/v1/callsigns/top';
 const MINUTE = 60_000;
 
-// Position names staff type in /ironmic, in display order (top-down). suffixes are the callsign suffixes
+// Positions an Iron Mic can track, in display order (top-down). suffixes are the callsign suffixes
 // vNAS Stats groups by.
 const POSITIONS = {
-  center: { label: 'Center', suffixes: ['CTR'], aliases: ['ctr', 'enroute'] },
-  approach: { label: 'Approach', suffixes: ['APP', 'DEP'], aliases: ['app', 'radar', 'tracon'] },
-  local: { label: 'Local', suffixes: ['TWR'], aliases: ['tower', 'twr', 'lc'] },
-  ground: { label: 'Ground', suffixes: ['GND'], aliases: ['gnd', 'gc'] },
-  delivery: { label: 'Delivery', suffixes: ['DEL'], aliases: ['del', 'clearance', 'cd'] },
+  center: { label: 'Center', suffixes: ['CTR'] },
+  approach: { label: 'Approach', suffixes: ['APP', 'DEP'] },
+  local: { label: 'Local', suffixes: ['TWR'] },
+  ground: { label: 'Ground', suffixes: ['GND'] },
+  delivery: { label: 'Delivery', suffixes: ['DEL'] }, // no longer offered; kept so older Iron Mics still show
 };
+
+// The positions /ironmic start offers, each its own option holding the facility to track it at.
+const PICKABLE = ['center', 'approach', 'local', 'ground'];
 
 /** The position type of a key: 'local' for 'local' (older runs) and for 'SDF:local'. */
 function positionOf(key) {
   return key.split(':').pop();
 }
 
-/** The facility ID in a 'SDF:local' key, or null for a plain 'local'. */
+/** The facility ID in a 'SDF:local' key, or null for a plain 'local' (older runs, which use facilityId). */
 function facilityOf(key) {
   return key.includes(':') ? key.split(':')[0] : null;
 }
 
 /**
- * "local, approach" -> one entry per position, in POSITIONS order with repeats dropped, all at defaultFacility.
- * A facility ID switches the facility for the positions after it: "IND ground, SDF local, approach, CVG app"
- * is IND ground, SDF local, SDF approach and CVG approach. Positions can use their aliases ("twr app").
- * Throws with a message staff can read on anything else.
- * @returns {{ key: string, facilityId: string, position: string }[]} key is like 'SDF:local'
+ * { local: 'sdf', ground: 'IND', approach: '' } -> the positions that have a facility, in POSITIONS order,
+ * each as { key: 'SDF:local', facilityId: 'SDF', position: 'local' }.
+ * Throws with a message staff can read when none is picked.
  */
-function parseTargets(text, defaultFacility = null) {
-  const words = String(text ?? '')
-    .toLowerCase()
-    .split(/[\s,+/&]+|\band\b/)
-    .map((w) => w.trim())
-    .filter(Boolean);
-  if (!words.length) throw new Error('Pick at least one position, e.g. `local, approach`.');
-
-  const find = (word) => Object.keys(POSITIONS).find((k) => k === word || POSITIONS[k].aliases.includes(word));
-  const picked = new Map();
-  let facilityId = defaultFacility ? defaultFacility.toUpperCase() : null;
-  let waiting = null; // a facility ID typed but not yet followed by a position
-  for (const word of words) {
-    const position = find(word);
-    if (position) {
-      if (!facilityId) throw new Error(`Say which facility "${word}" is for, like \`LEX ${word}\`, or fill in the facility box.`);
-      waiting = null;
-      picked.set(`${facilityId}:${position}`, { key: `${facilityId}:${position}`, facilityId, position });
-    } else if (/^[a-z0-9]{2,4}$/.test(word)) {
-      facilityId = waiting = word.toUpperCase();
-    } else {
-      throw new Error(`"${word}" isn't a position. Use ${Object.keys(POSITIONS).join(', ')}, with a facility ID before them for another facility.`);
-    }
-  }
-  if (waiting) throw new Error(`Which position at ${waiting}? e.g. \`${waiting} local\`.`);
-  const order = Object.keys(POSITIONS);
-  return [...picked.values()].sort((a, b) => order.indexOf(a.position) - order.indexOf(b.position));
+function pickTargets(choices) {
+  const picked = PICKABLE.filter((k) => String(choices?.[k] ?? '').trim()).map((position) => {
+    const facilityId = String(choices[position]).trim().toUpperCase();
+    return { key: `${facilityId}:${position}`, facilityId, position };
+  });
+  if (!picked.length) throw new Error('Pick at least one position and give it a facility, e.g. `local:SDF`.');
+  return picked;
 }
 
 /**
@@ -185,10 +166,43 @@ function readStats(stats, callsigns) {
   };
 }
 
+/**
+ * The callsigns with an active (non-observer) controller on the vNAS feed, cut to prefix and suffix the way
+ * vNAS Stats groups them, so LEX_N_APP is LEX_APP.
+ * @returns {Set<string>}
+ */
+function onlineCallsigns(feed) {
+  const online = new Set();
+  for (const c of feed?.controllers ?? []) {
+    if (c.isObserver || !c.isActive) continue;
+    const parts = String(c.vatsimData?.callsign ?? '').split('_');
+    if (parts.length > 1) online.add(`${parts[0]}_${parts[parts.length - 1]}`);
+  }
+  return online;
+}
+
 /** Midnight UTC on the 1st of the month `ms` falls in. An Iron Mic always counts from there. */
 function monthStart(ms) {
   const d = new Date(ms);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
+}
+
+/** Midnight UTC on the 1st of the month after the one `ms` falls in, when that month's totals stop. */
+function monthEnd(ms) {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+}
+
+/**
+ * "371h left in the month (until 0000Z Nov 1)". Whole hours only, so the leaderboard is edited once an
+ * hour for it rather than every minute; the last hour reads "Under 1h".
+ */
+function monthRemaining(startedAt, now) {
+  const end = monthEnd(startedAt);
+  const hours = Math.floor(Math.max(0, end - now) / (60 * MINUTE));
+  const until = `until 0000Z ${new Date(end).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} 1`;
+  if (now >= end) return `Month over (${until.replace('until', 'ended')})`;
+  return `${hours ? `${hours}h` : 'Under 1h'} left in the month (${until})`;
 }
 
 /** A fresh competition, saved as-is to ironmic.json. */
@@ -225,9 +239,11 @@ function percent(ms, elapsed) {
 
 /**
  * One embed per tracked position, in POSITIONS order (Center first), as plain JSON (discord.js accepts it
- * as-is). They go out together in one message. The last one's footer credits vnas-stats.com.
+ * as-is). While it runs, a 🟢 goes before the callsign ahead of or behind a position if someone is on it
+ * right now (`online`, from onlineCallsigns()). They go out together in one message. The last one's footer credits vnas-stats.com and, while
+ * it runs, counts down the Zulu hours left in the month.
  */
-function competitionEmbeds(comp) {
+function competitionEmbeds(comp, now = Date.now(), online = new Set()) {
   const ended = Boolean(comp.endedAt);
   const totals = comp.totals;
   const fallback = placeName(comp.facilityName) || comp.facilityId;
@@ -243,8 +259,9 @@ function competitionEmbeds(comp) {
     if (t?.rank) {
       let rank = `${MEDALS[t.rank] ? `${MEDALS[t.rank]} ` : ''}**#${t.rank}**`;
       if (t.tied) rank += ` · tied with ${t.tied} other${t.tied === 1 ? '' : 's'}`;
-      if (t.ahead) rank += ` · ${formatDuration(t.ahead.gapMs)} behind ${t.ahead.callsign}`;
-      else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${t.lead.callsign}`;
+      const dot = (callsign) => (!ended && online.has(callsign) ? `🟢 ${callsign}` : callsign);
+      if (t.ahead) rank += ` · ${formatDuration(t.ahead.gapMs)} behind ${dot(t.ahead.callsign)}`;
+      else if (t.lead) rank += ` · ${formatDuration(t.lead.gapMs)} ahead of ${dot(t.lead.callsign)}`;
       lines.push(rank);
     }
     if (ended && !comp.final) lines.push('*Fetching the final totals…*');
@@ -259,7 +276,8 @@ function competitionEmbeds(comp) {
 
   const last = embeds[embeds.length - 1];
   if (last) {
-    last.footer = { text: 'Totals from vnas-stats.com' };
+    const credit = 'Totals from vnas-stats.com';
+    last.footer = { text: ended ? credit : `${monthRemaining(comp.startedAt, now)}\n${credit}` };
   }
   return embeds;
 }
@@ -267,7 +285,8 @@ function competitionEmbeds(comp) {
 module.exports = {
   STATS_URL,
   POSITIONS,
-  parseTargets,
+  PICKABLE,
+  pickTargets,
   positionOf,
   facilityOf,
   resolveCallsigns,
@@ -276,6 +295,7 @@ module.exports = {
   statsUrl,
   fetchStats,
   readStats,
+  onlineCallsigns,
   monthStart,
   newCompetition,
   formatDuration,

@@ -1,0 +1,10 @@
+# Layered over deploy/docker-compose.yml by roundtrip.sh. Paths are relative to deploy/, the project directory.
+# The bot keeps its image, user, links and bot-state volume, but runs fake-bot.js instead of logging in to Discord.
+services:
+  bot:
+    # Built from this repo by roundtrip.sh, never pulled.
+    image: vnas-discord-bot:backup-test
+    pull_policy: never
+    command: ["node", "/fake-bot.js"]
+    volumes:
+      - ../test/backup/fake-bot.js:/fake-bot.js:ro
