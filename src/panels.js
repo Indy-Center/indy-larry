@@ -154,7 +154,7 @@ function requestModal(type, area) {
     );
   }
   return modal.setTitle(`Staffing request · ${area.label}`).addLabelComponents(
-    new LabelBuilder().setLabel("Position you're working").setTextInputComponent(shortInput('position', 'e.g. IND_TWR', { max: 20 })),
+    new LabelBuilder().setLabel('Position Requested').setTextInputComponent(shortInput('position', 'e.g. IND_TWR', { max: 20 })),
     ...notifyPicker(area),
     new LabelBuilder()
       .setLabel('Brief reason')
