@@ -1,6 +1,7 @@
 // The /ironmic command and its leaderboard embed. The counting itself is in ironmic.js.
 //
-//   /ironmic start facility:LEX local:True approach:True   posts the embeds and starts counting
+//   /ironmic start local:LEX approach:LEX   posts the embeds and starts counting
+//   /ironmic start local:SDF ground:IND   positions can be at different facilities
 //   /ironmic end                                           stops counting; the embed shows the final standings
 //   /ironmic clear                                         deletes the embed and the log, ready for the next one
 //
@@ -12,7 +13,7 @@ const fs = require('fs');
 const path = require('path');
 const { Events, MessageFlags } = require('discord.js');
 const { saveStateFile } = require('./stateFile');
-const { POSITIONS, PICKABLE, pickPositions, resolveCallsigns, resolvePlaces, fetchStats, readStats, onlineCallsigns, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
+const { POSITIONS, PICKABLE, pickTargets, resolveCallsigns, resolvePlaces, fetchStats, readStats, onlineCallsigns, monthStart, newCompetition, competitionEmbeds } = require('./ironmic');
 
 const FETCH_MS = 5 * 60_000; // how often to ask vNAS Stats for new totals
 
@@ -29,9 +30,14 @@ const COMMAND = {
       name: 'start',
       description: 'Start an Iron Mic and post its leaderboard',
       options: [
-        { type: 3, name: 'facility', description: 'Facility ID, e.g. LEX', required: true, autocomplete: true, max_length: 4 },
-        // One True/False option per position (type 5 = boolean); set any combination to True.
-        ...PICKABLE.map((key) => ({ type: 5, name: key, description: `Track ${POSITIONS[key].label}` })),
+        // One option per position (type 3 = string) holding the facility to track it at; fill in any combination.
+        ...PICKABLE.map((key) => ({
+          type: 3,
+          name: key,
+          description: `Facility to track ${POSITIONS[key].label} at, e.g. LEX`,
+          autocomplete: true,
+          max_length: 4,
+        })),
         { type: 5, name: 'ping', description: 'Ping the Iron Mic role (default True); False for quiet updates' },
       ],
     },
@@ -213,32 +219,41 @@ class IronMic {
       return this.reply(interaction, 'Run this in another channel; my ping would land between the status embeds.');
     }
 
-    const facilityId = interaction.options.getString('facility').trim().toUpperCase();
-    const known = this.facilities();
-    const facility = known.find((f) => f.id === facilityId);
-    if (!/^[A-Z0-9]{2,4}$/.test(facilityId) || (known.length && !facility)) {
-      return this.reply(interaction, `**${facilityId}** isn't a facility I know. Pick one from the list.`);
-    }
-
-    let positions;
+    let targets;
     try {
-      positions = pickPositions(Object.fromEntries(PICKABLE.map((key) => [key, interaction.options.getBoolean(key)])));
+      targets = pickTargets(Object.fromEntries(PICKABLE.map((key) => [key, interaction.options.getString(key)])));
     } catch (err) {
       return this.reply(interaction, err.message);
     }
-    const index = this.config.facilityIndex?.();
-    const callsigns = resolveCallsigns(index, facilityId, positions);
-    const missing = positions.filter((k) => !callsigns[k].length).map((k) => POSITIONS[k].label);
-    if (missing.length) {
-      return this.reply(interaction, `**${facilityId}** has no ${missing.join(' or ')} position in the vNAS data.`);
+
+    const known = this.facilities();
+    const nameOf = (id) => known.find((f) => f.id === id)?.name ?? null;
+    const unknown = [...new Set(targets.map((t) => t.facilityId))].filter((id) => !/^[A-Z0-9]{2,4}$/.test(id) || (known.length && !nameOf(id)));
+    if (unknown.length) {
+      return this.reply(interaction, `${unknown.map((id) => `**${id}**`).join(', ')} ${unknown.length === 1 ? "isn't a facility" : "aren't facilities"} I know. Pick from the list.`);
     }
 
+    const index = this.config.facilityIndex?.();
+    const callsigns = {};
+    const places = {};
+    for (const { key, facilityId, position } of targets) {
+      callsigns[key] = resolveCallsigns(index, facilityId, [position])[position];
+      places[key] = resolvePlaces(index, facilityId, [position], nameOf(facilityId))[position];
+    }
+    const missing = targets.filter((t) => !callsigns[t.key].length).map((t) => `**${t.facilityId}** has no ${POSITIONS[t.position].label}`);
+    if (missing.length) {
+      return this.reply(interaction, `${missing.join(' and ')} position in the vNAS data.`);
+    }
+
+    const facilityIds = [...new Set(targets.map((t) => t.facilityId))];
+    const facilityId = facilityIds.join('/');
+    const positions = targets.map((t) => t.key);
     this.competition = newCompetition({
       facilityId,
-      facilityName: facility?.name ?? null,
+      facilityName: facilityIds.length === 1 ? nameOf(facilityId) : null,
       positions,
       callsigns,
-      places: resolvePlaces(index, facilityId, positions, facility?.name),
+      places,
       channelId: this.config.channelId,
       startedAt: monthStart(Date.now()), // counts the whole month so far, like vnas-stats.com's month view
     });
@@ -250,7 +265,10 @@ class IronMic {
     }
     this.save();
 
-    const what = `**${facilityId}** ${positions.map((k) => POSITIONS[k].label).join(' + ')}`;
+    const what =
+      facilityIds.length === 1
+        ? `**${facilityId}** ${targets.map((t) => POSITIONS[t.position].label).join(' + ')}`
+        : targets.map((t) => `**${t.facilityId}** ${POSITIONS[t.position].label}`).join(' + ');
     // ping:False (e.g. restarting one to change its positions) posts the reply without the role mention.
     const roleId = interaction.options.getBoolean('ping') === false ? null : this.config.roleId;
     // The ping goes in a reply everyone sees, so the role hears about it; the leaderboard is its own message.

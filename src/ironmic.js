@@ -18,16 +18,30 @@ const POSITIONS = {
   delivery: { label: 'Delivery', suffixes: ['DEL'] }, // no longer offered; kept so older Iron Mics still show
 };
 
-// The positions /ironmic start offers, each its own True/False option, so any combination works.
+// The positions /ironmic start offers, each its own option holding the facility to track it at.
 const PICKABLE = ['center', 'approach', 'local', 'ground'];
 
+/** The position type of a key: 'local' for 'local' (older runs) and for 'SDF:local'. */
+function positionOf(key) {
+  return key.split(':').pop();
+}
+
+/** The facility ID in a 'SDF:local' key, or null for a plain 'local' (older runs, which use facilityId). */
+function facilityOf(key) {
+  return key.includes(':') ? key.split(':')[0] : null;
+}
+
 /**
- * { local: true, approach: true, ground: false } -> ['approach', 'local'], in POSITIONS order.
+ * { local: 'sdf', ground: 'IND', approach: '' } -> the positions that have a facility, in POSITIONS order,
+ * each as { key: 'SDF:local', facilityId: 'SDF', position: 'local' }.
  * Throws with a message staff can read when none is picked.
  */
-function pickPositions(choices) {
-  const picked = PICKABLE.filter((k) => choices?.[k]);
-  if (!picked.length) throw new Error('Pick at least one position: set center, approach, local or ground to True.');
+function pickTargets(choices) {
+  const picked = PICKABLE.filter((k) => String(choices?.[k] ?? '').trim()).map((position) => {
+    const facilityId = String(choices[position]).trim().toUpperCase();
+    return { key: `${facilityId}:${position}`, facilityId, position };
+  });
+  if (!picked.length) throw new Error('Pick at least one position and give it a facility, e.g. `local:SDF`.');
   return picked;
 }
 
@@ -134,7 +148,7 @@ function readStats(stats, callsigns) {
     }
     const seconds = mine.reduce((sum, c) => sum + c.durationSeconds, 0);
     // Ranked like vnas-stats.com: against the same kind of position only, so a tower against towers.
-    const others = list.filter((c) => !mine.includes(c) && POSITIONS[key].suffixes.includes(c.suffix));
+    const others = list.filter((c) => !mine.includes(c) && POSITIONS[positionOf(key)].suffixes.includes(c.suffix));
     const above = others.filter((c) => c.durationSeconds > seconds);
     const tied = others.filter((c) => c.durationSeconds === seconds).length;
     const t = { ms: seconds * 1000, rank: above.length + 1 };
@@ -194,9 +208,9 @@ function monthRemaining(startedAt, now) {
 /** A fresh competition, saved as-is to ironmic.json. */
 function newCompetition({ facilityId, facilityName = null, positions, callsigns, places, channelId, startedAt }) {
   return {
-    facilityId,
+    facilityId, // 'LEX', or 'IND/SDF' when the positions are at several facilities
     facilityName,
-    positions,
+    positions, // keys like 'SDF:local'; older runs have plain 'local' and take facilityId
     callsigns, // resolveCallsigns() output, fixed for the whole run
     places, // resolvePlaces() output, for the titles
     channelId,
@@ -252,7 +266,7 @@ function competitionEmbeds(comp, now = Date.now(), online = new Set()) {
     }
     if (ended && !comp.final) lines.push('*Fetching the final totals…*');
 
-    const title = `${comp.places?.[key] ?? fallback} ${POSITIONS[key].label} Iron Mic`;
+    const title = `${comp.places?.[key] ?? facilityOf(key) ?? fallback} ${POSITIONS[positionOf(key)].label} Iron Mic`;
     return {
       color: 0xf1c40f,
       title: ended ? `🏁 ${title}: final` : `🎙️ ${title}`,
@@ -272,7 +286,9 @@ module.exports = {
   STATS_URL,
   POSITIONS,
   PICKABLE,
-  pickPositions,
+  pickTargets,
+  positionOf,
+  facilityOf,
   resolveCallsigns,
   resolvePlaces,
   placeName,

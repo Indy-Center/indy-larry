@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { pickPositions,resolveCallsigns, resolvePlaces, statsUrl, readStats, onlineCallsigns, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
+const { pickTargets, resolveCallsigns, resolvePlaces, statsUrl, readStats, onlineCallsigns, monthStart, newCompetition, formatDuration, competitionEmbeds } = require('../src/ironmic');
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -34,13 +34,15 @@ function zid() {
   return { facilities, positions };
 }
 
-test('pickPositions keeps the True ones, top-down', () => {
-  assert.deepEqual(pickPositions({ local: true, approach: true }), ['approach', 'local']);
-  assert.deepEqual(pickPositions({ ground: true, local: false, center: true }), ['center', 'ground']);
-  assert.deepEqual(pickPositions({ ground: true, local: true, approach: true, center: true }), ['center', 'approach', 'local', 'ground']);
-  assert.deepEqual(pickPositions({ ground: true, delivery: true }), ['ground']); // delivery isn't offered
-  assert.throws(() => pickPositions({ local: false, approach: null }), /at least one/);
-  assert.throws(() => pickPositions({}), /at least one/);
+test('pickTargets keeps the positions that have a facility, top-down', () => {
+  const keys = (choices) => pickTargets(choices).map((t) => t.key);
+  assert.deepEqual(keys({ local: 'lex', approach: 'LEX' }), ['LEX:approach', 'LEX:local']);
+  assert.deepEqual(keys({ ground: 'IND', local: ' ', center: 'ind' }), ['IND:center', 'IND:ground']);
+  assert.deepEqual(keys({ ground: 'IND', local: 'SDF', approach: 'CVG', center: 'IND' }), ['IND:center', 'CVG:approach', 'SDF:local', 'IND:ground']);
+  assert.deepEqual(pickTargets({ local: 'sdf' }), [{ key: 'SDF:local', facilityId: 'SDF', position: 'local' }]);
+  assert.deepEqual(keys({ ground: 'IND', delivery: 'IND' }), ['IND:ground']); // delivery isn't offered
+  assert.throws(() => pickTargets({ local: '', approach: null }), /at least one/);
+  assert.throws(() => pickTargets({}), /at least one/);
 });
 
 test('resolveCallsigns: center from the ARTCC, approach from the TRACON over it, the rest its own', () => {
@@ -200,4 +202,19 @@ test('formatDuration', () => {
   assert.equal(formatDuration(0), '0m');
   assert.equal(formatDuration(35 * MIN + 59_000), '35m');
   assert.equal(formatDuration((42 * 60 + 5) * MIN), '42h 05m');
+});
+
+test('positions at different facilities rank by their position type and are titled by their own facility', () => {
+  const comp = newCompetition({
+    facilityId: 'IND/SDF',
+    positions: ['IND:ground', 'SDF:local'],
+    callsigns: { 'IND:ground': ['IND_GND'], 'SDF:local': ['SDF_TWR'] },
+    places: { 'IND:ground': 'Indianapolis', 'SDF:local': 'Louisville' },
+    channelId: 'c',
+    startedAt: T0,
+  });
+  comp.totals = readStats(stats([['BOS', 'TWR', 20], ['SDF', 'TWR', 10], ['IND', 'GND', 4]]), comp.callsigns);
+  assert.equal(comp.totals.positions['IND:ground'].rank, 1);
+  assert.equal(comp.totals.positions['SDF:local'].rank, 2);
+  assert.deepEqual(competitionEmbeds(comp).map((e) => e.title), ['🎙️ Indianapolis Ground Iron Mic', '🎙️ Louisville Local Iron Mic']);
 });
