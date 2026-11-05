@@ -30,6 +30,20 @@ test('parseClosing understands Central, Mountain and Pacific', () => {
   assert.equal(at('Online until 8pm PT', '2026-12-01T22:00:00Z'), '2026-12-02T04:00:00.000Z'); // PST
 });
 
+test('parseClosing ignores the ~ character', () => {
+  assert.equal(at('Online until ~8pm ET', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online until 8pm~ET', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online ~until ~ 8pm ET (~2400z)', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online until~2400z', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+});
+
+test('parseClosing assumes Eastern when no zone is given', () => {
+  assert.equal(at('Online until ~8pm', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z'); // EDT
+  assert.equal(at('Online until 8:30pm', '2026-12-01T22:00:00Z'), '2026-12-02T01:30:00.000Z'); // EST
+  assert.equal(at('Online until 20:00', '2026-09-27T22:00:00Z'), '2026-09-28T00:00:00.000Z');
+  assert.equal(at('Online until 8', '2026-09-27T22:00:00Z'), null);
+});
+
 test('parseClosing keeps a time up to an hour past (running over)', () => {
   assert.equal(at('Online until 8pm ET (2400z)', '2026-09-28T00:20:00Z'), '2026-09-28T00:00:00.000Z');
 });
