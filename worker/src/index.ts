@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, RolesSync } from './client/api';
+import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, NicknameChange, NicknamesSync, RolesSync } from './client/api';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
+import { setNickname, syncNicknames } from './nicknames';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, type QueueJob, type SendEnv } from './send';
 
@@ -52,6 +53,14 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
 
   async enqueueMemberRole(request: MemberRole) {
     await this.env.LARRY_QUEUE.send(await prepareMemberRole(this.env, request));
+  }
+
+  syncNicknames(request: NicknamesSync) {
+    return syncNicknames(this.env, request);
+  }
+
+  setNickname(request: NicknameChange) {
+    return setNickname(this.env, request);
   }
 
   deleteRoles(request: DeleteRequest) {

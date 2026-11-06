@@ -11,7 +11,7 @@ export const MAX_NAME_LENGTH = 100;
 // A rate limit this short is waited out once; a longer one fails the call.
 const MAX_WAIT_SECONDS = 5;
 
-export type GuildEnv = Pick<SendEnv, 'DISCORD_TOKEN' | 'GUILD_ID' | 'CHANNEL_CATEGORIES'>;
+export type GuildEnv = Pick<SendEnv, 'DISCORD_TOKEN' | 'GUILD_ID' | 'CHANNEL_CATEGORIES' | 'PRIVILEGED_ROLES'>;
 
 export class DiscordError extends Error {
   constructor(

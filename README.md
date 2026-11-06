@@ -115,11 +115,42 @@ await env.LARRY.enqueueToChannel({ channelId: channels[0].channelId, content: `<
 **`syncRoles()`**
 
 - A role is found by `id` when given, otherwise by exact name, otherwise created with no permissions. Two roles of the same name is an error for that entry; Larry won't guess.
+- `color` (hex, e.g. `'#e67e22'`) sets the colour of a role Larry **creates**. A role that already exists keeps its colour, so one chosen in Discord is never overwritten.
 - Everyone in `members` gets the role. With `exclusive: true`, **everyone else holding it loses it**, however they got it. With `exclusive: false` Larry only ever adds. The caller has to say which.
 - Someone not in the server comes back in `notInServer`; call again later and they are picked up once they join.
 - Larry refuses a role that carries moderation permissions (Administrator, Manage Roles, Kick, Ban and the like), one that belongs to a bot or integration, and @everyone. It manages labels, so that a caller with the binding can't make anyone a moderator.
+- **Staff, supervisor and admin roles** carry those permissions, so they are refused unless listed in `PRIVILEGED_ROLES` (role IDs, comma-separated, set from the `ENV_PRIVILEGED_ROLES` repository variable). A listed role can be synced and given with `syncRoles()` and `setMemberRole()`; it is still never deleted by `deleteRoles()`, and @everyone and bot roles stay refused. Only the roles named there are opened up, so a caller still can't promote anyone to a role that isn't on the list. Prefer `exclusive: false` on these so Larry only adds; with `exclusive: true`, anyone not listed loses the role, so a lookup that left someone out would demote them. A malformed entry makes role calls fail rather than being ignored.
 
 **`setMemberRole()` and `enqueueMemberRole()`** change one role for one person: `{ userId, roleId, has }`. They are for a single change made on the spot, like a button press, where there is no repeating check behind it to put things right later. `setMemberRole()` does it now and throws if Discord refuses. `enqueueMemberRole()` checks the role, queues the change on `larry-messages` and returns; delivery retries rate limits and Discord outages the way queued messages do, and a change for someone not in the server is logged and dropped. Both sit behind the same guard as `syncRoles()`. To keep a whole role's membership in step, use `syncRoles()`, which needs no queue: it is called again on a schedule and only changes what is out of step.
+
+**`syncNicknames()` and `setNickname()`** set people's server nicknames: `{ nicknames: [{ userId, nickname }] }`, where `nickname` is 1 to 32 characters or `null` to remove it. Each person comes back with an `outcome`:
+
+- `set` (or `would-set` in a `dryRun`), `unchanged` if it was already right (nothing is written), and `not-in-server` if they haven't joined; call again later.
+- `skipped`: Larry leaves the server owner, administrators and itself alone, with a `reason`. Not an error.
+- `failed`: Discord refused, usually because their top role is above Larry's. The `error` says why and the rest of the list carries on.
+- `setNickname()` does one person now and throws for anything but `set`/`unchanged`.
+
+Larry needs **Manage Nicknames**, with its role above the people it renames. Each person costs one read, plus one write when the nickname differs, so a caller syncing on a schedule (the roster every 15 minutes) should send only people whose nickname changed since its last run, plus a full sweep daily. Keep calls to a few hundred people, since a Worker invocation is limited in subrequests.
+
+**Driving both from the roster.** Larry only takes Discord IDs. A caller that knows people by CID (Community, on its 15-minute roster update) looks each CID up in the VATUSA API for the linked Discord ID itself, then calls `syncRoles()` and `syncNicknames()` with the results. Someone with no linked Discord has no ID to send, so leave them out of both calls. Mind what that means for an `exclusive: true` role: anyone left out loses it. So only send an exclusive role's full member list when the VATUSA lookups all succeeded; if VATUSA was down or errored, skip the run rather than send a list with people missing.
+
+**Certification roles are top down.** A higher certification holds the roles beneath it, so Community expands each controller's highest certification into the roles they should hold before calling `syncRoles()`. Send one entry per certification role, each with `exclusive: true`, whose `members` is everyone whose certifications include it. That way a promotion adds the new roles and a removed certification drops the ones it no longer covers. The roster shows only the top certification in each chain (someone with A-GC has no S-GC badge), so Community adds the lower roles itself. OBS is a certification like the others, held only by rostered controllers who aren't trained yet, so nobody with S-GC or above holds it. The S1 badge is the VATSIM rating, not a certification, and isn't mapped to a role here. The chain is:
+
+| Highest certification | Roles held |
+| --------------------- | ---------- |
+| E-RC | E-RC, T-RC, A-LC, S-LC, A-GC, S-GC |
+| T-RC | T-RC, A-LC, S-LC, A-GC, S-GC |
+| A-LC | A-LC, S-LC, A-GC, S-GC |
+| S-LC | S-LC, S-GC |
+| A-GC | A-GC, S-GC |
+| S-GC | S-GC |
+| OBS | OBS |
+
+S-LC and A-GC sit side by side, not one above the other: holding one doesn't give the other, so a controller can have either, both, or neither above S-GC. That means a controller can't be reduced to one "highest" value. Community has to work from the certifications on its own roster (VATUSA doesn't know them; it is only used to find the Discord ID) and expand each one, rather than compare ranks. Anyone with A-LC or higher gets both.
+
+**T2-CTR** is a certification outside the chain, a flag next to it. A visiting Center controller holds E-RC without it and can't control the Center until they have T2-CTR, so E-RC doesn't imply it and it implies no other role. Community syncs it as its own `exclusive: true` entry, from the controllers who have it on the roster.
+
+**Air Traffic Controller and Member.** Two more roles from the same call: **Air Traffic Controller** for every rostered controller, whatever their certification (OBS included), and **Member** for every registered member of the website. Both come from Community's own data, so each is one `syncRoles()` entry with the Discord IDs of everyone who qualifies. Anyone without a Discord ID linked on VATUSA is left out of every list, these two and the certification roles alike, and out of `syncNicknames()`; they are picked up on the first run after they link. Be sure an `exclusive: true` entry is only sent from a complete list, because anyone not in it loses the role, including someone who was given Member by hand. Use `exclusive: false` if hand-given Member or Air Traffic Controller roles should survive.
 
 **`syncChannels()`**
 

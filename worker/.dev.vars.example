@@ -7,3 +7,5 @@ SEND_CHANNELS=
 GUILD_ID=
 # Categories callers may create channels under and post into by ID, as name:categoryId, e.g. training:333
 CHANNEL_CATEGORIES=
+# Role IDs callers may sync although they carry moderation permissions (staff, supervisor, admin), comma-separated
+PRIVILEGED_ROLES=

@@ -88,6 +88,11 @@ export type RoleSync = {
    * Larry never renames a role.
    */
   rename?: boolean;
+  /**
+   * The colour of a role Larry **creates**, as hex (`'#e67e22'` or `'e67e22'`). Not applied to a role
+   * that already exists, so a colour chosen in Discord is never overwritten. Leave it out for no colour.
+   */
+  color?: string;
   /** Discord user IDs who should hold the role. Someone not in the server is reported and can be tried again later. */
   members: string[];
   /**
@@ -188,6 +193,42 @@ export type MemberRole = {
   has: boolean;
 };
 
+/** One person's nickname in the server. */
+export type NicknameChange = {
+  /** The person's Discord user ID. */
+  userId: string;
+  /** 1 to 32 characters, or `null` to remove their nickname so Discord shows their username. */
+  nickname: string | null;
+};
+
+export type NicknamesSync = {
+  nicknames: NicknameChange[];
+  /** Work out and report what would change, and change nothing. */
+  dryRun?: boolean;
+};
+
+export type NicknameResult = {
+  userId: string;
+  /**
+   * `set`: changed. `would-set`: a dry run would. `unchanged`: already right. `not-in-server`: not a
+   * member, so try again later. `skipped`: Larry leaves this person alone (the owner, an administrator,
+   * itself); see `reason`. `failed`: Discord refused, usually because their top role is above Larry's;
+   * see `error`.
+   */
+  outcome: 'set' | 'would-set' | 'unchanged' | 'not-in-server' | 'skipped' | 'failed';
+  /** Their nickname before, or null for none. Unknown (null) when `not-in-server`. */
+  from: string | null;
+  /** The nickname asked for. */
+  to: string | null;
+  reason?: string;
+  error?: string;
+};
+
+export type NicknamesResult = {
+  dryRun: boolean;
+  nicknames: NicknameResult[];
+};
+
 /** What happened to one role or channel a caller asked Larry to delete. */
 export type Deletion = {
   id: string;
@@ -210,7 +251,7 @@ export type DeleteResult = { dryRun: boolean; deleted: Deletion[] };
 export type Sent = { channelId: string; messageId: string };
 
 /**
- * Larry's RPC surface, version 1.2.0. Every method checks the message first and throws for an unknown
+ * Larry's RPC surface, version 1.3.0. Every method checks the message first and throws for an unknown
  * channel, a bad user ID, an empty message or one over Discord's limits.
  */
 export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
@@ -258,6 +299,14 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
    * change for someone not in the server is logged and dropped.
    */
   enqueueMemberRole(request: MemberRole): Promise<void>;
+  /**
+   * Set each person's server nickname and report what happened to each. Needs Manage Nicknames. The
+   * owner, administrators and Larry itself are skipped; anyone Discord won't let Larry rename comes back
+   * `failed` and doesn't stop the rest. Throws if `GUILD_ID` isn't set.
+   */
+  syncNicknames(request: NicknamesSync): Promise<NicknamesResult>;
+  /** Set one person's nickname now. Throws if they're skipped, not in the server, or Discord refuses. */
+  setNickname(request: NicknameChange): Promise<void>;
   /**
    * Delete roles outright, for everyone who holds them. **Cannot be undone.** Under the same guard as
    * syncRoles(): Larry refuses a role with moderation permissions, a bot's role and @everyone.
