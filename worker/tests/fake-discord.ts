@@ -7,7 +7,9 @@ export type Server = {
   roles?: { id: string; name: string; permissions?: string; managed?: boolean }[];
   channels?: { id: string; name: string; type: number; parent_id?: string | null; guild_id?: string }[];
   /** Null stands for the Server Members intent being off. */
-  members?: { user: { id: string }; roles: string[] }[] | null;
+  members?: { user: { id: string }; roles: string[]; nick?: string | null }[] | null;
+  /** The server owner's user ID. */
+  owner?: string;
   /** User IDs Discord answers "Unknown Member" for when a role is added. */
   unknown?: string[];
   /** IDs (of anything) Discord answers "Missing Permissions" for on a write. */
@@ -35,6 +37,7 @@ export function fakeDiscord(server: Server): Write[] {
         if (path.startsWith(`/guilds/${GUILD}/members?`)) {
           return server.members === null ? json({ message: 'Missing Access', code: 50001 }, 403) : json(server.members ?? []);
         }
+        if (path === `/guilds/${GUILD}`) return json({ id: GUILD, owner_id: server.owner ?? '999999999999999999' });
         const single = path.match(new RegExp(`^/guilds/${GUILD}/members/(\\d+)$`))?.[1];
         if (single) {
           const found = (server.members ?? []).find((candidate) => candidate.user.id === single);

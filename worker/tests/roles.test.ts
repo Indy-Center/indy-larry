@@ -60,6 +60,20 @@ describe('syncRoles', () => {
     expect(writes[0]).toMatchObject({ method: 'POST', path: `/guilds/${GUILD}/roles`, body: { name: 'JR', permissions: '0' } });
   });
 
+  it('gives a role it creates the colour asked for, and leaves an existing one alone', async () => {
+    const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'SW', permissions: '0' }], members: [member(TEACHER, ROLE)] });
+    await syncRoles(env, { roles: [{ key: 'SW', name: 'SW', id: ROLE, color: '#e67e22', members: [TEACHER], exclusive: true }] });
+    expect(writes).toEqual([]);
+
+    const created = fakeDiscord({ members: [member(TEACHER)] });
+    await syncRoles(env, { roles: [{ ...role, color: 'e67e22' }] });
+    expect(created[0]).toMatchObject({ method: 'POST', body: { name: 'JR', permissions: '0', color: 0xe67e22 } });
+  });
+
+  it('refuses a colour that is not hex', () => {
+    expect(() => checkRoles({ roles: [{ ...role, color: 'orange' }] })).toThrow('should be hex');
+  });
+
   it('takes an exclusive role from anyone not listed, however they got it', async () => {
     const writes = fakeDiscord({
       roles: [{ id: ROLE, name: 'JR' }],
@@ -164,6 +178,45 @@ describe('syncRoles', () => {
 
     expect(result.roles[0]).toMatchObject({ roleId: ROLE, role: 'found' });
     expect(writes).toEqual([]);
+  });
+});
+
+describe('PRIVILEGED_ROLES', () => {
+  const ADMIN_ROLE = '600000000000000010';
+  const admin = { id: ADMIN_ROLE, name: 'Admin', permissions: String(1n << 3n) };
+  const entry = { key: 'Admin', name: 'Admin', members: [TEACHER], exclusive: false };
+
+  it('lets a listed role with moderation permissions be synced, and nothing else', async () => {
+    const other = { id: '600000000000000011', name: 'Mods', permissions: String(1n << 28n) };
+    const writes = fakeDiscord({ roles: [admin, other], members: [member(TEACHER)] });
+    const result = await syncRoles({ ...env, PRIVILEGED_ROLES: ADMIN_ROLE }, { roles: [entry, { ...entry, key: 'Mods', name: 'Mods' }] });
+
+    expect(result.roles[0]).toMatchObject({ roleId: ADMIN_ROLE, added: [TEACHER] });
+    expect(result.roles[0]!.error).toBeUndefined();
+    expect(result.roles[1]!.error).toMatch('PRIVILEGED_ROLES');
+    expect(writes.map((w) => `${w.method} ${w.path}`)).toEqual([`PUT /guilds/${GUILD}/members/${TEACHER}/roles/${ADMIN_ROLE}`]);
+  });
+
+  it('still refuses @everyone and bot roles, even if listed', async () => {
+    fakeDiscord({ roles: [{ id: '600000000000000012', name: 'SomeBot', permissions: '0', managed: true }], members: [member(TEACHER)] });
+    const result = await syncRoles({ ...env, PRIVILEGED_ROLES: '600000000000000012' }, { roles: [{ ...entry, name: 'SomeBot' }] });
+    expect(result.roles[0]!.error).toMatch('bot or an integration');
+  });
+
+  it('applies to a single role change, but never to deleting', async () => {
+    const writes = fakeDiscord({ roles: [admin] });
+    const listed = { ...env, PRIVILEGED_ROLES: ADMIN_ROLE };
+    await expect(prepareMemberRole(env, { userId: STUDENT, roleId: ADMIN_ROLE, has: true })).rejects.toThrow('moderation permissions');
+    await expect(prepareMemberRole(listed, { userId: STUDENT, roleId: ADMIN_ROLE, has: true })).resolves.toBeDefined();
+
+    const result = await deleteRoles(listed, { ids: [ADMIN_ROLE] });
+    expect(result.deleted[0]!.error).toMatch('moderation permissions');
+    expect(writes).toEqual([]);
+  });
+
+  it('fails loudly on an entry that is not a role ID', async () => {
+    fakeDiscord({});
+    await expect(syncRoles({ ...env, PRIVILEGED_ROLES: 'Admin' }, { roles: [] })).rejects.toThrow("isn't a Discord role ID");
   });
 });
 

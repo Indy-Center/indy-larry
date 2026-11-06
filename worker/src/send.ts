@@ -26,6 +26,8 @@ export type SendEnv = {
   GUILD_ID?: string;
   /** Categories callers may create channels under and post into by ID, as name:categoryId like SEND_CHANNELS. */
   CHANNEL_CATEGORIES?: string;
+  /** Role IDs, comma-separated, that callers may sync even though they carry moderation permissions (roles.ts). */
+  PRIVILEGED_ROLES?: string;
 };
 
 /** Where a message goes, once its channel name is resolved. */
