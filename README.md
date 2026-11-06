@@ -152,6 +152,21 @@ S-LC and A-GC sit side by side, not one above the other: holding one doesn't giv
 
 **Air Traffic Controller and Member.** Two more roles from the same call: **Air Traffic Controller** for every rostered controller, whatever their certification (OBS included), and **Member** for every registered member of the website. Both come from Community's own data, so each is one `syncRoles()` entry with the Discord IDs of everyone who qualifies. Anyone without a Discord ID linked on VATUSA is left out of every list, these two and the certification roles alike, and out of `syncNicknames()`; they are picked up on the first run after they link. Be sure an `exclusive: true` entry is only sent from a complete list, because anyone not in it loses the role, including someone who was given Member by hand. Use `exclusive: false` if hand-given Member or Air Traffic Controller roles should survive.
 
+**Teams, training, staff and neighbours.** The rest of the role set is the same pattern: one `syncRoles()` entry per Discord role, `members` built by Community from its own data, never by Larry. Same completeness rule as above for anything `exclusive: true`.
+
+| Role | Who gets it | Notes |
+| ---- | ----------- | ----- |
+| Team roles | Anyone holding the matching team role on the website | One entry per team. |
+| Training Staff | Every teacher | |
+| CI role (one per instructor) | That teacher, plus their students | Named for the CI. If two teachers share a CI, Community names each role with first name and last initial instead. Give the role's `id` once it exists, so a rename doesn't create a second one. |
+| Tier 1 Staff / Tier 1 Senior Staff | Holders of a tier 1 staff role, matched to the staff or senior staff role | These carry moderation permissions, so they must be in `PRIVILEGED_ROLES`. Use `exclusive: false`. |
+| VATUSA Staff | VATUSA staff | Also privileged; `exclusive: false`. |
+| Neighboring Controller | Tier 1 roster controllers, home or visiting | Not given to anyone only on a tier 2 roster. |
+
+**Students** hold their teacher's CI role. Community reads the student-to-teacher assignment from training-app, then adds each student's Discord ID to that teacher's CI entry `members`. When the assignment changes, the student drops out of the old teacher's entry on the next run, because the CI roles are `exclusive: true`. Students don't get Training Staff.
+
+A **Member** role today goes to every VATSIM member; later it will narrow to people who have completed the application. That is a change to who Community puts in the list, not to anything in Larry.
+
 **`syncChannels()`**
 
 - A channel is found by `id`, otherwise by name under its category, otherwise created there. The name is lowercased and hyphenated the way Discord stores it (`Jo Rivera` → `#jo-rivera`).
