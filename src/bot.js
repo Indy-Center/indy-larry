@@ -379,10 +379,21 @@ async function refresh() {
     applyNames(await getNames(), facilities, bookings);
     const entries = board.update(facilities, bookings, new Date(), facilityTree);
 
-    const wanted = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
-    if (wanted.size === 0) wanted.set('__none__', noneOnlineEmbed(config.artccIds));
+    // Order matters: messages are posted in this order. Aircraft on frequency goes above the positions.
+    const traffic = new Map();
+    if (trafficConfig.enabled) await addTraffic(feed, facilities, traffic);
+    const statuses = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
+    if (statuses.size === 0 && traffic.size === 0) statuses.set('__none__', noneOnlineEmbed(config.artccIds));
+    const wanted = new Map([...traffic, ...statuses]);
 
-    if (trafficConfig.enabled) await addTraffic(feed, facilities, wanted);
+    // Same idea as Iron Mic above: if the traffic embed is missing or newer than another message, repost
+    // everything in order so it sits above the positions.
+    if (traffic.size) {
+      const t = posted.get('__traffic__');
+      const outOfOrder = [...posted].some(([key, { message }]) => key !== '__traffic__' && (!t || BigInt(message.id) < BigInt(t.message.id)));
+      if (outOfOrder) for (const key of [...posted.keys()]) await remove(key);
+    }
+
     if (congestionConfig.enabled && config.artccIds.length) await addCongestion(facilities, wanted);
 
     for (const key of [...posted.keys()]) {
