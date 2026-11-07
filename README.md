@@ -6,7 +6,7 @@ A Discord bot that shows which Indy Center (ZID) facilities are staffed on vNAS.
 
 ## Embeds
 
-One embed per facility (e.g. "Indianapolis ATCT/TRACON is online"), listing each controller with their position, frequency and when they went active. Facility names come straight from vNAS, so they match CRC. Positions are labelled with the short name and radio name from the Indy Center CMS, so `IND_E_APP · Departure Radar East` shows as `IND E · Indianapolis Approach`, and anything the CMS doesn't know keeps its callsign and vNAS name (see [Position names](#position-names)). Positions are listed TRACON first, then Tower, Ground and Clearance.
+One embed per facility (e.g. "Indianapolis ATCT/TRACON is online"), listing each controller with their position, frequency and when they went active. Facility names come straight from vNAS, so they match CRC. The channel is public, so positions read the way pilots say them, in the [Centerline](https://centerline.flyindycenter.com/position) Position "pilots" preset: radio name, frequency and airport, so `IND_E_APP` shows as `Indianapolis Approach · KIND · 124.65` (frequency in mono). Anything the CMS doesn't know shows its callsign alone, with the vNAS frequency (see [Position names](#position-names)). Positions are listed TRACON first, then Tower, Ground and Clearance.
 
 - 🟢 **Online**: at least one controller is on.
 - 🟡 **Closing**: every controller on is closing within `CLOSING_MINUTES` (default 15).
@@ -23,7 +23,7 @@ The bot marks the position as closing 15 minutes before that time. If both times
 
 ### Position names
 
-The status embeds, bookings, "also covering", the closed line, Aircraft on frequency and the busy-frequency alert all use the CMS names. The bot fetches `cms.flyindycenter.com/api/public/v1/positions` daily and on every restart, and keeps the last copy if the CMS is down (after a restart with the CMS down, callsigns show until it's back). Successive positions are wildcarded: `IND_E*_APP` means `IND_E1_APP` gets `IND_E_APP`'s names (an exact match first, then the longest base), then the position's vNAS default callsign is tried. Callsigns stay the identity behind the scenes, for sorting, keys and alert memory.
+The status embeds, bookings, "also covering", the closed line, Aircraft on frequency and the busy-frequency alert all use the CMS names, resolved the way Centerline does ([positions lookup](https://centerline.flyindycenter.com/helpers/positions), `resolvePosition`). The bot fetches `cms.flyindycenter.com/api/public/v1/positions` daily and on every restart, and keeps the last copy if the CMS is down (after a restart with the CMS down, callsigns show until it's back). A position is found by its vNAS position id first, then its exact callsign, then the relief rule: one trailing digit dropped from the middle (`IND_E1_APP` is `IND_E_APP`, `IND_831_CTR` is `IND_83_CTR`), else an all-digit middle dropped (`IND_1_GND` is `IND_GND`). Retired positions are never matched by callsign. If the login doesn't resolve, the position's vNAS default callsign is tried. The displayed frequency is the catalogue's, since it can change; the live vNAS one is still what the aircraft count matches on. Frequencies are cut to two decimals, as Centerline does (128.225 shows as 128.22). vNAS and the CMS carry no airport, so it is the position's facility id with a `K` (`IND` is `KIND`); centers have none, and neither does a facility whose id isn't three letters. Short names are no longer shown, since pilots don't use them. Callsigns stay the identity behind the scenes, for sorting, keys and alert memory.
 
 ### Message order
 
@@ -194,7 +194,7 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/embeds.js`: the embed layout.
 - `src/traffic.js`: counts aircraft on each position's frequency from the transceivers feed, and decides when a position is busy enough to alert.
 - `src/congestion.js`: airspace congestion: boundaries, airborne and entering counts, who's working each area, and the alert.
-- `src/names.js`: the CMS short and radio names for positions.
+- `src/names.js`: CMS position lookup following Centerline's rules, and the airport for a position.
 - `src/stateFile.js`: saves the JSON state files so a crash never leaves one half-written.
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
