@@ -146,7 +146,7 @@ test('one embed per position, top-down, with totals, percentages and network ran
   assert.equal(app.footer, undefined);
   assert.equal(twr.title, '🎙️ Lexington Local Iron Mic');
   assert.equal(twr.description, '**18h 00m** staffed · 25% Uptime\n🥈 **#2** · 1h 15m behind BOS_TWR');
-  assert.equal(twr.color, 0xf1c40f);
+  assert.equal(twr.color, 0x95a5a6);
 
   const cmh = newCompetition({ facilityId: 'DAY', positions: ['approach'], callsigns: { approach: ['CMH_APP', 'DAY_APP'] }, places: { approach: 'Columbus' }, channelId: 'c', startedAt: T0 });
   assert.equal(competitionEmbeds(cmh)[0].title, '🎙️ Columbus Approach Iron Mic');
@@ -190,6 +190,18 @@ test('a green circle marks the callsign ahead or behind while someone is on it',
   assert.deepEqual([...online], ['BOS_TWR']);
   assert.match(competitionEmbeds(comp, T0 + HOUR, online)[0].description, /behind 🟢 BOS_TWR$/);
   assert.match(competitionEmbeds(comp, T0 + HOUR)[0].description, /behind BOS_TWR$/);
+});
+
+test('our own position shows a green line while one of its callsigns is staffed, and not once ended', () => {
+  const comp = newCompetition({ facilityId: 'ATL', positions: ['local', 'ground'], callsigns: { local: ['ATL_TWR'], ground: ['ATL_GND'] }, channelId: 'c', startedAt: T0 });
+  comp.totals = readStats(stats([['ATL', 'TWR', 10], ['ATL', 'GND', 5]]), comp.callsigns);
+  const online = onlineCallsigns({ controllers: [{ isActive: true, isObserver: false, vatsimData: { callsign: 'ATL_E_TWR' } }] });
+  const [twr, gnd] = competitionEmbeds(comp, T0 + HOUR, online);
+  assert.match(twr.description, /^🟢 \*\*On frequency now\*\*\n/);
+  assert.doesNotMatch(gnd.description, /On frequency now/);
+  assert.doesNotMatch(competitionEmbeds(comp, T0 + HOUR)[0].description, /On frequency now/);
+  comp.endedAt = T0 + 2 * HOUR;
+  assert.doesNotMatch(competitionEmbeds(comp, T0 + 2 * HOUR, online)[0].description, /On frequency now/);
 });
 
 test('monthStart is midnight UTC on the 1st', () => {
