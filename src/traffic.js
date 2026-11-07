@@ -75,7 +75,9 @@ function listPositions(facilities) {
  * @returns {object[]} the positions with `count`, same order
  */
 function countAircraft(positions, transceivers, { atcCallsigns = new Set(), radiusNm = {} } = {}) {
-  const radius = { ...DEFAULT_RADIUS_NM, ...radiusNm };
+  // Unset env vars arrive as `undefined`; a plain spread would let those wipe out the defaults.
+  const radius = { ...DEFAULT_RADIUS_NM };
+  for (const [area, nm] of Object.entries(radiusNm)) if (Number.isFinite(nm)) radius[area] = nm;
 
   const byCallsign = new Map(transceivers.map((t) => [t.callsign, t.transceivers ?? []]));
   const aircraft = transceivers.filter((t) => !atcCallsigns.has(t.callsign) && !NON_AIRCRAFT.test(t.callsign));
