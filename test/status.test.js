@@ -230,7 +230,29 @@ test('a center does not list also covering, but an approach does', () => {
   // Sorted by facility name here: IND (the approach) before ZID (the center).
   const [app, ctr] = groupByFacility(feed).map((f) => statusEmbed({ status: 'online', facilityName: f.facilityName, facility: f }, {}).data.description);
   assert.doesNotMatch(ctr, /also covering/);
-  assert.match(app, /also covering \*\*EVV_APP\*\*/);
+  assert.match(app, /also covering `EVV_APP`/); // not in the CMS, so the callsign shows alone, in mono
+});
+
+test('formatFrequency cuts to two decimals, like Centerline', () => {
+  const { formatFrequency } = require('../src/feed');
+  assert.equal(formatFrequency(127350000), '127.35');
+  assert.equal(formatFrequency(128225000), '128.22');
+  assert.equal(formatFrequency(121900000), '121.90');
+  assert.equal(formatFrequency(199998000), null);
+  assert.equal(formatFrequency(0), null);
+});
+
+test('public embeds follow the Centerline pilots preset: radio name, frequency, airport', () => {
+  const { statusEmbed, trafficEmbed } = require('../src/embeds');
+  const feed = { controllers: [controller('1', 'IND_N_APP', 'ApproachDeparture')] };
+  const [f] = groupByFacility(feed);
+  Object.assign(f.controllers[0], { shortName: 'IND N', radioName: 'Indianapolis Approach', airport: 'KIND', frequency: 124650000, displayFrequency: 124700000 });
+  const desc = statusEmbed({ status: 'online', facilityName: f.facilityName, facility: f }, {}).data.description;
+  assert.match(desc, /^\*\*Indianapolis Approach\*\* · KIND · `124\.70`\n/);
+  assert.doesNotMatch(desc, /IND N/);
+
+  const traffic = trafficEmbed([{ count: 3, callsign: 'IND_N_APP', radioName: 'Indianapolis Approach', airport: 'KIND', frequency: 124650000 }]);
+  assert.equal(traffic.data.description, '**3** · **Indianapolis Approach** · KIND · `124.65`');
 });
 
 test('a closed facility shows offline, then drops off', () => {

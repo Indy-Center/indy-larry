@@ -10,28 +10,34 @@ const STATUS = {
 
 const unix = (date) => Math.floor(date.getTime() / 1000);
 
-// CMS short and radio names when there are any (IND E · Indianapolis Approach), else callsign and vNAS name.
-const label = (x) => x.shortName ?? x.callsign;
-const radio = (x) => x.radioName ?? x.positionName;
+// Centerline's Position "pilots" preset: radio name, airport, frequency in mono (Lexington Tower · KLEX · 119.10).
+// The channel is public, so it reads the way pilots say it, with no controller short names. A position the CMS
+// doesn't know shows its callsign alone, in mono, plus the frequency vNAS gives.
+const label = (x) => (x.radioName ? `**${x.radioName}**` : `\`${x.callsign}\``);
+// The frequency is the CMS catalogue's when it has the position, since that is the one that can change; else vNAS's.
+const freqOf = (x) => formatFrequency(x.displayFrequency ?? x.frequency);
+const pilotPosition = (x) => {
+  const f = freqOf(x);
+  return [label(x), x.airport, f && `\`${f}\``].filter(Boolean).join(' · ');
+};
 
 function controllerLine(c, { showNames }) {
-  const freq = formatFrequency(c.frequency);
   const who = showNames && c.name && c.name !== c.cid ? `${c.name} (${c.rating})` : `${c.cid} (${c.rating})`;
-  let line = `**${label(c)}** · ${radio(c)}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.activeSince ?? c.loginTime)}:t>`;
+  let line = `${pilotPosition(c)}\n└ ${who} · on since <t:${unix(c.activeSince ?? c.loginTime)}:t>`;
   if (!c.isActive) line += ' · *inactive*';
   const until = c.announcedEnd ?? c.closing?.at;
   if (until) line += `\n└ ${c.closing ? '🟡 ' : ''}Online until <t:${unix(until)}:t> (<t:${unix(until)}:R>)`;
   else if (c.closing) line += '\n└ 🟡 closing soon';
   // A center's "also covering" would repeat the Top-down line, so only the other positions show it.
   if (c.extraPositions.length && c.facilityType !== 'Center') {
-    line += `\n└ also covering ${c.extraPositions.map((p) => `**${label(p)}**`).join(', ')}`;
+    line += `\n└ also covering ${c.extraPositions.map(label).join(', ')}`;
   }
   return line;
 }
 
 function bookingLine(b) {
   const kind = b.type && b.type !== 'booking' ? ` · ${b.type}` : '';
-  return `**${label(b)}** · ${radio(b) ?? ''}\n└ <t:${unix(b.start)}:t> – <t:${unix(b.end)}:t> (<t:${unix(b.start)}:R>) · CID ${b.cid}${kind}`;
+  return `${[label(b), b.airport].filter(Boolean).join(' · ')}\n└ <t:${unix(b.start)}:t> – <t:${unix(b.end)}:t> (<t:${unix(b.start)}:R>) · CID ${b.cid}${kind}`;
 }
 
 function clip(text) {
@@ -56,7 +62,7 @@ function statusEmbed(entry, opts = {}) {
   } else if (entry.status === 'planned') {
     embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n')));
   } else {
-    const last = entry.facility.controllers.map((c) => `**${label(c)}**`).join(', ');
+    const last = entry.facility.controllers.map(label).join(', ');
     embed.setDescription(`Closed <t:${unix(entry.closedAt)}:R>\nLast on: ${last}`);
   }
   return embed;
@@ -72,7 +78,7 @@ function noneOnlineEmbed(artccIds) {
 /** Every online position with how many aircraft are tuned to it, busiest first. */
 function trafficEmbed(positions) {
   const sorted = [...positions].sort((a, b) => b.count - a.count || a.callsign.localeCompare(b.callsign));
-  const lines = sorted.map((p) => `**${p.count}** · **${label(p)}** · ${formatFrequency(p.frequency)}`);
+  const lines = sorted.map((p) => `**${p.count}** · ${pilotPosition(p)}`);
   return new EmbedBuilder()
     .setColor(0x3498db)
     .setTitle('✈️ Aircraft on frequency')

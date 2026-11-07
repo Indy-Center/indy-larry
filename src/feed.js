@@ -60,6 +60,7 @@ function groupByFacility(feed, { artccIds = [], includeInactive = false, activeS
       rating: RATING_SHORT[c.vatsimData.requestedRating] ?? c.vatsimData.requestedRating,
       callsign: c.vatsimData.callsign || primary.defaultCallsign,
       defaultCallsign: primary.defaultCallsign, // for CMS names when someone logs on as a relief callsign
+      positionId: primary.positionId, // vNAS position id, which the CMS catalogue is keyed by
       facilityType: c.vatsimData.facilityType,
       info: c.vatsimData.controllerInfo,
       positionName: primary.positionName,
@@ -70,7 +71,7 @@ function groupByFacility(feed, { artccIds = [], includeInactive = false, activeS
       // as a secondary position, marked inactive; those aren't coverage, so they're skipped.
       extraPositions: c.positions
         .filter((p) => p !== primary && p.isActive)
-        .map((p) => ({ callsign: p.defaultCallsign, positionName: p.positionName, frequency: p.frequency })),
+        .map((p) => ({ callsign: p.defaultCallsign, positionId: p.positionId, positionName: p.positionName, frequency: p.frequency })),
       loginTime: new Date(c.loginTime),
       activeSince: activeSince.has(sessionKey(c)) ? new Date(activeSince.get(sessionKey(c))) : null,
     });
@@ -133,10 +134,11 @@ function trackActivations(feed, activeSince, now, firstRefresh, artccIds = []) {
   return changed;
 }
 
-/** 127350000 -> "127.350" */
+/** 127350000 -> "127.35". Two decimals, cut and not rounded (128225000 -> "128.22"), as Centerline's formatFrequency does. */
 function formatFrequency(hz) {
   if (!hz || hz === 199998000) return null;
-  return (hz / 1_000_000).toFixed(3);
+  const khz = Math.floor(hz / 1000);
+  return `${Math.floor(khz / 1000)}.${String(Math.floor((khz % 1000) / 10)).padStart(2, '0')}`;
 }
 
 const ARTCC_DATA_URL = 'https://data-api.vnas.vatsim.net/api/artccs/';

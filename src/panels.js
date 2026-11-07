@@ -118,8 +118,8 @@ function helpAlertPanel() {
 
 /** The automated "this position may need help" post. */
 function helpAlertEmbed(p, roleId) {
-  const freq = formatFrequency(p.frequency);
-  const name = p.shortName ?? p.callsign;
+  const freq = formatFrequency(p.displayFrequency ?? p.frequency);
+  const name = p.radioName ?? p.callsign;
   return {
     content: roleId ? `<@&${roleId}>` : undefined,
     allowedMentions: { roles: roleId ? [roleId] : [] },

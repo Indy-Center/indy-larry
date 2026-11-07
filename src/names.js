@@ -1,6 +1,8 @@
-// Display names from the Indy Center CMS: IND_E_APP -> "IND E" (short name) and "Indianapolis Approach" (radio name).
-// Pure lookup logic plus one fetch, so it can be tested offline. Callsigns stay the identity everywhere else;
-// these are only labels, and anything the CMS doesn't know keeps its callsign and vNAS position name.
+// Position labels from the Indy Center CMS catalogue, resolved the way Centerline does it
+// (https://centerline.flyindycenter.com/helpers/positions and /helpers/aviation, resolvePosition), so the bot
+// and the Indy Center apps name a position the same way. Pure lookup logic plus one fetch, so it can be tested
+// offline. Callsigns stay the identity everywhere else; these are only labels, and anything the CMS doesn't
+// know keeps its callsign.
 
 const CMS_POSITIONS_URL = 'https://cms.flyindycenter.com/api/public/v1/positions';
 
@@ -10,76 +12,93 @@ async function fetchCmsPositions(url = CMS_POSITIONS_URL) {
   return res.json();
 }
 
-// PREFIX_MIDDLE_SUFFIX, e.g. IND_E_APP or IND_E1_APP.
+/**
+ * @param {object[]} cmsPositions  The CMS /positions array
+ * @returns {{ size: number, byId: Map<string, object>, byCallsign: Map<string, object> }}
+ *   byId holds every position (a vNAS id still finds a retired one); byCallsign leaves retired ones out,
+ *   so a login never resolves to a position vNAS no longer lists.
+ */
+function buildNameIndex(cmsPositions) {
+  const byId = new Map();
+  const byCallsign = new Map();
+  for (const p of cmsPositions ?? []) {
+    if (!p?.callsign) continue;
+    if (p.id) byId.set(p.id, p);
+    if (!p.retired) byCallsign.set(p.callsign.toUpperCase(), p);
+  }
+  return { size: byCallsign.size, byId, byCallsign };
+}
+
+// PREFIX_MIDDLE_SUFFIX, e.g. IND_E_APP or IND_831_CTR.
 const THREE_PART = /^([A-Z0-9]+)_([A-Z0-9]+)_([A-Z]+)$/;
 
 /**
- * @param {object[]} cmsPositions  The CMS /positions array
- * @returns {Map<string, { shortName: string|null, radioName: string|null }>} callsign -> names, retired positions left out
+ * Centerline's resolvePosition: the vNAS position id if there is one, else the callsign as given, else the
+ * relief rule: one trailing digit dropped from the middle part (IND_831_CTR -> IND_83_CTR, IND_E1_APP ->
+ * IND_E_APP), else an all-digit middle dropped (IND_1_GND -> IND_GND). A login whose prefix changed stays unknown.
+ * @returns {object|null} the CMS position
  */
-function buildNameIndex(cmsPositions) {
-  const index = new Map();
-  for (const p of cmsPositions ?? []) {
-    if (!p?.callsign || p.retired) continue;
-    index.set(p.callsign.toUpperCase(), { shortName: p.shortName || null, radioName: p.radioName || null });
-  }
-  return index;
-}
-
-/**
- * Names for a callsign. An exact match wins; otherwise successive positions match their base with a
- * wildcard, IND_E*_APP: IND_E1_APP and IND_E2_APP get IND_E_APP's names. When several bases fit, the
- * longest wins (IND_EM1_APP -> IND_EM_APP, not IND_E_APP).
- * @returns {{ shortName: string|null, radioName: string|null } | null}
- */
-function lookupNames(index, callsign) {
-  if (!index?.size || !callsign) return null;
+function resolvePosition(index, callsign, positionId) {
+  if (!index?.size) return null;
+  if (positionId) return index.byId.get(positionId) ?? null; // the person is online and vNAS knows; the callsign isn't read
+  if (!callsign) return null;
   const cs = callsign.toUpperCase();
-  if (index.has(cs)) return index.get(cs);
+  if (index.byCallsign.has(cs)) return index.byCallsign.get(cs);
 
   const m = THREE_PART.exec(cs);
   if (!m) return null;
   const [, prefix, middle, suffix] = m;
-  let best = null;
-  let bestLen = 0;
-  for (const [candidate, names] of index) {
-    const c = THREE_PART.exec(candidate);
-    if (!c || c[1] !== prefix || c[3] !== suffix) continue;
-    if (middle.startsWith(c[2]) && c[2].length > bestLen) {
-      best = names;
-      bestLen = c[2].length;
-    }
+  if (middle.length > 1 && /\d$/.test(middle)) {
+    const hit = index.byCallsign.get(`${prefix}_${middle.slice(0, -1)}_${suffix}`);
+    if (hit) return hit;
   }
-  return best;
+  if (/^\d+$/.test(middle)) return index.byCallsign.get(`${prefix}_${suffix}`) ?? null;
+  return null;
 }
 
-/** First match among the callsigns given, e.g. the login callsign then the position's vNAS default. */
-const namesFor = (index, ...callsigns) => {
-  for (const cs of callsigns) {
-    const n = lookupNames(index, cs);
-    if (n) return n;
-  }
-  return null;
-};
+/**
+ * The airport a position is at, for Centerline's pilots preset. vNAS and the CMS don't carry one ("the app
+ * supplies it"), so it comes from the position's facility: a cab's own airport, or an approach's primary
+ * airport, as the ICAO code (IND -> KIND). A center, or a facility id that isn't a three-letter FAA id, has none.
+ */
+function airportOf(position) {
+  const id = position?.facility?.id;
+  return id && /^[A-Z]{3}$/.test(id) && position.callsign && !/_CTR$/.test(position.callsign) ? `K${id}` : null;
+}
 
 /**
- * Adds `shortName` and `radioName` to every controller, covered position and booking, in place.
- * Missing names are left undefined, so the embeds fall back to the callsign and vNAS position name.
+ * Names for a login, trying each (callsign, positionId) in turn: the login callsign then the position's vNAS default.
+ * @returns {{ shortName: string|null, radioName: string|null, airport: string|null, frequency: number|null } | null}
+ */
+function namesFor(index, ...candidates) {
+  for (const { callsign, positionId } of candidates) {
+    const p = resolvePosition(index, callsign, positionId);
+    if (p) return { shortName: p.shortName || null, radioName: p.radioName || null, airport: airportOf(p), frequency: p.frequency || null };
+  }
+  return null;
+}
+
+/**
+ * Adds `shortName`, `radioName`, `airport` and `displayFrequency` (the catalogue's, which can change; `frequency` stays vNAS's live one) to every controller, covered position and booking, in place.
+ * Missing names are left undefined, so the embeds fall back to the callsign.
  */
 function applyNames(index, facilities, bookings = []) {
   if (!index?.size) return;
-  const label = (obj, ...callsigns) => {
-    const n = namesFor(index, ...callsigns);
+  const label = (obj, ...candidates) => {
+    const n = namesFor(index, ...candidates);
     obj.shortName = n?.shortName ?? undefined;
     obj.radioName = n?.radioName ?? undefined;
+    obj.airport = n?.airport ?? undefined;
+    obj.displayFrequency = n?.frequency ?? undefined;
   };
   for (const f of facilities) {
     for (const c of f.controllers) {
-      label(c, c.callsign, c.defaultCallsign);
-      for (const p of c.extraPositions ?? []) label(p, p.callsign);
+      // The vNAS id is the primary position's, and is what tells a relief login which position it covers.
+      label(c, { callsign: c.callsign, positionId: c.positionId }, { callsign: c.defaultCallsign });
+      for (const p of c.extraPositions ?? []) label(p, { callsign: p.callsign, positionId: p.positionId });
     }
   }
-  for (const b of bookings) label(b, b.callsign);
+  for (const b of bookings) label(b, { callsign: b.callsign });
 }
 
-module.exports = { CMS_POSITIONS_URL, fetchCmsPositions, buildNameIndex, lookupNames, applyNames };
+module.exports = { CMS_POSITIONS_URL, fetchCmsPositions, buildNameIndex, resolvePosition, airportOf, applyNames };

@@ -56,7 +56,7 @@ function listPositions(facilities) {
     for (const c of f.controllers) {
       const base = { controllerCallsign: c.callsign, facilityType: c.facilityType, area: AREA_BY_TYPE[c.facilityType] ?? null };
       const positions = [
-        { callsign: c.callsign, positionName: c.positionName, frequency: c.frequency, shortName: c.shortName, radioName: c.radioName },
+        { callsign: c.callsign, positionName: c.positionName, frequency: c.frequency, shortName: c.shortName, radioName: c.radioName, airport: c.airport, displayFrequency: c.displayFrequency },
         ...c.extraPositions,
       ];
       for (const p of positions) {
@@ -68,6 +68,8 @@ function listPositions(facilities) {
           frequency: p.frequency,
           shortName: p.shortName,
           radioName: p.radioName,
+          airport: p.airport,
+          displayFrequency: p.displayFrequency,
         });
       }
     }
