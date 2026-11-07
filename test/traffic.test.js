@@ -65,6 +65,13 @@ test('countAircraft: counts aircraft on frequency inside the radius, not outside
   assert.equal(countAircraft(positions, feed, { atcCallsigns: new Set(['IND_TWR']) })[0].count, 1);
 });
 
+test('countAircraft: unset radius env vars (undefined) fall back to the defaults', () => {
+  const positions = listPositions(facility(controller()));
+  const feed = [station('IND_TWR', tx(118_500_000, IND.lat, IND.lon)), station('NEAR1', tx(118_500_000, north(5), IND.lon))];
+  const radiusNm = { cab: undefined, tracon: undefined, enroute: undefined }; // what bot.js passes with blank .env values
+  assert.equal(countAircraft(positions, feed, { atcCallsigns: new Set(['IND_TWR']), radiusNm })[0].count, 1);
+});
+
 test('countAircraft: guard-monitoring aircraft are not counted for another frequency', () => {
   const positions = listPositions(facility(controller()));
   const feed = [
