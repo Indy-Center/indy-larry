@@ -3,9 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
-const { statusEmbed, noneOnlineEmbed, trafficEmbed } = require('./embeds');
+const { statusEmbed, noneOnlineEmbed, trafficEmbed, congestionEmbed, congestionAlert } = require('./embeds');
 const { fetchTransceivers, listPositions, countAircraft, evaluateHelp } = require('./traffic');
 const { fetchCmsPositions, buildNameIndex, applyNames } = require('./names');
+const { ALERT_MODES, fetchPilots, fetchAreas, summarize, staffing, evaluateCongestion } = require('./congestion');
 const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
 const { IronMic } = require('./ironmicCommand');
@@ -67,6 +68,38 @@ const trafficConfig = {
   },
 };
 let notifications = null;
+
+// Airspace congestion: an embed with the airborne aircraft in each ARTCC and TRACON (CONGESTION_CHANNEL_ID, or
+// CHANNEL_ID under the status board), and an alert when an area gets busy (CONGESTION_ALERT: off, uncovered,
+// overloaded or both) in CONGESTION_ALERT_CHANNEL_ID, or ALERT_CHANNEL_ID. Off unless CONGESTION_ENABLED=true.
+const list = (value) => (value ?? '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+const congestionConfig = {
+  enabled: process.env.CONGESTION_ENABLED === 'true',
+  channelId: process.env.CONGESTION_CHANNEL_ID || config.channelId,
+  alertMode: (process.env.CONGESTION_ALERT || 'off').toLowerCase(),
+  alertChannelId: process.env.CONGESTION_ALERT_CHANNEL_ID || process.env.ALERT_CHANNEL_ID,
+  roleId: process.env.CONGESTION_ROLE_ID,
+  tracons: list(process.env.CONGESTION_TRACONS), // blank = every TRACON in the ARTCC data
+  lookaheadMin: Math.max(0, num(process.env.CONGESTION_LOOKAHEAD_MIN, 15)),
+  alert: {
+    thresholds: {
+      enroute: num(process.env.CONGESTION_THRESHOLD_ENROUTE, 25),
+      tracon: num(process.env.CONGESTION_THRESHOLD_TRACON, 10),
+    },
+    cooldownMs: num(process.env.CONGESTION_COOLDOWN_MIN, 30) * 60_000,
+    hysteresis: num(process.env.CONGESTION_HYSTERESIS, 3),
+  },
+  stateFile: path.join(__dirname, '..', 'congestion.json'),
+};
+if (!ALERT_MODES.includes(congestionConfig.alertMode)) {
+  console.error(`CONGESTION_ALERT must be one of ${ALERT_MODES.join(', ')}; turning the congestion alert off.`);
+  congestionConfig.alertMode = 'off';
+}
+if (congestionConfig.alertMode !== 'off' && (!congestionConfig.alertChannelId || congestionConfig.alertChannelId === config.channelId)) {
+  // The status loop deletes every other bot message in CHANNEL_ID, so the alert needs a channel of its own.
+  console.error('The congestion alert needs CONGESTION_ALERT_CHANNEL_ID (or ALERT_CHANNEL_ID), different from CHANNEL_ID; turning it off.');
+  congestionConfig.alertMode = 'off';
+}
 
 // /ironmic: Iron Mic leaderboard (totals from vNAS Stats). Always on; IRON_MIC_ROLE_ID (if set) is pinged when one starts.
 // Its embeds go above the status embeds in CHANNEL_ID, or in IRON_MIC_CHANNEL_ID if set.
@@ -144,6 +177,100 @@ async function getNames() {
     names.at = now - NAMES_TTL + 5 * 60_000; // try again in 5 minutes, not every poll
   }
   return names.index;
+}
+
+// Congestion boundaries: fetched daily (they rarely change), last copy kept if a fetch fails.
+const AREAS_TTL = 24 * 60 * 60_000;
+const areasCache = { areas: null, at: 0 };
+
+async function getAreas() {
+  const now = Date.now();
+  if (areasCache.areas && now - areasCache.at < AREAS_TTL) return areasCache.areas;
+  const tracons = congestionConfig.tracons.length
+    ? congestionConfig.tracons
+    : [...(cache.index?.facilities.values() ?? [])].filter((f) => f.positionType === 'Tracon').map((f) => f.id);
+  try {
+    areasCache.areas = await fetchAreas(config.artccIds, [...new Set(tracons)]);
+    areasCache.at = now;
+    console.log(`Congestion boundaries loaded: ${areasCache.areas.map((a) => a.key).join(', ') || 'none'}.`);
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] Congestion boundaries update failed:`, err.message);
+    areasCache.at = now - AREAS_TTL + 15 * 60_000; // try again in 15 minutes
+  }
+  return areasCache.areas ?? [];
+}
+
+// The congestion embed's own message when it lives outside CHANNEL_ID, and the alert memory; kept in congestion.json.
+const congestion = { state: null, channel: null, alertChannel: null, signature: null };
+
+function congestionState() {
+  if (!congestion.state) {
+    try {
+      congestion.state = JSON.parse(fs.readFileSync(congestionConfig.stateFile, 'utf8'));
+    } catch {
+      congestion.state = {};
+    }
+    congestion.state.memory ??= {};
+  }
+  return congestion.state;
+}
+
+function saveCongestionState() {
+  try {
+    saveStateFile(congestionConfig.stateFile, JSON.stringify(congestion.state, null, 2));
+  } catch (err) {
+    console.error('Could not save congestion.json:', err.message);
+  }
+}
+
+/** Edits (or posts) the congestion embed in its own channel. */
+async function upsertCongestionMessage(embed) {
+  const signature = JSON.stringify(embed.toJSON());
+  if (signature === congestion.signature) return;
+  const state = congestionState();
+  congestion.channel ??= await client.channels.fetch(congestionConfig.channelId);
+  if (state.channelId === congestionConfig.channelId && state.messageId) {
+    try {
+      const msg = await congestion.channel.messages.fetch(state.messageId);
+      await msg.edit({ embeds: [embed] });
+      congestion.signature = signature;
+      return;
+    } catch (err) {
+      if (err.code !== 10008) throw err; // 10008 = Unknown Message (deleted) -> post a new one
+    }
+  }
+  const msg = await congestion.channel.send({ embeds: [embed] });
+  Object.assign(state, { channelId: congestionConfig.channelId, messageId: msg.id });
+  congestion.signature = signature;
+  saveCongestionState();
+}
+
+/** Adds or posts the congestion embed and runs the congestion alert. Never breaks the status board. */
+async function addCongestion(facilities, wanted) {
+  try {
+    const areas = await getAreas();
+    if (!areas.length) return;
+    const staffed = staffing(summarize(await fetchPilots(), areas, congestionConfig), facilities);
+    const embed = congestionEmbed(staffed, congestionConfig);
+    if (congestionConfig.channelId === config.channelId) wanted.set('__congestion__', embed);
+    else await upsertCongestionMessage(embed);
+
+    if (congestionConfig.alertMode === 'off') return;
+    const state = congestionState();
+    const { fire, changed } = evaluateCongestion(state.memory, staffed, Date.now(), {
+      mode: congestionConfig.alertMode,
+      ...congestionConfig.alert,
+    });
+    if (fire.length) congestion.alertChannel ??= await client.channels.fetch(congestionConfig.alertChannelId);
+    for (const a of fire) {
+      await congestion.alertChannel.send(congestionAlert(a, congestionConfig)).catch((err) => {
+        console.error(`[${new Date().toISOString()}] Could not post congestion alert for ${a.key}:`, err.message);
+      });
+    }
+    if (changed) saveCongestionState();
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] Congestion update failed:`, err.message);
+  }
 }
 
 /** @returns {{ bookings: object[], facilityTree: Map|null }} */
@@ -256,6 +383,7 @@ async function refresh() {
     if (wanted.size === 0) wanted.set('__none__', noneOnlineEmbed(config.artccIds));
 
     if (trafficConfig.enabled) await addTraffic(feed, facilities, wanted);
+    if (congestionConfig.enabled && config.artccIds.length) await addCongestion(facilities, wanted);
 
     for (const key of [...posted.keys()]) {
       if (!wanted.has(key)) await remove(key);

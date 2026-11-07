@@ -80,4 +80,46 @@ function trafficEmbed(positions) {
     .setFooter({ text: 'Aircraft near each controller, excluding guard' });
 }
 
-module.exports = { statusEmbed, noneOnlineEmbed, trafficEmbed };
+const staffNote = (a) => (a.staff ? `${a.staff} on` : a.topDown ? 'top-down' : 'nobody on');
+
+/** Airborne aircraft in each ARTCC and TRACON, with how many are about to enter and who's working it. */
+function congestionEmbed(staffed, { lookaheadMin }) {
+  const enroute = staffed.filter((a) => a.kind === 'enroute');
+  const tracons = staffed
+    .filter((a) => a.kind === 'tracon')
+    .sort((a, b) => b.inside + b.entering - (a.inside + a.entering) || a.key.localeCompare(b.key));
+  const lines = enroute.map(
+    (a) => `**${a.name}** · **${a.inside}** airborne (${a.high} high · ${a.low} low) · +${a.entering} · ${staffNote(a)}`,
+  );
+  if (tracons.length) {
+    lines.push('', ...tracons.map((a) => `**${a.name}** · **${a.inside}** · +${a.entering} · ${staffNote(a)}`));
+  }
+  return new EmbedBuilder()
+    .setColor(0x9b59b6)
+    .setTitle(`🗺️ ${enroute.map((a) => a.name).join(' / ') || 'Airspace'} airspace`)
+    .setDescription(clip(lines.join('\n')) || 'No boundaries loaded.')
+    .setFooter({ text: `Airborne aircraft by boundary · +N entering in the next ${lookaheadMin} min · high = FL240+` });
+}
+
+/** The automated "this area is getting busy" post. */
+function congestionAlert(a, { roleId, lookaheadMin }) {
+  const title =
+    a.reason === 'uncovered'
+      ? `⚠️ ${a.name} is busy with nobody on`
+      : `⚠️ ${a.name} is busy: ${Math.round(a.total / a.staff)} aircraft per controller`;
+  return {
+    content: roleId ? `<@&${roleId}>` : undefined,
+    allowedMentions: { roles: roleId ? [roleId] : [] },
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xe67e22)
+        .setTitle(title)
+        .setDescription(
+          `**${a.inside}** aircraft in ${a.name}, **${a.entering}** more due in ${lookaheadMin} min` +
+            (a.staff ? ` · ${a.staff} controller${a.staff === 1 ? '' : 's'} on.` : '.'),
+        ),
+    ],
+  };
+}
+
+module.exports = { statusEmbed, noneOnlineEmbed, trafficEmbed, congestionEmbed, congestionAlert };
