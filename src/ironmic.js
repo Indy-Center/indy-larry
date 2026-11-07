@@ -230,6 +230,9 @@ function formatDuration(ms) {
   return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
 }
 
+// Grey: none of the status colors (green, yellow, red, blue) or the congestion and alert colors.
+const NEUTRAL_COLOR = 0x95a5a6;
+
 const MEDALS = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
 function percent(ms, elapsed) {
@@ -240,7 +243,8 @@ function percent(ms, elapsed) {
 /**
  * One embed per tracked position, in POSITIONS order (Center first), as plain JSON (discord.js accepts it
  * as-is). While it runs, a 🟢 goes before the callsign ahead of or behind a position if someone is on it
- * right now (`online`, from onlineCallsigns()). They go out together in one message. The last one's footer credits vnas-stats.com and, while
+ * right now (`online`, from onlineCallsigns()), and a "🟢 On frequency now" line tops our own position's embed
+ * while one of its callsigns is staffed. They go out together in one message. The last one's footer credits vnas-stats.com and, while
  * it runs, counts down the Zulu hours left in the month.
  */
 function competitionEmbeds(comp, now = Date.now(), online = new Set()) {
@@ -255,7 +259,9 @@ function competitionEmbeds(comp, now = Date.now(), online = new Set()) {
     else if (t.underMs != null) line = `**Under ${formatDuration(t.underMs)}** staffed · outside the network's top ${totals.ranked}`;
     else line = `**${formatDuration(t.ms)}** staffed · ${percent(t.ms, totals.elapsedMs)}% Uptime`;
 
-    const lines = [line];
+    // Our own position: a green line while someone is on it right now (any of its callsigns).
+    const mine = !ended && (comp.callsigns?.[key] ?? []).some((callsign) => online.has(callsign));
+    const lines = mine ? ['🟢 **On frequency now**', line] : [line];
     if (t?.rank) {
       let rank = `${MEDALS[t.rank] ? `${MEDALS[t.rank]} ` : ''}**#${t.rank}**`;
       if (t.tied) rank += ` · tied with ${t.tied} other${t.tied === 1 ? '' : 's'}`;
@@ -268,7 +274,7 @@ function competitionEmbeds(comp, now = Date.now(), online = new Set()) {
 
     const title = `${comp.places?.[key] ?? facilityOf(key) ?? fallback} ${POSITIONS[positionOf(key)].label} Iron Mic`;
     return {
-      color: 0xf1c40f,
+      color: NEUTRAL_COLOR,
       title: ended ? `🏁 ${title}: final` : `🎙️ ${title}`,
       description: lines.join('\n'),
     };
