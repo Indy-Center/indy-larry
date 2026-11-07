@@ -11,6 +11,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
 } = require('discord.js');
+const { formatFrequency } = require('./feed');
 
 // How long a Temporary relief notification role can last, in whole hours.
 const MIN_HOURS = 1;
@@ -99,6 +100,35 @@ function ironMicPanel() {
         new ButtonBuilder().setCustomId('ironmic:toggle').setLabel('Iron Mic').setEmoji('🎙️').setStyle(ButtonStyle.Primary),
       ),
     );
+}
+
+function helpAlertPanel() {
+  return new ContainerBuilder()
+    .setAccentColor(0xe67e22)
+    .addTextDisplayComponents(
+      text('## Busy Frequency Alerts'),
+      text('Use the button below to opt in/out of being pinged when a position has a lot of aircraft on its frequency'),
+    )
+    .addActionRowComponents(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('helpalert:toggle').setLabel('Busy frequency').setEmoji('✈️').setStyle(ButtonStyle.Primary),
+      ),
+    );
+}
+
+/** The automated "this position may need help" post. */
+function helpAlertEmbed(p, roleId) {
+  const freq = formatFrequency(p.frequency);
+  return {
+    content: roleId ? `<@&${roleId}>` : undefined,
+    allowedMentions: { roles: roleId ? [roleId] : [] },
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0xe67e22)
+        .setTitle(`✈️ ${p.callsign} may need help`)
+        .setDescription(`**${p.count}** aircraft are tuned to **${p.callsign}**${freq ? ` (${freq})` : ''}.`),
+    ],
+  };
 }
 
 const shortInput = (id, placeholder, { required = true, max = 50, min = 0 } = {}) =>
@@ -239,6 +269,8 @@ module.exports = {
   zuluNow,
   requestPanel,
   ironMicPanel,
+  helpAlertPanel,
+  helpAlertEmbed,
   requestModal,
   requestAlert,
   alertStatus,

@@ -65,4 +65,15 @@ function noneOnlineEmbed(artccIds) {
     .setDescription(artccIds.length ? `Nobody is controlling in ${artccIds.join(', ')} right now.` : 'Nobody is controlling right now.');
 }
 
-module.exports = { statusEmbed, noneOnlineEmbed };
+/** Every online position with how many aircraft are tuned to it, busiest first. */
+function trafficEmbed(positions) {
+  const sorted = [...positions].sort((a, b) => b.count - a.count || a.callsign.localeCompare(b.callsign));
+  const lines = sorted.map((p) => `✈️ **${p.count}** · **${p.callsign}** · ${formatFrequency(p.frequency)}`);
+  return new EmbedBuilder()
+    .setColor(0x3498db)
+    .setTitle('✈️ Aircraft on frequency')
+    .setDescription(clip(lines.join('\n')))
+    .setFooter({ text: 'Aircraft near each controller, excluding guard' });
+}
+
+module.exports = { statusEmbed, noneOnlineEmbed, trafficEmbed };

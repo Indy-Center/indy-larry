@@ -21,11 +21,20 @@ Controllers add this line to their controller info, with your local time and the
 
 The bot marks the position as closing 15 minutes before that time. If both times are given, the zulu one is used. A line without a readable time, such as `Closing at ???`, is ignored. A booked position is also marked closing 15 minutes before its booking ends, even without this line.
 
+### Aircraft on frequency
+
+With `TRAFFIC_ENABLED=true` the bot also keeps one extra embed in the status channel, "Aircraft on frequency", listing every online position (and any secondary frequency a controller is covering) with the number of aircraft tuned to it, busiest first. The per-facility embeds above are unchanged.
+
+Counts come from the [VATSIM transceivers feed](https://data.vatsim.net/v3/transceivers-data.json), which has the frequency and location of every radio. An aircraft counts when one of its radios is on the position's frequency and within range of one of the controller's radios, once per aircraft. Range keeps out aircraft elsewhere in the world on the same frequency, and the other airport's ground or tower on a shared frequency. It's `TRAFFIC_RADIUS_CAB` (default 10 nm, for delivery, ground and tower), `TRAFFIC_RADIUS_TRACON` (60) and `TRAFFIC_RADIUS_ENROUTE` (250). Guard (121.500) is never counted. If the feed is down the embed is skipped for that poll and the rest keeps working.
+
+**Busy frequency alert:** when a position's count reaches `HELP_THRESHOLD_CAB`, `HELP_THRESHOLD_TRACON` or `HELP_THRESHOLD_ENROUTE` (0 or blank turns an area off), the bot posts "may need help" in `ALERT_CHANNEL_ID` and pings `HELP_ROLE_ID`. A position alerts once; it can alert again only after its count drops `HELP_HYSTERESIS` (default 2) below the threshold and `HELP_COOLDOWN_MIN` (default 15) minutes have passed. People opt in with the **Busy frequency** button in the notification panels, which adds or removes `HELP_ROLE_ID`. This needs `PANEL_CHANNEL_ID`.
+
 ## Notification panels
 
-If `PANEL_CHANNEL_ID` is set, the bot also keeps three panels in that channel, in this order from the top. Relief is last because the mobile app opens a channel at its newest message. Each uses Discord's newer message components, and the bot's replies are visible only to the person who picked or pressed something.
+If `PANEL_CHANNEL_ID` is set, the bot also keeps up to four panels in that channel, in this order from the top. Relief is last because the mobile app opens a channel at its newest message. Each uses Discord's newer message components, and the bot's replies are visible only to the person who picked or pressed something.
 
 - **Iron Mic Notification Preference**: one button that adds or removes `IRON_MIC_ROLE_ID`.
+- **Busy Frequency Alerts**: one button that adds or removes `HELP_ROLE_ID`, if set (see Aircraft on frequency).
 - **Controller Break/Staffing Notification System**: one drop-down per area (CAB, TRACON, ENROUTE); pick Break or Staffing on your area. A form asks for the position you need relief from and the Zulu time (four digits, like 0200; the form shows the current Zulu time) you can stay on until (Break), or the position you're working and a brief optional reason (Staffing), plus who to notify out of that area's roles. An area with a single role skips that question and always pings it. The request is posted in `ALERT_CHANNEL_ID` and pings the chosen roles. Anyone but the requester can press **Claim** on it, which turns it green and shows who has it; only they can press **Unclaim** to reopen it. The requester can **Cancel** it. An alert nobody has claimed turns grey as Expired at the Zulu time given on a Break request, or after `REQUEST_EXPIRE_MINUTES` (default 60; 0 turns this off) on a Staffing request, and a claimed one loses its buttons then.
 - **Controller Relief Notification**: one drop-down per position. Pick Permanent, or Temporary and enter a whole number of hours from 1 to 24 in the form, to get that position's role. Temporary roles come off within 30 seconds of running out, even across restarts. Picking Temporary again sets a new time from now, and switching between Temporary and Permanent changes the role over; Opt out, or Permanent when you already have it, removes the role.
 
@@ -161,6 +170,7 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/feed.js`: fetches the [vNAS controller feed](https://docs.virtualnas.net/data-admin/controller-feed/), the vNAS ARTCC data (facility and position list) and [VATSIM ATC bookings](https://atc-bookings.vatsim.net/), groups controllers by facility and tracks activation times.
 - `src/status.js`: decides each facility's status and parses "Online until" from controller info.
 - `src/embeds.js`: the embed layout.
+- `src/traffic.js`: counts aircraft on each position's frequency from the transceivers feed, and decides when a position is busy enough to alert.
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
@@ -220,6 +230,7 @@ Secrets:
 | `ENV_ARTCC_IDS` | Variable | `ZID` |
 | `ENV_PANEL_CHANNEL_ID`, `ENV_ALERT_CHANNEL_ID` | Variable | Optional; the notification panel and request channels |
 | `ENV_RELIEF_ROLES`, `ENV_CAB_ROLES`, `ENV_TRACON_ROLES`, `ENV_ENROUTE_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
+| `ENV_TRAFFIC_ENABLED`, `ENV_TRAFFIC_RADIUS_*`, `ENV_HELP_ROLE_ID`, `ENV_HELP_THRESHOLD_*`, `ENV_HELP_COOLDOWN_MIN`, `ENV_HELP_HYSTERESIS` | Variable | Optional; the aircraft on frequency embed and busy frequency alert |
 | `ENV_IRON_MIC_CHANNEL_ID` | Variable | Optional; posts the Iron Mic leaderboard outside `CHANNEL_ID`, e.g. while testing |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 | `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; the Worker deploy reads it (the VPS bot ignores its `.env` copy) |

@@ -3,7 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
-const { statusEmbed, noneOnlineEmbed } = require('./embeds');
+const { statusEmbed, noneOnlineEmbed, trafficEmbed } = require('./embeds');
+const { fetchTransceivers, listPositions, countAircraft, evaluateHelp } = require('./traffic');
 const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
 const { IronMic } = require('./ironmicCommand');
@@ -33,6 +34,7 @@ const notifyConfig = {
   positions: parseRoles(process.env.RELIEF_ROLES),
   areas: parseAreas(process.env),
   ironMicRoleId: process.env.IRON_MIC_ROLE_ID,
+  helpRoleId: process.env.HELP_ROLE_ID,
   expireMinutes: Math.max(0, Number(process.env.REQUEST_EXPIRE_MINUTES || 60) || 0),
   stateFile: path.join(__dirname, '..', 'notify.json'),
 };
@@ -42,6 +44,28 @@ if ([notifyConfig.panelChannelId, notifyConfig.alertChannelId].includes(config.c
   console.error('PANEL_CHANNEL_ID and ALERT_CHANNEL_ID must be different from CHANNEL_ID.');
   process.exit(1);
 }
+
+// Aircraft-on-frequency embed in CHANNEL_ID. Off unless TRAFFIC_ENABLED=true. The busy-frequency alert
+// (posted in ALERT_CHANNEL_ID) is on per area once its HELP_THRESHOLD_* is above 0, and needs the panels (PANEL_CHANNEL_ID).
+const num = (value, fallback) => (value === undefined || value === '' || Number.isNaN(Number(value)) ? fallback : Number(value));
+const trafficConfig = {
+  enabled: process.env.TRAFFIC_ENABLED === 'true',
+  radiusNm: {
+    cab: num(process.env.TRAFFIC_RADIUS_CAB, undefined),
+    tracon: num(process.env.TRAFFIC_RADIUS_TRACON, undefined),
+    enroute: num(process.env.TRAFFIC_RADIUS_ENROUTE, undefined),
+  },
+  help: {
+    thresholds: {
+      cab: num(process.env.HELP_THRESHOLD_CAB, 0),
+      tracon: num(process.env.HELP_THRESHOLD_TRACON, 0),
+      enroute: num(process.env.HELP_THRESHOLD_ENROUTE, 0),
+    },
+    cooldownMs: num(process.env.HELP_COOLDOWN_MIN, 15) * 60_000,
+    hysteresis: num(process.env.HELP_HYSTERESIS, 2),
+  },
+};
+let notifications = null;
 
 // /ironmic: Iron Mic leaderboard (totals from vNAS Stats). Always on; IRON_MIC_ROLE_ID (if set) is pinged when one starts.
 // Its embeds go above the status embeds in CHANNEL_ID, or in IRON_MIC_CHANNEL_ID if set.
@@ -171,6 +195,20 @@ async function remove(key) {
   });
 }
 
+/** Adds the aircraft-on-frequency embed to `wanted` and runs the busy-frequency alert. Never breaks the status board. */
+async function addTraffic(feed, facilities, wanted) {
+  try {
+    const positions = listPositions(facilities);
+    if (!positions.length) return;
+    const atcCallsigns = new Set((feed.controllers ?? []).map((c) => c.vatsimData.callsign));
+    const counted = countAircraft(positions, await fetchTransceivers(), { atcCallsigns, radiusNm: trafficConfig.radiusNm });
+    wanted.set('__traffic__', trafficEmbed(counted));
+    await notifications?.helpCheck((memory) => evaluateHelp(memory, counted, Date.now(), trafficConfig.help));
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] Aircraft on frequency update failed:`, err.message);
+  }
+}
+
 async function refresh() {
   if (running) {
     again = true;
@@ -196,6 +234,8 @@ async function refresh() {
 
     const wanted = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
     if (wanted.size === 0) wanted.set('__none__', noneOnlineEmbed(config.artccIds));
+
+    if (trafficConfig.enabled) await addTraffic(feed, facilities, wanted);
 
     for (const key of [...posted.keys()]) {
       if (!wanted.has(key)) await remove(key);
@@ -228,7 +268,8 @@ client.once(Events.ClientReady, async () => {
   console.log(`Polling every ${config.pollSeconds}s${config.artccIds.length ? ` for ${config.artccIds.join(', ')}` : ''}.`);
 
   if (notifyConfig.panelChannelId) {
-    await new Notifications(client, notifyConfig).start().catch((err) => console.error('Notification panels failed to start:', err.message));
+    notifications = new Notifications(client, notifyConfig);
+    await notifications.start().catch((err) => console.error('Notification panels failed to start:', err.message));
   }
 });
 

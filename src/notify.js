@@ -12,6 +12,8 @@ const {
   zuluNow,
   requestPanel,
   ironMicPanel,
+  helpAlertPanel,
+  helpAlertEmbed,
   requestModal,
   requestAlert,
   alertStatus,
@@ -79,7 +81,7 @@ function expiredGrants(grants, now) {
  * Iron Mic button. Request alerts can share the panel channel, so they must not match.
  */
 function isPanelMessage(components) {
-  const walk = (c) => /^(relief:role:|request:area:|ironmic:toggle$)/.test(c.custom_id ?? '') || (c.components ?? []).some(walk);
+  const walk = (c) => /^(relief:role:|request:area:|ironmic:toggle$|helpalert:toggle$)/.test(c.custom_id ?? '') || (c.components ?? []).some(walk);
   return components.some(walk);
 }
 
@@ -88,20 +90,20 @@ const unix = (ms) => Math.floor(ms / 1000);
 class Notifications {
   /**
    * @param {import('discord.js').Client} client
-   * @param {{ panelChannelId: string, alertChannelId: string, positions: {label: string, roleId: string}[], areas: {key: string, label: string, roles: {label: string, roleId: string}[]}[], ironMicRoleId?: string, expireMinutes?: number, stateFile: string }} config
+   * @param {{ panelChannelId: string, alertChannelId: string, positions: {label: string, roleId: string}[], areas: {key: string, label: string, roles: {label: string, roleId: string}[]}[], ironMicRoleId?: string, helpRoleId?: string, expireMinutes?: number, stateFile: string }} config
    */
   constructor(client, config) {
     this.client = client;
     this.config = config;
     // grants: "userId:roleId" -> { userId, roleId, duration, expiresAt|null }
     // alerts: messageId -> the request alert's record (see requestAlert), while it can still be claimed or cancelled
-    this.state = { panelChannelId: null, panels: [], grants: {}, alerts: {} };
+    this.state = { panelChannelId: null, panels: [], grants: {}, alerts: {}, help: {} };
   }
 
   load() {
     try {
-      const { panelChannelId, panels, grants, alerts } = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
-      this.state = { panelChannelId, panels: panels ?? [], grants: grants ?? {}, alerts: alerts ?? {} };
+      const { panelChannelId, panels, grants, alerts, help } = JSON.parse(fs.readFileSync(this.config.stateFile, 'utf8'));
+      this.state = { panelChannelId, panels: panels ?? [], grants: grants ?? {}, alerts: alerts ?? {}, help: help ?? {} };
     } catch {
       // First run.
     }
@@ -128,9 +130,10 @@ class Notifications {
     );
     await this.sweep();
     setInterval(() => this.sweep(), SWEEP_MS);
-    const { positions, areas, ironMicRoleId } = this.config;
+    const { positions, areas, ironMicRoleId, helpRoleId } = this.config;
     const shown = [
       ironMicRoleId ? 'Iron Mic' : null,
+      helpRoleId ? 'Busy frequency' : null,
       areas.length ? `Break/Staffing (${areas.map((a) => `${a.label}: ${a.roles.map((r) => r.label).join(', ')}`).join('; ')})` : null,
       positions.length ? `Relief (${positions.map((p) => p.label).join(', ')})` : null,
     ].filter(Boolean);
@@ -140,9 +143,10 @@ class Notifications {
 
   /** Top to bottom. Relief goes last, since the mobile app opens a channel at its newest message. */
   panels() {
-    const { positions, areas, ironMicRoleId } = this.config;
+    const { positions, areas, ironMicRoleId, helpRoleId } = this.config;
     const list = [];
     if (ironMicRoleId) list.push(ironMicPanel());
+    if (helpRoleId) list.push(helpAlertPanel());
     if (areas.length) list.push(requestPanel(areas));
     if (positions.length) list.push(reliefPanel(positions));
     return list;
@@ -208,6 +212,7 @@ class Notifications {
     if (scope === 'relief' && kind === 'role') return this.pickRelief(interaction, rest[0]);
     if (scope === 'relief' && kind === 'hours') return this.submitHours(interaction, rest[0]);
     if (scope === 'ironmic') return this.toggleIronMic(interaction);
+    if (scope === 'helpalert') return this.toggleHelpAlert(interaction);
     if (scope === 'alert' && kind === 'claim') return this.claimAlert(interaction);
     if (scope === 'alert' && kind === 'cancel') return this.cancelAlert(interaction);
 
@@ -289,6 +294,34 @@ class Notifications {
     }
     await member.roles.add(roleId, 'Iron Mic notifications: opted in');
     return this.reply(interaction, "🎙️ You'll get Iron Mic notifications. Press the button again to opt out.");
+  }
+
+  async toggleHelpAlert(interaction) {
+    const roleId = this.config.helpRoleId;
+    if (!roleId) return this.reply(interaction, 'Busy frequency alerts are not set up.');
+    const member = interaction.member;
+    if (member.roles.cache.has(roleId)) {
+      await member.roles.remove(roleId, 'Busy frequency alerts: opted out');
+      return this.reply(interaction, "🔕 You'll no longer get busy frequency alerts.");
+    }
+    await member.roles.add(roleId, 'Busy frequency alerts: opted in');
+    return this.reply(interaction, "✈️ You'll get busy frequency alerts. Press the button again to opt out.");
+  }
+
+  /**
+   * Posts a "may need help" alert for each position that just crossed its threshold. Called after every
+   * feed refresh; `help` (cooldown memory) lives in notify.json so a restart doesn't repeat alerts.
+   * @param {(memory: object) => {fire: object[], changed: boolean}} evaluate
+   */
+  async helpCheck(evaluate) {
+    if (!this.alertChannel) return; // panels haven't started yet
+    const { fire, changed } = evaluate(this.state.help);
+    for (const p of fire) {
+      await this.alertChannel.send(helpAlertEmbed(p, this.config.helpRoleId)).catch((err) => {
+        console.error(`[${new Date().toISOString()}] Could not post busy frequency alert for ${p.callsign}:`, err.message);
+      });
+    }
+    if (changed) this.save();
   }
 
   async submitRequest(interaction, type, areaKey) {
