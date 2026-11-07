@@ -1,4 +1,4 @@
-// Saving the bot's state files (state.json, notify.json, ironmic.json) so a stop, crash or power cut
+// Saving the bot's state files (state.json, notify.json, ironmic.json, congestion.json) so a stop, crash or power cut
 // never leaves one half-written: the new contents go to a temporary file beside it, which is then renamed
 // over it. A rename is all or nothing, so the file is always either the old version or the new one.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # indy-larry's backup recipe (see docker-infrastructure's README, "What an app ships").
 # The backup runner calls it as `bash backup.sh <empty folder>` from ~/apps/indy-larry/, and it writes one file
-# there: indy-larry-state.tar.gz, everything in the bot-state volume (state.json, notify.json, ironmic.json).
+# there: indy-larry-state.tar.gz, everything in the bot-state volume (state.json, notify.json, ironmic.json, congestion.json).
 #
 # The bot stays up. It saves each file whole, by writing a temporary file and renaming it over the old one
 # (src/stateFile.js), but a file left half-written by an older version of the bot, or anything else writing in

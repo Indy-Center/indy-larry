@@ -6,7 +6,7 @@ A Discord bot that shows which Indy Center (ZID) facilities are staffed on vNAS.
 
 ## Embeds
 
-One embed per facility (e.g. "Indianapolis ATCT/TRACON is online"), listing each controller with their position, frequency and when they went active. Facility and position names come straight from vNAS, so they match CRC. Positions are listed TRACON first, then Tower, Ground and Clearance.
+One embed per facility (e.g. "Indianapolis ATCT/TRACON is online"), listing each controller with their position, frequency and when they went active. Facility names come straight from vNAS, so they match CRC. Positions are labelled with the short name and radio name from the Indy Center CMS, so `IND_E_APP · Departure Radar East` shows as `IND E · Indianapolis Approach`, and anything the CMS doesn't know keeps its callsign and vNAS name (see [Position names](#position-names)). Positions are listed TRACON first, then Tower, Ground and Clearance.
 
 - 🟢 **Online**: at least one controller is on.
 - 🟡 **Closing**: every controller on is closing within `CLOSING_MINUTES` (default 15).
@@ -21,13 +21,35 @@ Controllers add this line to their controller info, with your local time and the
 
 The bot marks the position as closing 15 minutes before that time. If both times are given, the zulu one is used. A line without a readable time, such as `Closing at ???`, is ignored. A booked position is also marked closing 15 minutes before its booking ends, even without this line.
 
+### Position names
+
+The status embeds, bookings, "also covering", the closed line, Aircraft on frequency and the busy-frequency alert all use the CMS names. The bot fetches `cms.flyindycenter.com/api/public/v1/positions` daily and on every restart, and keeps the last copy if the CMS is down (after a restart with the CMS down, callsigns show until it's back). Successive positions are wildcarded: `IND_E*_APP` means `IND_E1_APP` gets `IND_E_APP`'s names (an exact match first, then the longest base), then the position's vNAS default callsign is tried. Callsigns stay the identity behind the scenes, for sorting, keys and alert memory.
+
+### Message order
+
+In `CHANNEL_ID`, top to bottom: the Iron Mic leaderboard, Aircraft on frequency, the facility embeds, then the airspace congestion embed (if it's in this channel). Discord keeps messages in the order they were posted, so if one is out of place, such as Aircraft on frequency coming back after a failed update, the bot deletes and reposts the embeds in order.
+
 ### Aircraft on frequency
 
-With `TRAFFIC_ENABLED=true` the bot also keeps one extra embed in the status channel, "Aircraft on frequency", listing every online position (and any secondary frequency a controller is covering) with the number of aircraft tuned to it, busiest first. The per-facility embeds above are unchanged.
+With `TRAFFIC_ENABLED=true` the bot also keeps one extra embed in the status channel, "Aircraft on frequency", above the facility embeds and below the Iron Mic leaderboard. It lists every online position (and any secondary frequency a controller is covering) with the number of aircraft tuned to it, busiest first. The per-facility embeds are unchanged.
 
-Counts come from the [VATSIM transceivers feed](https://data.vatsim.net/v3/transceivers-data.json), which has the frequency and location of every radio. An aircraft counts when one of its radios is on the position's frequency and within range of one of the controller's radios, once per aircraft. Range keeps out aircraft elsewhere in the world on the same frequency, and the other airport's ground or tower on a shared frequency. It's `TRAFFIC_RADIUS_CAB` (default 10 nm, for delivery, ground and tower), `TRAFFIC_RADIUS_TRACON` (60) and `TRAFFIC_RADIUS_ENROUTE` (250). Guard (121.500) is never counted. If the feed is down the embed is skipped for that poll and the rest keeps working.
+Counts come from the [VATSIM transceivers feed](https://data.vatsim.net/v3/transceivers-data.json), which has the frequency and location of every radio. An aircraft counts when one of its radios is on the position's frequency and within range of one of the controller's radios, once per aircraft. Range keeps out aircraft elsewhere in the world on the same frequency, and the other airport's ground or tower on a shared frequency. It's `TRAFFIC_RADIUS_CAB` (default 10 nm, for delivery, ground and tower), `TRAFFIC_RADIUS_TRACON` (60) and `TRAFFIC_RADIUS_ENROUTE` (250). Guard (121.500) is never counted. A blank radius setting uses its default. If the feed is down the embed is skipped for that poll and the rest keeps working.
 
 **Busy frequency alert:** when a position's count reaches `HELP_THRESHOLD_CAB`, `HELP_THRESHOLD_TRACON` or `HELP_THRESHOLD_ENROUTE` (0 or blank turns an area off), the bot posts "may need help" in `ALERT_CHANNEL_ID` and pings `HELP_ROLE_ID`. A position alerts once; it can alert again only after its count drops `HELP_HYSTERESIS` (default 2) below the threshold and `HELP_COOLDOWN_MIN` (default 15) minutes have passed. People opt in with the **Busy frequency** button in the notification panels, which adds or removes `HELP_ROLE_ID`. This needs `PANEL_CHANNEL_ID`.
+
+### Airspace congestion
+
+With `CONGESTION_ENABLED=true` the bot keeps an embed with the airborne aircraft (groundspeed 50 kt or more) in the ARTCC (`ARTCC_IDS`) and in each of its TRACONs, from the VATSIM pilot feed. It also counts how many are projected to enter within `CONGESTION_LOOKAHEAD_MIN` (default 15) minutes on their current heading and groundspeed. The ARTCC line is split at FL240 into high and low. Each area shows who's working it: `N on`, `top-down` (covered from above) or `nobody on`. `CONGESTION_TRACONS` (e.g. `IND,SDF,CVG`) limits the TRACONs shown; blank shows every one in the ARTCC. Boundaries come from the [VAT-Spy Data Project](https://github.com/vatsimnetwork/vatspy-data-project) (the ARTCC) and the [SimAware TRACON Project](https://github.com/vatsimnetwork/simaware-tracon-project), fetched daily with the last copy kept if they can't be reached.
+
+The embed goes under the facility embeds in `CHANNEL_ID`, or is its own edited message in `CONGESTION_CHANNEL_ID`.
+
+**Congestion alert:** `CONGESTION_ALERT` picks when it posts, and defaults to `off`:
+
+- `uncovered`: the area is busy and nobody is on it (a center above counts as covering a TRACON).
+- `overloaded`: the area is busy per controller working it.
+- `both`.
+
+"Busy" is aircraft in plus entering reaching `CONGESTION_THRESHOLD_ENROUTE` (default 25) or `CONGESTION_THRESHOLD_TRACON` (default 10); 0 turns an area off. Like the busy-frequency alert, an area alerts once, then again only after its count drops `CONGESTION_HYSTERESIS` (default 3) below the threshold and `CONGESTION_COOLDOWN_MIN` (default 30) minutes have passed. The alert goes to `CONGESTION_ALERT_CHANNEL_ID` (or `ALERT_CHANNEL_ID`, and never `CHANNEL_ID`) and pings `CONGESTION_ROLE_ID` if set. The alert memory, and the embed's message ID when it's in its own channel, are in `congestion.json`. It isn't committed.
 
 ## Notification panels
 
@@ -171,6 +193,9 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/status.js`: decides each facility's status and parses "Online until" from controller info.
 - `src/embeds.js`: the embed layout.
 - `src/traffic.js`: counts aircraft on each position's frequency from the transceivers feed, and decides when a position is busy enough to alert.
+- `src/congestion.js`: airspace congestion: boundaries, airborne and entering counts, who's working each area, and the alert.
+- `src/names.js`: the CMS short and radio names for positions.
+- `src/stateFile.js`: saves the JSON state files so a crash never leaves one half-written.
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
@@ -201,7 +226,7 @@ Create the bot at https://discord.com/developers/applications and give it the Vi
 
 Use a test channel, or stop the production bot first. Two copies with the same token keep deleting each other's embeds.
 
-`state.json` is created on first run. It records which message belongs to which facility, and when each controller went active, so restarts edit the same messages. It isn't committed.
+`state.json` is created on first run. It records which message belongs to which facility, and when each controller went active, so restarts edit the same messages. It isn't committed, and neither are `notify.json`, `ironmic.json` and `congestion.json`.
 
 ## Tests
 
@@ -212,7 +237,7 @@ bash test/backup/roundtrip.sh # the backup round trip; needs Docker
 
 ## Deployment
 
-The bot runs on the Vanderbilt VPS, following the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/). It only makes outbound calls (Discord, vNAS, VATSIM), so it has no Traefik labels, doesn't join `traefik-shared` and publishes no ports.
+The bot runs on the Vanderbilt VPS, following the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/). It only makes outbound calls (Discord, vNAS, VATSIM, the Indy Center CMS, GitHub for airspace boundaries), so it has no Traefik labels, doesn't join `traefik-shared` and publishes no ports.
 
 `build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then rsyncs `deploy/` to `/home/deploy/apps/indy-larry/`, writes `.env` there from the `ENV_*` secrets and variables, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later.
 
@@ -231,6 +256,7 @@ Secrets:
 | `ENV_PANEL_CHANNEL_ID`, `ENV_ALERT_CHANNEL_ID` | Variable | Optional; the notification panel and request channels |
 | `ENV_RELIEF_ROLES`, `ENV_CAB_ROLES`, `ENV_TRACON_ROLES`, `ENV_ENROUTE_ROLES`, `ENV_IRON_MIC_ROLE_ID` | Variable | Optional; the production server's notification roles |
 | `ENV_TRAFFIC_ENABLED`, `ENV_TRAFFIC_RADIUS_*`, `ENV_HELP_ROLE_ID`, `ENV_HELP_THRESHOLD_*`, `ENV_HELP_COOLDOWN_MIN`, `ENV_HELP_HYSTERESIS` | Variable | Optional; the aircraft on frequency embed and busy frequency alert |
+| `ENV_CONGESTION_*` | Variable | Optional; the airspace congestion embed and alert (`ENABLED`, `CHANNEL_ID`, `ALERT`, `ALERT_CHANNEL_ID`, `ROLE_ID`, `TRACONS`, `LOOKAHEAD_MIN`, `THRESHOLD_ENROUTE`, `THRESHOLD_TRACON`, `COOLDOWN_MIN`, `HYSTERESIS`) |
 | `ENV_IRON_MIC_CHANNEL_ID` | Variable | Optional; posts the Iron Mic leaderboard outside `CHANNEL_ID`, e.g. while testing |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 | `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; the Worker deploy reads it (the VPS bot ignores its `.env` copy) |
@@ -253,7 +279,7 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 
 ## Backups
 
-The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json` and `ironmic.json`. After a restore the bot edits the same status messages and panels, keeps its role timers and request alerts, and carries on any running Iron Mic.
+The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json`, `ironmic.json` and `congestion.json`. After a restore the bot edits the same status messages and panels, keeps its role timers, request alerts and congestion alert memory, and carries on any running Iron Mic.
 
 - `deploy/backup.sh` writes the volume's files into one archive, `indy-larry-state.tar.gz`, while the bot keeps running. The bot rewrites its files in place, so a copy can catch one half-written; each JSON file that doesn't parse is copied again, up to 10 times, and the backup fails if it never reads whole.
 - `deploy/restore.sh <file>` takes a decrypted archive. It checks the archive first and changes nothing if it is damaged. Then it stops the bot, unpacks the archive inside the volume, swaps its files in for the old ones by renaming, and starts the bot again. If the swap fails part-way, the old files are put back before the bot starts. A restore killed part-way leaves `.restore-new` or `.restore-old` in the volume, and the next restore refuses to run until they have been checked and removed by hand.
