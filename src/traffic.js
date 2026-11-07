@@ -55,10 +55,20 @@ function listPositions(facilities) {
   for (const f of facilities) {
     for (const c of f.controllers) {
       const base = { controllerCallsign: c.callsign, facilityType: c.facilityType, area: AREA_BY_TYPE[c.facilityType] ?? null };
-      const positions = [{ callsign: c.callsign, positionName: c.positionName, frequency: c.frequency }, ...c.extraPositions];
+      const positions = [
+        { callsign: c.callsign, positionName: c.positionName, frequency: c.frequency, shortName: c.shortName, radioName: c.radioName },
+        ...c.extraPositions,
+      ];
       for (const p of positions) {
         if (!p.frequency || p.frequency === NO_FREQUENCY_HZ || toKhz(p.frequency) === GUARD_KHZ) continue;
-        out.push({ ...base, callsign: p.callsign ?? c.callsign, positionName: p.positionName, frequency: p.frequency });
+        out.push({
+          ...base,
+          callsign: p.callsign ?? c.callsign,
+          positionName: p.positionName,
+          frequency: p.frequency,
+          shortName: p.shortName,
+          radioName: p.radioName,
+        });
       }
     }
   }

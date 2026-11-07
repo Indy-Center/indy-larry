@@ -59,6 +59,7 @@ function groupByFacility(feed, { artccIds = [], includeInactive = false, activeS
       name: c.vatsimData.realName,
       rating: RATING_SHORT[c.vatsimData.requestedRating] ?? c.vatsimData.requestedRating,
       callsign: c.vatsimData.callsign || primary.defaultCallsign,
+      defaultCallsign: primary.defaultCallsign, // for CMS names when someone logs on as a relief callsign
       facilityType: c.vatsimData.facilityType,
       info: c.vatsimData.controllerInfo,
       positionName: primary.positionName,

@@ -10,24 +10,28 @@ const STATUS = {
 
 const unix = (date) => Math.floor(date.getTime() / 1000);
 
+// CMS short and radio names when there are any (IND E · Indianapolis Approach), else callsign and vNAS name.
+const label = (x) => x.shortName ?? x.callsign;
+const radio = (x) => x.radioName ?? x.positionName;
+
 function controllerLine(c, { showNames }) {
   const freq = formatFrequency(c.frequency);
   const who = showNames && c.name && c.name !== c.cid ? `${c.name} (${c.rating})` : `${c.cid} (${c.rating})`;
-  let line = `**${c.callsign}** · ${c.positionName}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.activeSince ?? c.loginTime)}:t>`;
+  let line = `**${label(c)}** · ${radio(c)}${freq ? ` · ${freq}` : ''}\n└ ${who} · on since <t:${unix(c.activeSince ?? c.loginTime)}:t>`;
   if (!c.isActive) line += ' · *inactive*';
   const until = c.announcedEnd ?? c.closing?.at;
   if (until) line += `\n└ ${c.closing ? '🟡 ' : ''}Online until <t:${unix(until)}:t> (<t:${unix(until)}:R>)`;
   else if (c.closing) line += '\n└ 🟡 closing soon';
   // A center's "also covering" would repeat the Top-down line, so only the other positions show it.
   if (c.extraPositions.length && c.facilityType !== 'Center') {
-    line += `\n└ also covering ${c.extraPositions.map((p) => `**${p.callsign}**`).join(', ')}`;
+    line += `\n└ also covering ${c.extraPositions.map((p) => `**${label(p)}**`).join(', ')}`;
   }
   return line;
 }
 
 function bookingLine(b) {
   const kind = b.type && b.type !== 'booking' ? ` · ${b.type}` : '';
-  return `**${b.callsign}** · ${b.positionName ?? ''}\n└ <t:${unix(b.start)}:t> – <t:${unix(b.end)}:t> (<t:${unix(b.start)}:R>) · CID ${b.cid}${kind}`;
+  return `**${label(b)}** · ${radio(b) ?? ''}\n└ <t:${unix(b.start)}:t> – <t:${unix(b.end)}:t> (<t:${unix(b.start)}:R>) · CID ${b.cid}${kind}`;
 }
 
 function clip(text) {
@@ -52,7 +56,7 @@ function statusEmbed(entry, opts = {}) {
   } else if (entry.status === 'planned') {
     embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n')));
   } else {
-    const last = entry.facility.controllers.map((c) => `**${c.callsign}**`).join(', ');
+    const last = entry.facility.controllers.map((c) => `**${label(c)}**`).join(', ');
     embed.setDescription(`Closed <t:${unix(entry.closedAt)}:R>\nLast on: ${last}`);
   }
   return embed;
@@ -68,7 +72,7 @@ function noneOnlineEmbed(artccIds) {
 /** Every online position with how many aircraft are tuned to it, busiest first. */
 function trafficEmbed(positions) {
   const sorted = [...positions].sort((a, b) => b.count - a.count || a.callsign.localeCompare(b.callsign));
-  const lines = sorted.map((p) => `✈️ **${p.count}** · **${p.callsign}** · ${formatFrequency(p.frequency)}`);
+  const lines = sorted.map((p) => `✈️ **${p.count}** · **${label(p)}** · ${formatFrequency(p.frequency)}`);
   return new EmbedBuilder()
     .setColor(0x3498db)
     .setTitle('✈️ Aircraft on frequency')

@@ -119,14 +119,15 @@ function helpAlertPanel() {
 /** The automated "this position may need help" post. */
 function helpAlertEmbed(p, roleId) {
   const freq = formatFrequency(p.frequency);
+  const name = p.shortName ?? p.callsign;
   return {
     content: roleId ? `<@&${roleId}>` : undefined,
     allowedMentions: { roles: roleId ? [roleId] : [] },
     embeds: [
       new EmbedBuilder()
         .setColor(0xe67e22)
-        .setTitle(`✈️ ${p.callsign} may need help`)
-        .setDescription(`**${p.count}** aircraft are tuned to **${p.callsign}**${freq ? ` (${freq})` : ''}.`),
+        .setTitle(`✈️ ${name} may need help`)
+        .setDescription(`**${p.count}** aircraft are tuned to **${name}**${freq ? ` (${freq})` : ''}.`),
     ],
   };
 }

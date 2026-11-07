@@ -5,6 +5,7 @@ const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
 const { statusEmbed, noneOnlineEmbed, trafficEmbed } = require('./embeds');
 const { fetchTransceivers, listPositions, countAircraft, evaluateHelp } = require('./traffic');
+const { fetchCmsPositions, buildNameIndex, applyNames } = require('./names');
 const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
 const { IronMic } = require('./ironmicCommand');
@@ -127,6 +128,24 @@ const BOOKINGS_TTL = 5 * 60_000;
 const INDEX_TTL = 6 * 60 * 60_000;
 const cache = { index: null, indexAt: 0, bookings: [], bookingsAt: 0 };
 
+// Short and radio names from the Indy Center CMS (IND_E_APP -> IND E, Indianapolis Approach). Refreshed daily;
+// if the CMS can't be reached the last names are kept, and with none the embeds show callsigns as before.
+const NAMES_TTL = 24 * 60 * 60_000;
+const names = { index: null, at: 0 };
+
+async function getNames() {
+  const now = Date.now();
+  if (names.index && now - names.at < NAMES_TTL) return names.index;
+  try {
+    names.index = buildNameIndex(await fetchCmsPositions());
+    names.at = now;
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] CMS position names update failed:`, err.message);
+    names.at = now - NAMES_TTL + 5 * 60_000; // try again in 5 minutes, not every poll
+  }
+  return names.index;
+}
+
 /** @returns {{ bookings: object[], facilityTree: Map|null }} */
 async function getReferenceData() {
   if (!config.artccIds.length) return { bookings: [], facilityTree: null };
@@ -230,6 +249,7 @@ async function refresh() {
     }
 
     const facilities = groupByFacility(feed, { ...config, activeSince });
+    applyNames(await getNames(), facilities, bookings);
     const entries = board.update(facilities, bookings, new Date(), facilityTree);
 
     const wanted = new Map(entries.map((e) => [e.key, statusEmbed(e, config)]));
