@@ -72,7 +72,7 @@ function noneOnlineEmbed(artccIds) {
 /** Every online position with how many aircraft are tuned to it, busiest first. */
 function trafficEmbed(positions) {
   const sorted = [...positions].sort((a, b) => b.count - a.count || a.callsign.localeCompare(b.callsign));
-  const lines = sorted.map((p) => `✈️ **${p.count}** · **${label(p)}** · ${formatFrequency(p.frequency)}`);
+  const lines = sorted.map((p) => `**${p.count}** · **${label(p)}** · ${formatFrequency(p.frequency)}`);
   return new EmbedBuilder()
     .setColor(0x3498db)
     .setTitle('✈️ Aircraft on frequency')
