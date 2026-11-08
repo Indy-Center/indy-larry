@@ -330,6 +330,21 @@ async function upsert(key, embed) {
   const message = await channel.send({ embeds: [embed] });
   posted.set(key, { message, signature });
   saveState();
+  await publishIfStaffing(key, message);
+}
+
+/**
+ * The status channel is an announcement channel. Only staffing embeds are published (followed servers get a copy);
+ * the internal '__' keys (aircraft on frequency, congestion, none online) stay local. Edits propagate on their own,
+ * so this only runs when a message is first posted. Never breaks the status board.
+ */
+async function publishIfStaffing(key, message) {
+  if (key.startsWith('__') || !message.crosspostable) return;
+  try {
+    await message.crosspost();
+  } catch (err) {
+    console.error(`Failed to publish message for ${key}:`, err.message);
+  }
 }
 
 async function remove(key) {
