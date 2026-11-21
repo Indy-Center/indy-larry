@@ -10,7 +10,9 @@ const ADMIN_ROLE = '600000000000000001';
 const env = { DISCORD_TOKEN: 'token', GUILD_ID: GUILD };
 const ABOVE_ROLE = '600000000000000002';
 // ADMIN_ROLE carries Administrator but sits below Larry's highest role (position 10); ABOVE_ROLE sits above it.
-const guard = nicknameGuard(OWNER, LARRY, [{ id: ADMIN_ROLE, position: 5 }, { id: ABOVE_ROLE, position: 20 }], 10);
+const ADMINISTRATOR = String(1n << 3n);
+const serverRoles = [{ id: ADMIN_ROLE, permissions: ADMINISTRATOR, position: 5 }, { id: ABOVE_ROLE, permissions: '0', position: 20 }];
+const guard = nicknameGuard(OWNER, LARRY, serverRoles, 10);
 const member = (discordId: string, nick: string | null = null, ...roleIds: string[]) => ({ discordId, roleIds, nick });
 
 afterEach(() => {
