@@ -1,8 +1,10 @@
 import { rolesFor } from './criteria';
 import { guildId, type GuildEnv } from './discord';
-import { MAPPING } from './mapping';
+import { lookupVatsimRating, lookupVatusa } from './lookups';
+import { checkMapping, MAPPING } from './mapping';
 import { listMembers } from './roles';
 import { sendNow, type SendEnv } from './send';
+import { fetchCredentials, type Credentials, type TrainingBinding } from './training';
 import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
 
 /**
@@ -27,13 +29,15 @@ export type RoleSyncMessage = {
 export type RoleSyncEnv = GuildEnv &
   Pick<SendEnv, 'SEND_CHANNELS' | 'LARRY_QUEUE'> & {
     KV: KVNamespace;
+    /** `training-tools`' `TrainingRpc`: certifications and endorsements. */
+    TRAINING: TrainingBinding;
     ROLE_SYNC_QUEUE: Queue<RoleSyncMessage>;
     /** `dry-run` (the default): log what would change, change nothing. */
     ROLE_SYNC_MODE?: string;
   };
 
 /** The lists a run fetched, as kept in KV for that run's jobs. */
-type RunLists = { people: VatusaPerson[] };
+type RunLists = { people: VatusaPerson[]; credentials: Credentials };
 
 const ALERT_CHANNEL = 'tech-team-alerts';
 /** Set while a skipped run's alert stands, so an outage is posted once, not every 15 minutes. */
@@ -53,9 +57,15 @@ function checkMode(env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE'>): 'dry-run' {
 /** The cron: fetch VATUSA's lists, then queue one job per Discord member. A bad fetch skips the run. */
 export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   checkMode(env);
+  checkMapping(MAPPING);
   const fetched = await fetchLists();
   if ('failed' in fetched) {
     await alertOnce(env, `Role sync skipped: couldn't fetch ${joinNames(fetched.failed)} from VATUSA.`);
+    return;
+  }
+  const credentials = await fetchCredentials(env.TRAINING);
+  if (!credentials) {
+    await alertOnce(env, "Role sync skipped: couldn't fetch the training roster.");
     return;
   }
   await env.KV.delete(OUTAGE_KEY);
@@ -64,7 +74,7 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   if (!members) throw new Error("Role sync can't list the server's members: switch on the Server Members intent");
 
   const runId = crypto.randomUUID();
-  const run: RunLists = { people: peopleFrom(fetched.lists) };
+  const run: RunLists = { people: peopleFrom(fetched.lists), credentials };
   await env.KV.put(runKey(runId), JSON.stringify(run), { expirationTtl: RUN_LISTS_TTL_SECONDS });
 
   const jobs: MessageSendRequest<RoleSyncMessage>[] = members.flatMap((member) =>
@@ -87,7 +97,7 @@ export async function consumeRoleSync(batch: MessageBatch<RoleSyncMessage>, env:
       if (!run) {
         console.warn(`Role sync: run ${job.runId}'s lists have expired; ${job.discordId} waits for the next run`);
       } else {
-        await syncDiscordMember(env, run.people, { discordId: job.discordId, roleIds: job.roleIds });
+        await syncDiscordMember(env, run, { discordId: job.discordId, roleIds: job.roleIds });
       }
       message.ack();
     } catch (error) {
@@ -104,11 +114,14 @@ export type MemberSync = { discordId: string; cid: number | null; add: string[];
  * Sync one Discord member: find their CID, work out their mapped roles, and (in dry-run) log what
  * would change. The one place a member is synced, whatever asked for it.
  */
-export async function syncDiscordMember(env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE'>, people: VatusaPerson[], member: { discordId: string; roleIds: string[] }): Promise<MemberSync> {
+export async function syncDiscordMember(
+  env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'KV'>,
+  run: RunLists,
+  member: { discordId: string; roleIds: string[]; cid?: number },
+): Promise<MemberSync> {
   checkMode(env);
-  // Their CID is the one whose VATUSA Discord ID is theirs. Two CIDs claiming it is no answer.
-  const matches = people.filter((person) => person.discordId === member.discordId);
-  const person = matches.length === 1 ? matches[0]! : null;
+  const { person: found, ambiguous } = await resolvePerson(env, run, member);
+  const person = found && { ...found, credentials: run.credentials[String(found.cid)] ?? [] };
 
   const result: MemberSync = { discordId: member.discordId, cid: person?.cid ?? null, add: [], remove: [] };
   if (person) {
@@ -121,10 +134,36 @@ export async function syncDiscordMember(env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE'>
     }
   }
 
-  const who = person ? `CID ${person.cid}` : matches.length > 1 ? `unresolved (${matches.length} CIDs give this Discord ID)` : 'unresolved';
+  const who = person ? `CID ${person.cid}` : ambiguous ? `unresolved (${ambiguous} CIDs give this Discord ID)` : 'unresolved';
   const changes = person ? `add ${result.add.join(', ') || 'nothing'}; remove ${result.remove.join(', ') || 'nothing'}` : 'no changes';
   console.log(`Role sync (dry run): ${member.discordId} ${who}: ${changes}`);
   return result;
+}
+
+/**
+ * Who a Discord member is, from the cheapest source up. A CID given (from their identity link) is
+ * looked for on the lists; otherwise their CID is the one whose VATUSA Discord ID is theirs, and two CIDs
+ * claiming it is no answer. Off the lists, VATUSA's per-user lookup; for a CID VATUSA doesn't know, only
+ * their rating from VATSIM. Null when nothing identifies them.
+ */
+async function resolvePerson(
+  env: Pick<RoleSyncEnv, 'KV'>,
+  run: RunLists,
+  member: { discordId: string; cid?: number },
+): Promise<{ person: VatusaPerson | null; ambiguous?: number }> {
+  const matches = run.people.filter((person) => (member.cid !== undefined ? person.cid === member.cid : person.discordId === member.discordId));
+  if (matches.length > 1) return { person: null, ambiguous: matches.length };
+  if (matches[0]) return { person: matches[0] };
+
+  const looked = await lookupVatusa(env.KV, member.cid !== undefined ? { cid: member.cid } : { discordId: member.discordId });
+  if (looked) return { person: looked };
+  if (member.cid === undefined) return { person: null };
+
+  const vatsim = await lookupVatsimRating(env.KV, member.cid);
+  if (!vatsim) return { person: null };
+  return {
+    person: { cid: member.cid, discordId: member.discordId, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], credentials: [] },
+  };
 }
 
 /** Post to the tech team once per outage. If the post fails, the next skipped run tries again. */

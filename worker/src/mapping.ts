@@ -27,7 +27,9 @@ export type Condition =
   /** Holds a division staff role: one starting US with a digit in it (US2, not USWT). */
   | { type: 'division_staff' }
   /** Anyone rated 1 or above. */
-  | { type: 'all' };
+  | { type: 'all' }
+  /** Holds that training certification or endorsement code (T-RC), from the training app. Discord only. */
+  | { type: 'certification'; value: string };
 
 export type Criterion = { conditions: Condition[] };
 
@@ -39,6 +41,16 @@ export type MappingEntry = {
   teamspeakGroupId?: number;
   criteria: Criterion[];
 };
+
+/** Refuses a mapping a run can't honour: certifications only reach Discord, so a TeamSpeak group can't use one. */
+export function checkMapping(mapping: MappingEntry[]): void {
+  for (const entry of mapping) {
+    const usesCertification = entry.criteria.some((criterion) => criterion.conditions.some((condition) => condition.type === 'certification'));
+    if (usesCertification && entry.teamspeakGroupId !== undefined) {
+      throw new Error(`Mapping entry ${entry.name}: certifications can't give TeamSpeak groups`);
+    }
+  }
+}
 
 const rating = (value: string): Criterion[] => [{ conditions: [{ type: 'rating', value }] }];
 const facilityRoles = (...values: `${string}:${string}`[]): Criterion[] => values.map((value) => ({ conditions: [{ type: 'facility_role', value }] }));

@@ -23,6 +23,8 @@
     "crons": ["*/15 * * * *"]
   },
   // indy-larry-worker: each role sync run's lists, and whether an outage has been alerted.
+  // The training app's RPC, read once per run for certifications and endorsements.
+  "services": [{ "binding": "TRAINING", "service": "training-tools", "entrypoint": "TrainingRpc" }],
   "kv_namespaces": [{ "binding": "KV", "id": "8d0096c00d624d73aa8da3bc06f149de" }],
   "queues": {
     "producers": [

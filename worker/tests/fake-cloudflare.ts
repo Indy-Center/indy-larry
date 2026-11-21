@@ -1,17 +1,20 @@
 /** Hand-written stand-ins for the Worker's KV namespace and queue producers. */
 
-export type FakeKv = KVNamespace & { store: Map<string, string> };
+export type FakeKv = KVNamespace & { store: Map<string, string>; ttls: Map<string, number | undefined> };
 
 export function fakeKv(): FakeKv {
   const store = new Map<string, string>();
+  const ttls = new Map<string, number | undefined>();
   return {
     store,
+    ttls,
     async get(key: string, type?: unknown) {
       const value = store.get(key) ?? null;
       return value !== null && (type === 'json' || (type as { type?: string })?.type === 'json') ? JSON.parse(value) : value;
     },
-    async put(key: string, value: string) {
+    async put(key: string, value: string, options?: { expirationTtl?: number }) {
       store.set(key, value);
+      ttls.set(key, options?.expirationTtl);
     },
     async delete(key: string) {
       store.delete(key);
