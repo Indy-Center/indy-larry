@@ -33,7 +33,6 @@ jobs:
       # Roles and channels (README, Roles and channels). Left unset, those methods refuse every call.
       GUILD_ID: ${{ vars.ENV_GUILD_ID }}
       CHANNEL_CATEGORIES: ${{ vars.ENV_CHANNEL_CATEGORIES }}
-      PRIVILEGED_ROLES: ${{ vars.ENV_PRIVILEGED_ROLES }}
       # The role sync's client at identity (README, Role sync): the ID is a var, the secret a Worker secret.
       IDENTITY_CLIENT_ID: ${{ vars.ENV_IDENTITY_CLIENT_ID }}
     steps:
@@ -58,7 +57,6 @@ jobs:
           --var "SEND_CHANNELS:$SEND_CHANNELS"
           --var "GUILD_ID:$GUILD_ID"
           --var "CHANNEL_CATEGORIES:$CHANNEL_CATEGORIES"
-          --var "PRIVILEGED_ROLES:$PRIVILEGED_ROLES"
           --var "IDENTITY_CLIENT_ID:$IDENTITY_CLIENT_ID"
 
       # Same token as the VPS bot, so messages come from Larry. Re-set on every deploy to stay in step with it.

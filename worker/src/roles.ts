@@ -39,28 +39,11 @@ const POWERFUL =
 type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean };
 export type DiscordMember = { user?: { id: string }; roles: string[] };
 
-/**
- * PRIVILEGED_ROLES, "111, 222": role IDs callers may sync although they carry moderation permissions
- * (staff, supervisor, admin). Throws on anything that isn't a Discord ID, so a typo fails loudly.
- */
-export function parsePrivileged(value: string | undefined): Set<string> {
-  const ids = new Set<string>();
-  for (const id of (value ?? '').split(',').map((s) => s.trim()).filter(Boolean)) {
-    if (!SNOWFLAKE.test(id)) throw new Error(`PRIVILEGED_ROLES entry "${id}" isn't a Discord role ID`);
-    ids.add(id);
-  }
-  return ids;
-}
-
-/**
- * Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike.
- * `privileged` lets named roles past the moderation-permissions check only; @everyone and bot roles
- * are always refused. Deleting passes none: no role with moderation permissions is ever deleted.
- */
-function refusal(role: DiscordRole, guild: string, privileged: Set<string> = new Set()): string | null {
+/** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
+function refusal(role: DiscordRole, guild: string): string | null {
   if (role.id === guild) return `"${role.name}" is @everyone`;
   if (role.managed) return `"${role.name}" belongs to a bot or an integration`;
-  if (BigInt(role.permissions ?? '0') & POWERFUL && !privileged.has(role.id)) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels, unless its ID is in PRIVILEGED_ROLES`;
+  if (BigInt(role.permissions ?? '0') & POWERFUL) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels`;
   return null;
 }
 
@@ -136,7 +119,6 @@ export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<Role
   const wantedRoles = checkRoles(request);
   const dryRun = request.dryRun === true;
   const token = env.DISCORD_TOKEN;
-  const privileged = parsePrivileged(env.PRIVILEGED_ROLES);
 
   const [roles, members, me] = await Promise.all([
     discord<DiscordRole[]>(token, 'GET', `/guilds/${guild}/roles`),
@@ -159,7 +141,7 @@ export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<Role
       if (!role && named.length > 1) throw new Error(`${named.length} roles are named "${name}"; give the role's ID`);
 
       if (role) {
-        const refused = refusal(role, guild, privileged);
+        const refused = refusal(role, guild);
         if (refused) throw new Error(refused);
         result.roleId = role.id;
         // Only a role the caller knows by ID can have drifted: one found by name already has it.
@@ -266,7 +248,7 @@ export async function prepareMemberRole(env: GuildEnv, request: MemberRole): Pro
   const roles = await discord<DiscordRole[]>(env.DISCORD_TOKEN, 'GET', `/guilds/${guild}/roles`);
   const role = roles.find((candidate) => candidate.id === request.roleId);
   if (!role) throw new Error(`There is no role ${request.roleId} on the server`);
-  const refused = refusal(role, guild, parsePrivileged(env.PRIVILEGED_ROLES));
+  const refused = refusal(role, guild);
   if (refused) throw new Error(refused);
 
   return { memberRole: { guildId: guild, userId: request.userId, roleId: request.roleId, has: request.has } };

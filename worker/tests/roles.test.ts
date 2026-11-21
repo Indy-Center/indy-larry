@@ -181,45 +181,6 @@ describe('syncRoles', () => {
   });
 });
 
-describe('PRIVILEGED_ROLES', () => {
-  const ADMIN_ROLE = '600000000000000010';
-  const admin = { id: ADMIN_ROLE, name: 'Admin', permissions: String(1n << 3n) };
-  const entry = { key: 'Admin', name: 'Admin', members: [TEACHER], exclusive: false };
-
-  it('lets a listed role with moderation permissions be synced, and nothing else', async () => {
-    const other = { id: '600000000000000011', name: 'Mods', permissions: String(1n << 28n) };
-    const writes = fakeDiscord({ roles: [admin, other], members: [member(TEACHER)] });
-    const result = await syncRoles({ ...env, PRIVILEGED_ROLES: ADMIN_ROLE }, { roles: [entry, { ...entry, key: 'Mods', name: 'Mods' }] });
-
-    expect(result.roles[0]).toMatchObject({ roleId: ADMIN_ROLE, added: [TEACHER] });
-    expect(result.roles[0]!.error).toBeUndefined();
-    expect(result.roles[1]!.error).toMatch('PRIVILEGED_ROLES');
-    expect(writes.map((w) => `${w.method} ${w.path}`)).toEqual([`PUT /guilds/${GUILD}/members/${TEACHER}/roles/${ADMIN_ROLE}`]);
-  });
-
-  it('still refuses @everyone and bot roles, even if listed', async () => {
-    fakeDiscord({ roles: [{ id: '600000000000000012', name: 'SomeBot', permissions: '0', managed: true }], members: [member(TEACHER)] });
-    const result = await syncRoles({ ...env, PRIVILEGED_ROLES: '600000000000000012' }, { roles: [{ ...entry, name: 'SomeBot' }] });
-    expect(result.roles[0]!.error).toMatch('bot or an integration');
-  });
-
-  it('applies to a single role change, but never to deleting', async () => {
-    const writes = fakeDiscord({ roles: [admin] });
-    const listed = { ...env, PRIVILEGED_ROLES: ADMIN_ROLE };
-    await expect(prepareMemberRole(env, { userId: STUDENT, roleId: ADMIN_ROLE, has: true })).rejects.toThrow('moderation permissions');
-    await expect(prepareMemberRole(listed, { userId: STUDENT, roleId: ADMIN_ROLE, has: true })).resolves.toBeDefined();
-
-    const result = await deleteRoles(listed, { ids: [ADMIN_ROLE] });
-    expect(result.deleted[0]!.error).toMatch('moderation permissions');
-    expect(writes).toEqual([]);
-  });
-
-  it('fails loudly on an entry that is not a role ID', async () => {
-    fakeDiscord({});
-    await expect(syncRoles({ ...env, PRIVILEGED_ROLES: 'Admin' }, { roles: [] })).rejects.toThrow("isn't a Discord role ID");
-  });
-});
-
 describe('deleteRoles', () => {
   it('deletes a role, and counts one that is already gone as done', async () => {
     const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'JR', permissions: '0' }] });
