@@ -185,6 +185,18 @@ First time only, before the first deploy that includes the Worker:
 
 To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev.vars` with a test token and test channels, and run `npx wrangler dev`. A caller Worker run alongside it (`npx wrangler dev -c ../caller/wrangler.jsonc -c wrangler.jsonc`) can then use its `LARRY` binding.
 
+## Role sync
+
+The Worker is replacing VATUSA's Discord bot: it works out each member's Discord roles from VATUSA's lists, through one mapping file, `worker/src/mapping.ts`. For now it only runs in **dry run**: it logs what it would add and remove, and changes nothing in Discord.
+
+- **The cron**, every 15 minutes (`triggers` in `wrangler.jsonc`), fetches VATUSA's public lists (no key): `roster/both` for ZID, ZME, ZDC, ZAU, ZOB, ZTL and ZKC, `integration/staff`, and `user/roles/ZHQ/ACE`. It keeps them in the `KV` namespace (`indy-larry-worker`) for that run and queues one job per member of the server on `role-sync`.
+- **The consumer** finds each member's CID (the one whose VATUSA Discord ID is theirs) and logs one line: `Role sync (dry run): <Discord ID> CID <cid>: add <roles>; remove <roles>`, by mapping name. A member not on the lists is logged as `unresolved` and gets no changes. A job that throws is retried, then parked in `role-sync-dlq`.
+- **The mapping** is in VATUSA's criteria and conditions shape, seeded from VATUSA's `config/zid.yaml` with the same names and Discord role IDs. An entry matches when any of its criteria does, and a criterion when all of its conditions do. The conditions are `rating`, `home`, `home_or_visit` (on that facility's roster), `facility_role` (`FAC:ROLE`), `role` (at any facility), `division_staff` (a role starting `US` with a digit, so not `USWT`) and `all`. Nobody rated below 1 matches anything. Only roles the mapping names are ever added or removed; a hand-given role is left alone. Change it by pull request: a wrong entry hands its role to everyone it matches.
+- **Safety**: if any list can't be fetched, or a roster or the staff list comes back empty, the run queues nothing and larry posts "Role sync skipped: couldn't fetch … from VATUSA." to `tech-team-alerts` (a `SEND_CHANNELS` name, so that channel must be listed there). It posts once per outage; the next good run clears it.
+- **Mode**: the `ROLE_SYNC_MODE` var in `wrangler.jsonc`, `dry-run`, the only mode so far. Any other value makes the cron and the consumer refuse to run.
+
+It needs the Server Members intent to list the server; without it the cron fails and queues nothing. To run the cron locally: `npx wrangler dev --test-scheduled`, then open `http://localhost:8787/__scheduled`.
+
 ## Project layout
 
 - `src/bot.js`: logs in, polls every `POLL_SECONDS`, and posts, edits and deletes embeds.
@@ -199,7 +211,7 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
-- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint and queue consumer, `src/send.ts` checks and sends messages, `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
+- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint, cron and queue consumer, `src/send.ts` checks and sends messages, `src/role-sync.ts` is the role sync (with `src/mapping.ts`, `src/criteria.ts` and `src/vatusa.ts`), `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
