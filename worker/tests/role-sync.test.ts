@@ -197,6 +197,22 @@ describe('a join (sync-member)', () => {
   });
 });
 
+describe('a message of an unknown type', () => {
+  it('is retried, not acked, so the queue parks it in role-sync-dlq, and syncs no one', async () => {
+    const { vatusaCalls, writes } = fakeVatusaAndDiscord(goodLists(), server());
+    const { batch, messages } = batchOf('role-sync', [{ type: 'sync-everyone', discordId: STUDENT }]);
+    logs = [];
+    await larry.queue(batch as never);
+
+    expect(messages[0]!.retried).toBe(true);
+    expect(messages[0]!.acked).toBe(false);
+    expect(logs.filter((line) => line.startsWith('Role sync'))).toEqual([]);
+    expect(vatusaCalls).toEqual([]);
+    expect(writes).toEqual([]);
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('Unknown role-sync job type "sync-everyone"'));
+  });
+});
+
 describe('members the lists do not cover', () => {
   const PILOT = '700000000000000001';
   const GHOST = '700000000000000002';
