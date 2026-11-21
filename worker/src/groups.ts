@@ -212,7 +212,11 @@ async function syncSource(env: GroupsEnv, config: GroupSourceConfig, mode: Group
   for (const group of read.groups) {
     const stored = records.get(group.key);
     if (group.hold) {
-      // Kept exactly as it is, and not made if there's nothing yet.
+      // Kept exactly as it is, and not made if there's nothing yet. Served again, so any grace period ends.
+      if (stored?.missingSince) {
+        await saveRecord(env, config.source, group.key, stored, { ...stored, missingSince: null });
+        await clearAlert(env, groupAlertKey(config.source, 'missing', group.key));
+      }
       lines.push({ key: group.key, name: group.name, role: 'held', ...(group.room ? { room: 'held' as const } : {}) });
       continue;
     }

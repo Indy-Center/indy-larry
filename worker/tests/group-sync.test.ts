@@ -353,6 +353,25 @@ describe('a group no longer served', () => {
     expect(record_('JR')).toEqual({ roleId: ROLE, channelId: ROOM, missingSince: null });
     expect((await larry.getGroupStatus('training')).groups).toEqual([{ key: 'JR', name: 'Teacher JR', role: 'found', room: 'found' }]);
   });
+
+  it('starts a fresh grace period when served again as hold, then dropped again', async () => {
+    await goneAfterARun();
+    await cron();
+    vi.setSystemTime(new Date(Date.now() + 47 * HOUR));
+    env.TRAINING.answer = { groups: [group('JR', 'Teacher JR', [1000001], { hold: true, room: { name: 'Jo Rivera', fallbackName: 'Jo 1000001' } })] };
+    await cron();
+    expect(record_('JR')).toEqual({ roleId: ROLE, channelId: ROOM, missingSince: null });
+
+    vi.setSystemTime(new Date(Date.now() + 2 * HOUR));
+    env.TRAINING.answer = { groups: [] };
+    await cron();
+    vi.setSystemTime(new Date(Date.now() + 47 * HOUR));
+    await cron();
+
+    expect(deletions()).toEqual([]);
+    expect(record_('JR').missingSince).toBe('2026-11-23T13:00:00.000Z');
+    expect(alerts().filter((alert) => alert.includes('no longer serves group "JR"'))).toHaveLength(2);
+  });
 });
 
 describe('a refused answer', () => {
