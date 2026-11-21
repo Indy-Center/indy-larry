@@ -62,6 +62,12 @@ jobs:
           DISCORD_TOKEN: ${{ secrets.ENV_DISCORD_TOKEN }}
         run: printf '%s' "$DISCORD_TOKEN" | npx wrangler secret put DISCORD_TOKEN
 
+      # The secret larry's bot sends to POST /bot/events (README, Role sync); the bot gets the same one in its .env.
+      - name: Set BOT_EVENTS_SECRET
+        env:
+          BOT_EVENTS_SECRET: ${{ secrets.ENV_BOT_EVENTS_SECRET }}
+        run: printf '%s' "$BOT_EVENTS_SECRET" | npx wrangler secret put BOT_EVENTS_SECRET
+
   # Publishes the callers' types (worker/src/client) to npm when worker/package.json names a version
   # npm doesn't have yet. Merging without a version bump publishes nothing.
   #
@@ -208,6 +214,8 @@ jobs:
           ENV_CONGESTION_THRESHOLD_TRACON: ${{ secrets.ENV_CONGESTION_THRESHOLD_TRACON || vars.ENV_CONGESTION_THRESHOLD_TRACON }}
           ENV_CONGESTION_COOLDOWN_MIN: ${{ secrets.ENV_CONGESTION_COOLDOWN_MIN || vars.ENV_CONGESTION_COOLDOWN_MIN }}
           ENV_CONGESTION_HYSTERESIS: ${{ secrets.ENV_CONGESTION_HYSTERESIS || vars.ENV_CONGESTION_HYSTERESIS }}
+          ENV_WORKER_URL: ${{ secrets.ENV_WORKER_URL || vars.ENV_WORKER_URL }}
+          ENV_BOT_EVENTS_SECRET: ${{ secrets.ENV_BOT_EVENTS_SECRET }}
           ENV_SEND_CHANNELS: ${{ secrets.ENV_SEND_CHANNELS || vars.ENV_SEND_CHANNELS }}
         run: |
           # Values are single-quoted so Compose takes them literally, $ and # included. So a value can't

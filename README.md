@@ -197,11 +197,12 @@ The Worker is replacing VATUSA's Discord bot: it works out each member's Discord
 - **Safety**: if any list can't be fetched, or a roster or the staff list comes back empty, the run queues nothing and larry posts "Role sync skipped: couldn't fetch … from VATUSA." to `tech-team-alerts` (a `SEND_CHANNELS` name, so that channel must be listed there). It posts once per outage; the next good run clears it.
 - **Mode**: the `ROLE_SYNC_MODE` var in `wrangler.jsonc`, `dry-run`, the only mode so far. Any other value makes the cron and the consumer refuse to run.
 
-It needs the Server Members intent to list the server; without it the cron fails and queues nothing. To run the cron locally: `npx wrangler dev --test-scheduled`, then open `http://localhost:8787/__scheduled`.
+It needs the Server Members intent to list the server; without it the cron fails and queues nothing. The bot asks for the same intent (Guild Members) when `WORKER_URL` and `BOT_EVENTS_SECRET` are set, to hear joins; with either blank the join sync is off. To run the cron locally: `npx wrangler dev --test-scheduled`, then open `http://localhost:8787/__scheduled`.
 
 ## Project layout
 
 - `src/bot.js`: logs in, polls every `POLL_SECONDS`, and posts, edits and deletes embeds.
+- `src/botEvents.js`: tells larry's Worker when someone joins the server (the join sync).
 - `src/ironmic.js`: Iron Mic positions, vNAS Stats totals and the leaderboard embed. `src/ironmicCommand.js`: the `/ironmic` command.
 - `src/feed.js`: fetches the [vNAS controller feed](https://docs.virtualnas.net/data-admin/controller-feed/), the vNAS ARTCC data (facility and position list) and [VATSIM ATC bookings](https://atc-bookings.vatsim.net/), groups controllers by facility and tracks activation times.
 - `src/status.js`: decides each facility's status and parses "Online until" from controller info.
@@ -274,6 +275,8 @@ Secrets:
 | `ENV_IRON_MIC_CHANNEL_ID` | Variable | Optional; posts the Iron Mic leaderboard outside `CHANNEL_ID`, e.g. while testing |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 | `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; the Worker deploy reads it (the VPS bot ignores its `.env` copy) |
+| `ENV_WORKER_URL` | Variable | `https://indy-larry.indy-center.workers.dev`, where the bot sends joins ([Role sync](#role-sync)) |
+| `ENV_BOT_EVENTS_SECRET` | Secret | The join sync's shared secret (`openssl rand -base64 32`); the deploy writes it into the bot's `.env` and sets it on the Worker as `BOT_EVENTS_SECRET`. Changing it changes both on the next deploy |
 | `CLOUDFLARE_WORKERS_API_KEY` | Secret | Cloudflare API token for the Worker deploy (Workers Scripts:Edit, Queues:Edit) |
 
 To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.
