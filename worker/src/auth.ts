@@ -1,6 +1,8 @@
 /**
- * The bots' shared secrets (decision 0004). Each bot on the VPS sends its own secret as
- * `Authorization: Bearer <secret>`; each route checks it against that bot's secret only.
+ * The bots' shared secrets. The bots on the VPS reach the Worker over HTTPS, each with its own
+ * secret, rather than holding a Cloudflare token: Cloudflare can't limit a token to one queue, and a
+ * bot's secret can only do that bot's job. Each sends its secret as `Authorization: Bearer <secret>`;
+ * each route checks it against that bot's secret only.
  */
 
 /**

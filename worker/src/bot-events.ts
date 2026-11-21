@@ -4,7 +4,7 @@ import type { RoleSyncEnv, RoleSyncMessage } from './role-sync';
 
 /**
  * The Worker's HTTP side, on its workers.dev address (wrangler.jsonc). Its only caller so far is
- * larry's bot on the VPS, which sends Discord gateway events to `POST /bot/events` (decision 0004).
+ * larry's bot on the VPS, which sends Discord gateway events to `POST /bot/events`, with its own secret (auth.ts).
  * A new gateway event becomes a new type there, not a new route.
  */
 
