@@ -88,6 +88,11 @@ export type RoleSync = {
    * Larry never renames a role.
    */
   rename?: boolean;
+  /**
+   * The colour of a role Larry **creates**, as hex (`'#e67e22'` or `'e67e22'`). Not applied to a role
+   * that already exists, so a colour chosen in Discord is never overwritten. Leave it out for no colour.
+   */
+  color?: string;
   /** Discord user IDs who should hold the role. Someone not in the server is reported and can be tried again later. */
   members: string[];
   /**
@@ -272,7 +277,36 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   sendToChannel(request: ChannelIdSend): Promise<Sent>;
   /** Queue a post to a channel by ID, like enqueue(). The channel is checked before it is queued. */
   enqueueToChannel(request: ChannelIdSend): Promise<void>;
+  /**
+   * Link a member's own Discord account, which the caller has already proven they hold, and queue
+   * their role sync. Throws "That Discord account is linked to another member." when someone else has
+   * it, and "Sign in to flyindycenter.com once before linking." when identity has no user for the CID.
+   */
+  linkDiscord(cid: number, discordId: string): Promise<void>;
+  /**
+   * Clear a member's link and queue their role sync, which falls back to the Discord ID VATUSA holds.
+   * `'teamspeak'` throws "TeamSpeak links aren't available yet." for now.
+   */
+  unlink(cid: number, service: 'discord' | 'teamspeak'): Promise<void>;
+  /** Which Discord account the role sync uses for a member, and whether it is their link or VATUSA's. */
+  getLinks(cid: number): Promise<Links>;
+  /**
+   * Queue one member's role sync now, instead of waiting for the next run. Declines, with a reason to
+   * show, when nothing is known to sync or the member was synced in the last 2 minutes.
+   */
+  syncMember(cid: number): Promise<SyncMemberResult>;
 }
+
+/** What `getLinks` reports for a member. */
+export type Links = {
+  /** The account the sync uses: `linked` when they linked it, `vatusa` when it is the one VATUSA holds. */
+  discord: { id: string; source: 'linked' | 'vatusa' } | null;
+  /** Always null until TeamSpeak links arrive. */
+  teamspeak: { uid: string } | null;
+};
+
+/** What `syncMember` answers. */
+export type SyncMemberResult = { queued: true } | { queued: false; reason: string };
 
 /** The binding's type in a caller's `Env`: `LARRY: LarryBinding`. */
 export type LarryBinding = Service<LarryRpc>;

@@ -20,7 +20,13 @@ export type VatusaPerson = {
   rosters: RosterFacility[];
   /** Every role entry they hold, at any facility. */
   roles: { facility: string; role: string }[];
+  /** The training app's certification and endorsement codes they hold. Filled in when they are synced. */
+  credentials: string[];
+  /** Their name as VATUSA has it, and whether they asked VATUSA to hide their last name. Null when VATUSA doesn't know them. */
+  name: VatusaName | null;
 };
+
+export type VatusaName = { first: string; last: string; privacy: boolean };
 
 /** One entry of roster/both or integration/staff, as far as the sync reads it. */
 export type VatusaRecord = {
@@ -51,15 +57,7 @@ export function peopleFrom(lists: VatusaLists): VatusaPerson[] {
   const add = (entry: VatusaRecord, roster?: RosterFacility) => {
     let person = people.get(entry.cid);
     if (!person) {
-      person = {
-        cid: entry.cid,
-        discordId: null,
-        rating: Number(entry.rating),
-        ratingShort: entry.rating_short,
-        facility: entry.facility,
-        rosters: [],
-        roles: [],
-      };
+      person = newPerson(entry);
       people.set(entry.cid, person);
     }
     person.discordId ??= discordId(entry.discord_id);
@@ -75,6 +73,40 @@ export function peopleFrom(lists: VatusaLists): VatusaPerson[] {
     if (person) addRole(person, 'ZHQ', 'ACE');
   }
   return [...people.values()];
+}
+
+function newPerson(entry: VatusaRecord): VatusaPerson {
+  return {
+    cid: entry.cid,
+    discordId: null,
+    rating: Number(entry.rating),
+    ratingShort: entry.rating_short,
+    facility: entry.facility,
+    rosters: [],
+    roles: [],
+    credentials: [],
+    name: { first: entry.fname, last: entry.lname, privacy: entry.flag_nameprivacy === true },
+  };
+}
+
+/** A user record from `/v2/user/{id}`: a roster entry, plus the facilities they visit. */
+export type VatusaUserRecord = VatusaRecord & { visiting_facilities?: { facility: string }[] | null };
+
+/**
+ * One person from a per-user lookup, evaluated like a list member: on the roster of their home facility
+ * and of each facility they visit (as far as those are fetched lists), with their roles at every facility.
+ */
+export function personFromUser(record: VatusaUserRecord): VatusaPerson {
+  const person = newPerson(record);
+  person.discordId = discordId(record.discord_id);
+  const onRoster = (facility: string) => {
+    const roster = ROSTER_FACILITIES.find((id) => id === facility);
+    if (roster && !person.rosters.includes(roster)) person.rosters.push(roster);
+  };
+  onRoster(record.facility);
+  for (const visiting of record.visiting_facilities ?? []) onRoster(visiting.facility);
+  for (const { facility, role } of record.roles ?? []) addRole(person, facility, role);
+  return person;
 }
 
 function addRole(person: VatusaPerson, facility: string, role: string) {

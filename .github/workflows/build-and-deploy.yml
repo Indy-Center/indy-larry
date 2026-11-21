@@ -33,6 +33,8 @@ jobs:
       # Roles and channels (README, Roles and channels). Left unset, those methods refuse every call.
       GUILD_ID: ${{ vars.ENV_GUILD_ID }}
       CHANNEL_CATEGORIES: ${{ vars.ENV_CHANNEL_CATEGORIES }}
+      # The role sync's client at identity (README, Role sync): the ID is a var, the secret a Worker secret.
+      IDENTITY_CLIENT_ID: ${{ vars.ENV_IDENTITY_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +57,7 @@ jobs:
           --var "SEND_CHANNELS:$SEND_CHANNELS"
           --var "GUILD_ID:$GUILD_ID"
           --var "CHANNEL_CATEGORIES:$CHANNEL_CATEGORIES"
+          --var "IDENTITY_CLIENT_ID:$IDENTITY_CLIENT_ID"
 
       # Same token as the VPS bot, so messages come from Larry. Re-set on every deploy to stay in step with it.
       - name: Set DISCORD_TOKEN
@@ -67,6 +70,11 @@ jobs:
         env:
           BOT_EVENTS_SECRET: ${{ secrets.ENV_BOT_EVENTS_SECRET }}
         run: printf '%s' "$BOT_EVENTS_SECRET" | npx wrangler secret put BOT_EVENTS_SECRET
+
+      - name: Set IDENTITY_CLIENT_SECRET
+        env:
+          IDENTITY_CLIENT_SECRET: ${{ secrets.ENV_IDENTITY_CLIENT_SECRET }}
+        run: printf '%s' "$IDENTITY_CLIENT_SECRET" | npx wrangler secret put IDENTITY_CLIENT_SECRET
 
   # Publishes the callers' types (worker/src/client) to npm when worker/package.json names a version
   # npm doesn't have yet. Merging without a version bump publishes nothing.

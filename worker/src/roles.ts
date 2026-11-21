@@ -36,15 +36,34 @@ const POWERFUL =
   (1n << 34n) | // Manage Threads
   (1n << 40n); // Timeout Members
 
-type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean };
-export type DiscordMember = { user?: { id: string }; roles: string[] };
+export type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean; position?: number };
+export type DiscordMember = { user?: { id: string }; roles: string[]; nick?: string | null };
 
 /** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
 function refusal(role: DiscordRole, guild: string): string | null {
-  if (role.id === guild) return `"${role.name}" is @everyone`;
-  if (role.managed) return `"${role.name}" belongs to a bot or an integration`;
+  const refused = syncRefusal(role, guild);
+  if (refused) return refused;
   if (BigInt(role.permissions ?? '0') & POWERFUL) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels`;
   return null;
+}
+
+/**
+ * Why the role sync won't touch a role, or null when it may: only @everyone and a bot's or an
+ * integration's role. The sync's mapping may name roles with moderation permissions; what keeps a role
+ * out of its reach is sitting above Larry's highest role, which Discord enforces (role-sync.ts checks it
+ * once per run). Every other caller keeps refusal()'s narrower rule.
+ */
+export function syncRefusal(role: DiscordRole, guild: string): string | null {
+  if (role.id === guild) return `"${role.name}" is @everyone`;
+  if (role.managed) return `"${role.name}" belongs to a bot or an integration`;
+  return null;
+}
+
+/** A hex colour such as `#e67e22` or `e67e22` as the number Discord wants. Throws on anything else. */
+function parseColor(key: string, color: string): number {
+  const hex = typeof color === 'string' ? /^#?([0-9a-f]{6})$/i.exec(color.trim())?.[1] : undefined;
+  if (!hex) throw new Error(`Role "${key}": colour "${color}" should be hex like #e67e22`);
+  return parseInt(hex, 16);
 }
 
 /** Check a request before anything is asked of Discord. Throws on the first thing wrong. */
@@ -65,6 +84,7 @@ export function checkRoles(request: RolesSync): RoleSync[] {
     if (names.has(name)) throw new Error(`Two entries ask for the role "${name}"`);
     names.add(name);
 
+    if (role.color != null) parseColor(role.key, role.color);
     if (role.id != null && !SNOWFLAKE.test(role.id)) throw new Error(`Role "${role.key}": "${role.id}" isn't a Discord ID`);
     if (typeof role.exclusive !== 'boolean') throw new Error(`Role "${role.key}" must say whether it is exclusive`);
     if (!Array.isArray(role.members)) throw new Error(`Role "${role.key}" needs a members list`);
@@ -96,7 +116,7 @@ export async function listMembers(token: string, guild: string): Promise<Discord
 }
 
 /** One member of the server, or null when they aren't in it. */
-export async function fetchMember(token: string, guild: string, userId: string): Promise<DiscordMember | null> {
+export async function getMember(token: string, guild: string, userId: string): Promise<DiscordMember | null> {
   try {
     return await discord<DiscordMember>(token, 'GET', `/guilds/${guild}/members/${userId}`);
   } catch (error) {
@@ -145,7 +165,7 @@ export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<Role
       } else if (dryRun) {
         result.role = 'would-create';
       } else {
-        const created = await discord<DiscordRole>(token, 'POST', `/guilds/${guild}/roles`, { name, permissions: '0' }, 'Role sync');
+        const created = await discord<DiscordRole>(token, 'POST', `/guilds/${guild}/roles`, { name, permissions: '0', ...(wanted.color != null ? { color: parseColor(wanted.key, wanted.color) } : {}) }, 'Role sync');
         roles.push(created);
         result.roleId = created.id;
         result.role = 'created';

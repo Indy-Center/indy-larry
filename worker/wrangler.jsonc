@@ -18,7 +18,8 @@
   // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables.
   // For wrangler dev, put them all in .dev.vars (see .dev.vars.example).
   "vars": {
-    // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing.
+    // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing;
+    // live changes members' mapped roles and nicknames.
     "ROLE_SYNC_MODE": "dry-run"
   },
   // The role sync: fetch VATUSA's lists and queue one job per Discord member on role-sync.
@@ -26,6 +27,13 @@
     "crons": ["*/15 * * * *"]
   },
   // indy-larry-worker: each role sync run's lists, and whether an outage has been alerted.
+  // The training app's RPC, read once per run for certifications and endorsements.
+  // identity (the Worker named `id`), reached through its fetch handler: Discord links are read per member and written by
+  // linkDiscord() and unlink(). IDENTITY_CLIENT_ID and IDENTITY_CLIENT_SECRET are set by the deploy (README, Role sync).
+  "services": [
+    { "binding": "TRAINING", "service": "training-tools", "entrypoint": "TrainingRpc" },
+    { "binding": "IDENTITY", "service": "id" }
+  ],
   "kv_namespaces": [{ "binding": "KV", "id": "8d0096c00d624d73aa8da3bc06f149de" }],
   "queues": {
     "producers": [

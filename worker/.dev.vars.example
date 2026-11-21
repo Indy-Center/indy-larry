@@ -9,3 +9,6 @@ GUILD_ID=
 CHANNEL_CATEGORIES=
 # The secret larry's bot sends to POST /bot/events (BOT_EVENTS_SECRET in the bot's .env); any made-up value locally
 BOT_EVENTS_SECRET=
+# The role sync's client at identity, registered with the users:read and users:write scopes
+IDENTITY_CLIENT_ID=
+IDENTITY_CLIENT_SECRET=

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
-import type { RoleSyncMessage } from '../src/role-sync';
+import { syncDiscordMember, type RoleSyncMessage } from '../src/role-sync';
 import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
+import { identityEnv } from './fake-identity';
+import { fakeTraining, trainee } from './fake-training';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
 
@@ -31,6 +33,8 @@ function makeEnv() {
     SEND_CHANNELS: `tech-team-alerts:${ALERTS},events:111`,
     ROLE_SYNC_MODE: 'dry-run',
     KV: fakeKv(),
+    TRAINING: fakeTraining({ members: [trainee(1000001)] }),
+    ...identityEnv(),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
   };
@@ -109,8 +113,8 @@ describe('a good run', () => {
     const { lines, messages } = await cronAndConsume();
 
     expect(lines).toEqual([
-      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer`,
-      `Role sync (dry run): ${MENTOR} CID 1000002: add Mentor, Training Staff, Air Traffic Controller, Member; remove nothing`,
+      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer; nickname "Test Person1000001"`,
+      `Role sync (dry run): ${MENTOR} CID 1000002: add Mentor, Training Staff, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000002"`,
       `Role sync (dry run): ${STRANGER} unresolved: no changes`,
       `Role sync (dry run): ${LARRY} unresolved: no changes`,
     ]);
@@ -121,7 +125,7 @@ describe('a good run', () => {
     fakeVatusaAndDiscord(goodLists(), server());
     const { lines } = await cronAndConsume();
     // The S3 holds Observer and a hand-given role the mapping doesn't name: only Observer goes.
-    expect(lines[0]).toMatch(/; remove Observer$/);
+    expect(lines[0]).toMatch(/; remove Observer;/);
     expect(lines.join('\n')).not.toMatch(/undefined|600000000000000042/);
   });
 
@@ -131,10 +135,10 @@ describe('a good run', () => {
     expect(writes).toEqual([]);
   });
 
-  it('refuses any mode but dry-run, queueing nothing', async () => {
+  it('refuses any mode but dry-run and live, queueing nothing', async () => {
     fakeVatusaAndDiscord(goodLists(), server());
-    env.ROLE_SYNC_MODE = 'live';
-    await expect(cron()).rejects.toThrow('ROLE_SYNC_MODE "live"');
+    env.ROLE_SYNC_MODE = 'on';
+    await expect(cron()).rejects.toThrow('ROLE_SYNC_MODE "on"');
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 });
@@ -161,8 +165,8 @@ describe('a join (sync-member)', () => {
 
     const { lines, messages } = await consumeJoins('500000000000000008', STUDENT);
     expect(lines).toEqual([
-      'Role sync (dry run): 500000000000000008 CID 1000010: add Student 1, Air Traffic Controller, Member; remove Observer',
-      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer`,
+      'Role sync (dry run): 500000000000000008 CID 1000010: add Student 1, Air Traffic Controller, Member; remove Observer; nickname "Test Person1000010"',
+      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer; nickname "Test Person1000001"`,
     ]);
     expect(messages.every((message) => message.acked)).toBe(true);
   });
@@ -178,18 +182,127 @@ describe('a join (sync-member)', () => {
     fakeVatusaAndDiscord(goodLists(), server());
     await cron();
     const { lines, messages } = await consumeJoins('500000000000000009');
-    expect(lines).toEqual([]);
-    expect(vi.mocked(console.warn).mock.calls.flat()).toEqual(["Role sync: 500000000000000009 isn't in the server; nothing to sync"]);
+    expect(lines).toEqual(["Role sync: 500000000000000009 isn't in the server"]);
     expect(messages[0]!.acked).toBe(true);
   });
 
-  it('leaves the member to the next run when no run has kept its lists', async () => {
-    const { vatusaCalls } = fakeVatusaAndDiscord(goodLists(), server());
+  it('syncs through the per-user lookups when no run has kept its lists', async () => {
+    fakeVatusaAndDiscord(goodLists(), server());
     const { lines, messages } = await consumeJoins(STUDENT);
-    expect(lines).toEqual([]);
-    expect(vi.mocked(console.warn).mock.calls.flat()).toEqual([`Role sync: no run's lists are kept; ${STUDENT} waits for the next run`]);
-    expect(vatusaCalls).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(`${STUDENT} `);
     expect(messages[0]!.acked).toBe(true);
+  });
+});
+
+describe('members the lists do not cover', () => {
+  const PILOT = '700000000000000001';
+  const GHOST = '700000000000000002';
+  // A visiting S3 whose home is elsewhere; VATUSA's per-user record lists ZID among the facilities they visit.
+  const pilotRecord = record({ cid: 1000010, facility: 'ZNY', rating: 4, rating_short: 'S3', discord_id: PILOT, visiting_facilities: [{ facility: 'ZID' }] });
+  const pilotsServer = (): Server => ({ roles: [], members: [member(PILOT), member(GHOST), member(LARRY)] });
+  const userLookups = (calls: string[]) => calls.filter((path) => path.startsWith('/user/') && !path.startsWith('/user/roles/'));
+
+  it('looks a member on no list up by Discord ID and evaluates them like a list member', async () => {
+    fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { users: [pilotRecord] });
+    const { lines } = await cronAndConsume();
+
+    expect(lines).toEqual([
+      `Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000010"`,
+      `Role sync (dry run): ${GHOST} unresolved: no changes`,
+      `Role sync (dry run): ${LARRY} unresolved: no changes`,
+    ]);
+  });
+
+  it('leaves a member VATUSA has no record for unresolved', async () => {
+    const { vatusaCalls } = fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { users: [pilotRecord] });
+    await cronAndConsume();
+    expect(userLookups(vatusaCalls)).toEqual([`/user/${PILOT}?d`, `/user/${GHOST}?d`, `/user/${LARRY}?d`]);
+  });
+
+  it('makes no lookup for a member already looked up in the last 24 hours, found or not', async () => {
+    const { vatusaCalls } = fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { users: [pilotRecord] });
+    await cronAndConsume();
+    expect(userLookups(vatusaCalls)).toHaveLength(3);
+    const { lines } = await cronAndConsume();
+
+    expect(userLookups(vatusaCalls)).toHaveLength(3);
+    expect(lines[0]).toBe(`Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000010"`);
+    const day = 24 * 60 * 60;
+    expect([...env.KV.ttls].filter(([key]) => key.startsWith('role-sync:vatusa-user:')).map(([, ttl]) => ttl)).toEqual([day, day, day]);
+  });
+
+  it('keeps to 20 lookups a second', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    try {
+      const crowd = Array.from({ length: 45 }, (_, i) => `7100000000000000${String(i).padStart(2, '0')}`);
+      const { vatusaCallTimes } = fakeVatusaAndDiscord(goodLists(), { roles: [], members: crowd.map((id) => member(id)) });
+      await cron();
+      const { batch } = batchOf('role-sync', env.ROLE_SYNC_QUEUE.sent);
+      const done = larry.queue(batch as never);
+      await vi.advanceTimersByTimeAsync(5000);
+      await done;
+
+      const lookups = vatusaCallTimes.slice(-crowd.length);
+      expect(lookups).toHaveLength(45);
+      for (let i = 20; i < lookups.length; i++) expect(lookups[i]! - lookups[i - 20]!).toBeGreaterThanOrEqual(1000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe("a known CID VATUSA has no record of (a link's CID)", () => {
+    const noServer = { skippedRoles: [], guard: { ownerId: '', meId: LARRY, adminRoles: [], aboveLarry: [] } };
+    const sync = (cid: number) => syncDiscordMember(env, { people: [], credentials: {}, server: noServer }, { discordId: PILOT, roleIds: [], nick: null, cid });
+
+    it('takes their rating from VATSIM, and caches it for 24 hours', async () => {
+      const { vatsimCalls } = fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { vatsimRatings: { 1000020: 4 } });
+      expect(await sync(1000020)).toMatchObject({ cid: 1000020, add: ['Student 3', 'Member'] });
+      await sync(1000020);
+
+      expect(vatsimCalls).toEqual(['/members/1000020']);
+      expect(env.KV.ttls.get('role-sync:vatsim-rating:1000020')).toBe(24 * 60 * 60);
+    });
+
+    it('gives no Member role at rating 0 (suspended)', async () => {
+      fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { vatsimRatings: { 1000021: 0 } });
+      expect(await sync(1000021)).toMatchObject({ cid: 1000021, add: [], remove: [] });
+    });
+
+    it('stays unresolved when VATSIM has no such member', async () => {
+      fakeVatusaAndDiscord(goodLists(), pilotsServer());
+      expect(await sync(1000022)).toMatchObject({ cid: null, add: [], remove: [] });
+    });
+  });
+});
+
+describe('the training roster', () => {
+  const alertsPosted = (writes: { path: string; body?: Record<string, unknown> }[]) => writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content);
+
+  it('is read once per run', async () => {
+    fakeVatusaAndDiscord(goodLists(), server());
+    await cronAndConsume();
+    expect((env.TRAINING as ReturnType<typeof fakeTraining>).calls).toBe(1);
+  });
+
+  it('skips the run and alerts once when getRoster() fails', async () => {
+    env.TRAINING = fakeTraining(null);
+    const { writes } = fakeVatusaAndDiscord(goodLists(), server());
+    await cron();
+    await cron();
+
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
+    expect(alertsPosted(writes)).toEqual(["Role sync skipped: couldn't fetch the training roster."]);
+  });
+
+  it('skips the run and alerts once when the roster has no members', async () => {
+    env.TRAINING = fakeTraining({ members: [] });
+    const { writes } = fakeVatusaAndDiscord(goodLists(), server());
+    await cron();
+    await cron();
+
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
+    expect(alertsPosted(writes)).toEqual(["Role sync skipped: couldn't fetch the training roster."]);
   });
 });
 

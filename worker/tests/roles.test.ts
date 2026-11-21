@@ -60,6 +60,20 @@ describe('syncRoles', () => {
     expect(writes[0]).toMatchObject({ method: 'POST', path: `/guilds/${GUILD}/roles`, body: { name: 'JR', permissions: '0' } });
   });
 
+  it('gives a role it creates the colour asked for, and leaves an existing one alone', async () => {
+    const writes = fakeDiscord({ roles: [{ id: ROLE, name: 'SW', permissions: '0' }], members: [member(TEACHER, ROLE)] });
+    await syncRoles(env, { roles: [{ key: 'SW', name: 'SW', id: ROLE, color: '#e67e22', members: [TEACHER], exclusive: true }] });
+    expect(writes).toEqual([]);
+
+    const created = fakeDiscord({ members: [member(TEACHER)] });
+    await syncRoles(env, { roles: [{ ...role, color: 'e67e22' }] });
+    expect(created[0]).toMatchObject({ method: 'POST', body: { name: 'JR', permissions: '0', color: 0xe67e22 } });
+  });
+
+  it('refuses a colour that is not hex', () => {
+    expect(() => checkRoles({ roles: [{ ...role, color: 'orange' }] })).toThrow('should be hex');
+  });
+
   it('takes an exclusive role from anyone not listed, however they got it', async () => {
     const writes = fakeDiscord({
       roles: [{ id: ROLE, name: 'JR' }],
