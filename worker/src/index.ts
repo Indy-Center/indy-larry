@@ -1,15 +1,16 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
+import { handleFetch, type BotEventsEnv } from './bot-events';
 import { consumeRoleSync, startRoleSync, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, type QueueJob, type SendEnv } from './send';
 
-type Env = SendEnv & RoleSyncEnv;
+type Env = SendEnv & RoleSyncEnv & BotEventsEnv;
 
 /**
- * Larry's Worker. Other Workers reach these methods over a service binding; there's no fetch handler.
- * The cron runs the role sync (role-sync.ts).
+ * Larry's Worker. Other Workers reach these methods over a service binding. The fetch handler is
+ * only for the bots on the VPS (bot-events.ts). The cron runs the role sync (role-sync.ts).
  */
 export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   send(request: ChannelSend) {
@@ -92,6 +93,11 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage>) {
     if (batch.queue === 'role-sync') return consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env);
     return consume(batch as MessageBatch<QueueJob>, this.env);
+  }
+
+  /** The bots' routes: `POST /bot/events` from larry's bot. */
+  fetch(request: Request) {
+    return handleFetch(request, this.env);
   }
 
   scheduled(_controller: ScheduledController) {

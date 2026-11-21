@@ -80,7 +80,7 @@ By default only members with **Manage Server** see the command; change who can u
 
 ## Sending messages from other apps
 
-Other Indy Center Workers can send Discord messages as Larry instead of keeping their own webhooks: to a channel by name, or as a DM to a user. A small Cloudflare Worker in `worker/` (`indy-larry`) does the sending with Larry's token, through Discord's REST API, so the bot on the VPS isn't involved. Following the [RPC vs Queue pattern](https://tech.flyindycenter.com/patterns/rpc-vs-queue/), callers reach it over a service binding; it has no HTTP route and isn't on the internet.
+Other Indy Center Workers can send Discord messages as Larry instead of keeping their own webhooks: to a channel by name, or as a DM to a user. A small Cloudflare Worker in `worker/` (`indy-larry`) does the sending with Larry's token, through Discord's REST API, so the bot on the VPS isn't involved. Following the [RPC vs Queue pattern](https://tech.flyindycenter.com/patterns/rpc-vs-queue/), callers reach it over a service binding, not HTTP. Its one public route is for larry's own bot (see [Role sync](#role-sync)).
 
 ```jsonc
 // caller's wrangler.jsonc
@@ -190,16 +190,19 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 The Worker is replacing VATUSA's Discord bot: it works out each member's Discord roles from VATUSA's lists, through one mapping file, `worker/src/mapping.ts`. For now it only runs in **dry run**: it logs what it would add and remove, and changes nothing in Discord.
 
 - **The cron**, every 15 minutes (`triggers` in `wrangler.jsonc`), fetches VATUSA's public lists (no key): `roster/both` for ZID, ZME, ZDC, ZAU, ZOB, ZTL and ZKC, `integration/staff`, and `user/roles/ZHQ/ACE`. It keeps them in the `KV` namespace (`indy-larry-worker`) for that run and queues one job per member of the server on `role-sync`.
+- **A join** syncs that member within a minute, not at the next cron. The bot on the VPS sends `POST https://indy-larry.indy-center.workers.dev/bot/events` with `{ "type": "sync-member", "discordId": "<id>" }` and `Authorization: Bearer <BOT_EVENTS_SECRET>` on `guildMemberAdd`, and the Worker queues a `sync-member` job on `role-sync`. That job uses the latest run's lists (kept for an hour) and the roles the member holds now. If no run's lists are kept, or the member has already left, it's dropped and logged; the next cron catches them. A send the bot can't make (network error, non-2xx, or no answer in 10 seconds) is logged and dropped for the same reason.
+- **The route** (`worker/src/bot-events.ts`, on the `workers_dev` address in `wrangler.jsonc`): `POST /bot/events` answers `202` once queued, `401` for a missing or wrong secret (compared in constant time, `worker/src/auth.ts`), and `400` for a body that isn't a known type; `sync-member` is the only one. Every other path or method gets `404`. A new gateway event becomes a new type here, not a new route. The secret is the `ENV_BOT_EVENTS_SECRET` setting, which the bot reads from its `.env` and the deploy sets on the Worker as `BOT_EVENTS_SECRET`; with it unset the route refuses everything.
 - **The consumer** finds each member's CID (the one whose VATUSA Discord ID is theirs) and logs one line: `Role sync (dry run): <Discord ID> CID <cid>: add <roles>; remove <roles>`, by mapping name. A member not on the lists is logged as `unresolved` and gets no changes. A job that throws is retried, then parked in `role-sync-dlq`.
 - **The mapping** is in VATUSA's criteria and conditions shape, seeded from VATUSA's `config/zid.yaml` with the same names and Discord role IDs. An entry matches when any of its criteria does, and a criterion when all of its conditions do. The conditions are `rating`, `home`, `home_or_visit` (on that facility's roster), `facility_role` (`FAC:ROLE`), `role` (at any facility), `division_staff` (a role starting `US` with a digit, so not `USWT`) and `all`. Nobody rated below 1 matches anything. Only roles the mapping names are ever added or removed; a hand-given role is left alone. Change it by pull request: a wrong entry hands its role to everyone it matches.
 - **Safety**: if any list can't be fetched, or a roster or the staff list comes back empty, the run queues nothing and larry posts "Role sync skipped: couldn't fetch … from VATUSA." to `tech-team-alerts` (a `SEND_CHANNELS` name, so that channel must be listed there). It posts once per outage; the next good run clears it.
 - **Mode**: the `ROLE_SYNC_MODE` var in `wrangler.jsonc`, `dry-run`, the only mode so far. Any other value makes the cron and the consumer refuse to run.
 
-It needs the Server Members intent to list the server; without it the cron fails and queues nothing. To run the cron locally: `npx wrangler dev --test-scheduled`, then open `http://localhost:8787/__scheduled`.
+It needs the Server Members intent to list the server; without it the cron fails and queues nothing. The bot asks for the same intent (Guild Members) when `WORKER_URL` and `BOT_EVENTS_SECRET` are set, to hear joins; with either blank the join sync is off. To run the cron locally: `npx wrangler dev --test-scheduled`, then open `http://localhost:8787/__scheduled`.
 
 ## Project layout
 
 - `src/bot.js`: logs in, polls every `POLL_SECONDS`, and posts, edits and deletes embeds.
+- `src/botEvents.js`: tells larry's Worker when someone joins the server (the join sync).
 - `src/ironmic.js`: Iron Mic positions, vNAS Stats totals and the leaderboard embed. `src/ironmicCommand.js`: the `/ironmic` command.
 - `src/feed.js`: fetches the [vNAS controller feed](https://docs.virtualnas.net/data-admin/controller-feed/), the vNAS ARTCC data (facility and position list) and [VATSIM ATC bookings](https://atc-bookings.vatsim.net/), groups controllers by facility and tracks activation times.
 - `src/status.js`: decides each facility's status and parses "Online until" from controller info.
@@ -211,7 +214,7 @@ It needs the Server Members intent to list the server; without it the cron fails
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
-- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint, cron and queue consumer, `src/send.ts` checks and sends messages, `src/role-sync.ts` is the role sync (with `src/mapping.ts`, `src/criteria.ts` and `src/vatusa.ts`), `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
+- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint, cron, queue consumer and fetch handler, `src/bot-events.ts` the bot's route (with `src/auth.ts`, the secret check), `src/send.ts` checks and sends messages, `src/role-sync.ts` is the role sync (with `src/mapping.ts`, `src/criteria.ts` and `src/vatusa.ts`), `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
@@ -272,6 +275,8 @@ Secrets:
 | `ENV_IRON_MIC_CHANNEL_ID` | Variable | Optional; posts the Iron Mic leaderboard outside `CHANNEL_ID`, e.g. while testing |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 | `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; the Worker deploy reads it (the VPS bot ignores its `.env` copy) |
+| `ENV_WORKER_URL` | Variable | `https://indy-larry.indy-center.workers.dev`, where the bot sends joins ([Role sync](#role-sync)) |
+| `ENV_BOT_EVENTS_SECRET` | Secret | The join sync's shared secret (`openssl rand -base64 32`); the deploy writes it into the bot's `.env` and sets it on the Worker as `BOT_EVENTS_SECRET`. Changing it changes both on the next deploy |
 | `CLOUDFLARE_WORKERS_API_KEY` | Secret | Cloudflare API token for the Worker deploy (Workers Scripts:Edit, Queues:Edit) |
 
 To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.
