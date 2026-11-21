@@ -469,7 +469,8 @@ const MAX_SYNC_MEMBERS = 100;
 
 /**
  * RPC: sync these members now. Reads every group source again first (groups.ts), so their jobs see what
- * the app has just changed, then queues each CID's job. At most once every 2 minutes per member.
+ * the app has just changed, then queues each CID's job. At most once every 2 minutes per member; a
+ * declined member still gets the fresh read, which a job of theirs that hasn't run yet picks up.
  */
 export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<SyncMembersResult> {
   checkMode(env);
@@ -483,7 +484,7 @@ export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<Syn
     if (await env.KV.get(memberKey(cid))) results.set(cid, { queued: false, reason: 'Synced moments ago; try again in a minute.' });
     else due.push(cid);
   }
-  if (due.length > 0) for (const config of GROUP_SOURCES) await refreshSource(env, config);
+  for (const config of GROUP_SOURCES) await refreshSource(env, config);
   for (const cid of due) results.set(cid, await queueMemberSync(env, cid));
   return unique.map((cid) => ({ cid, ...results.get(cid)! }));
 }

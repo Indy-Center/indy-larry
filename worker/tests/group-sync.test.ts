@@ -464,6 +464,21 @@ describe('syncMembers', () => {
     expect(memberRoleWrites()).toEqual([`PUT ${SAM}/roles/${S1}`]);
   });
 
+  it('reads the source again for a member it declines, so their queued job picks up the change', async () => {
+    start([group('S1', 'S1 Certified', [1000001])]);
+    discordWith({ roles: [{ id: S1, name: 'S1 Certified', position: 1 }], members: [member(JO, MEMBER_ROLE, S1), member(SAM, MEMBER_ROLE)] });
+    await cron();
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    await larry.syncMembers([1000002]);
+
+    env.TRAINING.answer = { groups: [group('S1', 'S1 Certified', [1000001, 1000002])] };
+    expect(await larry.syncMembers([1000002])).toEqual([{ cid: 1000002, queued: false, reason: 'Synced moments ago; try again in a minute.' }]);
+    await consume();
+
+    expect(env.TRAINING.calls).toBe(3);
+    expect(memberRoleWrites()).toEqual([`PUT ${SAM}/roles/${S1}`]);
+  });
+
   it('syncs against the last accepted copy when its read is refused', async () => {
     start([group('S1', 'S1 Certified', [1000001, 1000002])]);
     discordWith({ roles: [{ id: S1, name: 'S1 Certified', position: 1 }], members: [member(JO, MEMBER_ROLE), member(SAM, MEMBER_ROLE)] });
