@@ -103,8 +103,8 @@ function checkMode(env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE'>): Mode {
 /**
  * Read the server once for a run: its roles, its owner and Larry's own roles. A mapped role the sync
  * won't touch is skipped for the whole run, with one log line: @everyone, a bot's role, and any role at
- * or above Larry's highest, which Discord wouldn't let Larry change anyway. A mapped role that isn't on
- * the server is left for Discord to refuse.
+ * or above Larry's highest, which Discord wouldn't let Larry change anyway. So is a mapped role that
+ * isn't on the server, which Discord would refuse (404) for every member due it.
  */
 async function readServer(env: GuildEnv): Promise<RunServer> {
   const guild = guildId(env);
@@ -118,8 +118,14 @@ async function readServer(env: GuildEnv): Promise<RunServer> {
 
   const skippedRoles: string[] = [];
   for (const entry of MAPPING) {
-    const role = entry.discordRoleId ? info.roles.find((candidate) => candidate.id === entry.discordRoleId) : undefined;
-    if (!role) continue;
+    if (!entry.discordRoleId) continue;
+    const role = info.roles.find((candidate) => candidate.id === entry.discordRoleId);
+    if (!role) {
+      // Discord would answer 404 for every job that gives it. Skipped for resolved and unresolved members alike.
+      skippedRoles.push(entry.discordRoleId);
+      console.warn(`Role sync: mapped role ${entry.name} (${entry.discordRoleId}) isn't on the server; skipping it.`);
+      continue;
+    }
     const reason = syncRefusal(role, guild) ?? ((role.position ?? 0) >= larryTop ? "it is at or above Larry's highest role" : null);
     if (!reason) continue;
     skippedRoles.push(role.id);

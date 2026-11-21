@@ -306,6 +306,55 @@ describe("Larry's place in the role list", () => {
   });
 });
 
+describe('a mapped role the server does not have', () => {
+  const MISSING_LINE = `Role sync: mapped role Student 3 (${ROLE.student3}) isn't on the server; skipping it.`;
+  const missingLines = () => warnings.filter((line) => line.includes("isn't on the server"));
+  // Two S3s who are each due Student 3, Air Traffic Controller and Member.
+  const two = () => serverWith([member(JO, 'Test Person1000001'), member(SAM, 'Test Person1000002')], [], { missingMapped: [ROLE.student3] });
+  const both = () => listsWith(s3(1000001, JO), s3(1000002, SAM));
+
+  it('live gives everyone their other roles, never asks for it, writes one log line, and acks every job', async () => {
+    const { writes } = fakeVatusaAndDiscord(both(), two());
+    const { messages } = await cronAndConsume();
+
+    expect(roleWrites(writes).filter((write) => write.includes(ROLE.student3))).toEqual([]);
+    expect(roleWrites(writes)).toEqual(
+      [JO, SAM].flatMap((id) => [`PUT /guilds/${GUILD}/members/${id}/roles/${ROLE.atc}`, `PUT /guilds/${GUILD}/members/${id}/roles/${ROLE.member}`]),
+    );
+    expect(missingLines()).toEqual([MISSING_LINE]);
+    expect(messages.every((message) => message.acked)).toBe(true);
+  });
+
+  it('dry-run skips it the same way and changes nothing', async () => {
+    start('dry-run');
+    const { writes } = fakeVatusaAndDiscord(both(), two());
+    const { lines } = await cronAndConsume();
+
+    expect(writes).toEqual([]);
+    expect(missingLines()).toEqual([MISSING_LINE]);
+    expect(lines).toContain(`Role sync (dry run): ${JO} CID 1000001: add Air Traffic Controller, Member; remove nothing`);
+  });
+
+  it('skips it for a join (sync-member) as well, where no run has kept its lists', async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(), two(), [], { users: [s3(1000001, JO)] });
+    const { messages } = await consume([{ type: 'sync-member', discordId: JO }]);
+
+    expect(roleWrites(writes).some((write) => write.includes(ROLE.student3))).toBe(false);
+    expect(roleWrites(writes)).toContain(`PUT /guilds/${GUILD}/members/${JO}/roles/${ROLE.atc}`);
+    expect(missingLines()).toEqual([MISSING_LINE]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+
+  it("never removes or adds it for a member the sync can't resolve", async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(), serverWith([member(STRANGER, null, ROLE.observer)], [], { missingMapped: [ROLE.student3] }));
+    const { messages } = await cronAndConsume();
+
+    expect(roleWrites(writes)).toEqual([`DELETE /guilds/${GUILD}/members/${STRANGER}/roles/${ROLE.observer}`]);
+    expect(missingLines()).toEqual([MISSING_LINE]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+});
+
 describe('a Discord failure', () => {
   it("fails that member's job, so the queue retries it, and the others go through", async () => {
     const server = serverWith([member(JO, null), member(SAM, null)], [], { forbidden: [JO] });
@@ -393,6 +442,44 @@ describe('nicknames', () => {
     expect(roleWrites(writes)).toContain(`PUT /guilds/${GUILD}/members/${OWNER}/roles/${ROLE.student3}`);
     expect(lines[0]).toMatch(/nickname left alone \(the server's owner can't be renamed by a bot\)$/);
     expect(messages[0]!.acked).toBe(true);
+  });
+
+  it("keeps the CID whole when given name and CID are over 32 characters", async () => {
+    const given = (given_name: string) => [{ ...idUser(1000001, JO), given_name }];
+    const nick = await nicknameOf(null, given('A'.repeat(30)), { vatsimRatings: { 1000001: 4 } });
+    expect(nick).toBe(`${'A'.repeat(24)} 1000001`);
+    expect(nick).toHaveLength(32);
+    // The cut lands on a space: it is trimmed, not left before the CID.
+    expect(await nicknameOf(null, given(`${'A'.repeat(23)} Bee`), { vatsimRatings: { 1000001: 4 } })).toBe(`${'A'.repeat(23)} 1000001`);
+  });
+
+  describe('administrators', () => {
+    const ADMIN_ROLE = '600000000000000050';
+    const adminServer = () =>
+      serverWith([member(JO, 'Old Name', ROLE.member, ROLE.atc, ROLE.student3, ADMIN_ROLE), member(OWNER, 'Old Owner', ADMIN_ROLE), member(SAM, 'Old Boss', ROLE.seniorStaff, ADMIN_ROLE)], [
+        { id: ADMIN_ROLE, name: 'Admin', position: 5, permissions: String(1n << 3n) },
+        { id: ROLE.seniorStaff, name: 'Senior Staff', position: 20 },
+      ], { owner: OWNER });
+    const people = () => listsWith(s3(1000001, JO, { fname: 'Joanna', lname: 'Rivera' }), s3(1000002, OWNER), s3(1000003, SAM));
+
+    it('live renames one below Larry, and still leaves the owner and one above Larry', async () => {
+      const { writes } = fakeVatusaAndDiscord(people(), adminServer());
+      const { messages } = await cronAndConsume();
+
+      expect(nicknameWrites(writes)).toEqual([[JO, 'Joanna Rivera']]);
+      expect(messages.every((message) => message.acked)).toBe(true);
+    });
+
+    it('dry-run logs the nickname it would set, and why it leaves the others', async () => {
+      start('dry-run');
+      const { writes } = fakeVatusaAndDiscord(people(), adminServer());
+      const { lines } = await cronAndConsume();
+
+      expect(writes).toEqual([]);
+      expect(lines.find((line) => line.includes(JO))).toBe(`Role sync (dry run): ${JO} CID 1000001: add nothing; remove nothing; nickname "Joanna Rivera"`);
+      expect(lines.find((line) => line.includes(OWNER))).toMatch(/nickname left alone \(the server's owner/);
+      expect(lines.find((line) => line.includes(SAM))).toMatch(/nickname left alone \(their highest role is at or above Larry's\)/);
+    });
   });
 
   it('dry-run logs the nickname it would set and sets nothing', async () => {
