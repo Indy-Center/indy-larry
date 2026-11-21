@@ -35,6 +35,11 @@ export function fakeDiscord(server: Server): Write[] {
         if (path.startsWith(`/guilds/${GUILD}/members?`)) {
           return server.members === null ? json({ message: 'Missing Access', code: 50001 }, 403) : json(server.members ?? []);
         }
+        const memberId = path.match(new RegExp(`^/guilds/${GUILD}/members/(\\d+)$`))?.[1];
+        if (memberId) {
+          const member = (server.members ?? []).find((m) => m.user.id === memberId);
+          return member ? json(member) : json({ message: 'Unknown Member', code: 10007 }, 404);
+        }
         const channel = (server.channels ?? []).find((c) => path === `/channels/${c.id}`);
         return channel ? json(channel) : json({ message: 'Unknown Channel', code: 10003 }, 404);
       }

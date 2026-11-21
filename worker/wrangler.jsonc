@@ -1,11 +1,14 @@
 // Larry's send Worker. Other Workers bind to it as a service and call send(), sendDirect(),
 // enqueue() and enqueueDirect(); see the README's "Sending messages from other apps".
-// It has no fetch handler, so it isn't reachable from the internet. Its cron runs the role sync.
+// Its cron runs the role sync. Its fetch handler takes the bots' events (README, Role sync).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "indy-larry",
   "account_id": "afd63515948c9b2188ce14ef1504b2c1",
   "main": "src/index.ts",
+  // The public address larry's bot posts to: https://indy-larry.indy-center.workers.dev. Every route
+  // behind it needs a bot's secret (BOT_EVENTS_SECRET, a Worker secret set by build-and-deploy.yml).
+  "workers_dev": true,
   "compatibility_date": "2026-09-01",
   "observability": {
     "enabled": true

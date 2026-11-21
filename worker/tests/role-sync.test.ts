@@ -139,6 +139,60 @@ describe('a good run', () => {
   });
 });
 
+describe('a join (sync-member)', () => {
+  /** Deliver sync-member jobs to the consumer, as POST /bot/events queues them. Returns its log lines. */
+  async function consumeJoins(...discordIds: string[]) {
+    const { batch, messages } = batchOf<RoleSyncMessage>('role-sync', discordIds.map((discordId) => ({ type: 'sync-member', discordId })));
+    logs = [];
+    await larry.queue(batch as never);
+    return { lines: logs.filter((line) => line.startsWith('Role sync')), messages };
+  }
+
+  it("syncs that member against the latest run's lists and the roles they hold now", async () => {
+    fakeVatusaAndDiscord(goodLists(), server());
+    await cron();
+    // They joined after the run listed the server, and onboarding gave them Observer.
+    const joined = server();
+    joined.members!.push(member('500000000000000008', ROLE.observer));
+    const lists = goodLists();
+    lists.rosters.ZID.push(record({ cid: 1000010, rating: 2, rating_short: 'S1', discord_id: '500000000000000008' }));
+    fakeVatusaAndDiscord(lists, joined);
+    await cron();
+
+    const { lines, messages } = await consumeJoins('500000000000000008', STUDENT);
+    expect(lines).toEqual([
+      'Role sync (dry run): 500000000000000008 CID 1000010: add Student 1, Air Traffic Controller, Member; remove Observer',
+      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer`,
+    ]);
+    expect(messages.every((message) => message.acked)).toBe(true);
+  });
+
+  it('changes nothing in Discord', async () => {
+    const { writes } = fakeVatusaAndDiscord(goodLists(), server());
+    await cron();
+    await consumeJoins(STUDENT);
+    expect(writes).toEqual([]);
+  });
+
+  it('drops a member who has already left the server', async () => {
+    fakeVatusaAndDiscord(goodLists(), server());
+    await cron();
+    const { lines, messages } = await consumeJoins('500000000000000009');
+    expect(lines).toEqual([]);
+    expect(vi.mocked(console.warn).mock.calls.flat()).toEqual(["Role sync: 500000000000000009 isn't in the server; nothing to sync"]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+
+  it('leaves the member to the next run when no run has kept its lists', async () => {
+    const { vatusaCalls } = fakeVatusaAndDiscord(goodLists(), server());
+    const { lines, messages } = await consumeJoins(STUDENT);
+    expect(lines).toEqual([]);
+    expect(vi.mocked(console.warn).mock.calls.flat()).toEqual([`Role sync: no run's lists are kept; ${STUDENT} waits for the next run`]);
+    expect(vatusaCalls).toEqual([]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+});
+
 describe('a bad fetch', () => {
   const alertsPosted = (writes: { path: string; body?: Record<string, unknown> }[]) => writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content);
 

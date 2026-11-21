@@ -1,7 +1,7 @@
 import { rolesFor } from './criteria';
 import { guildId, type GuildEnv } from './discord';
 import { MAPPING } from './mapping';
-import { listMembers } from './roles';
+import { fetchMember, listMembers } from './roles';
 import { sendNow, type SendEnv } from './send';
 import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
 
@@ -10,19 +10,26 @@ import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
  * through the mapping (mapping.ts). Only roles the mapping names are ever added or removed.
  *
  * Every 15 minutes the cron (startRoleSync) fetches the lists once, keeps them in KV for that run, and
- * queues one job per Discord member on `role-sync`. The consumer (consumeRoleSync) hands each job to
- * syncDiscordMember. In `dry-run`, the only mode so far, that logs what it would change and changes
+ * queues one job per Discord member on `role-sync`. A member who joins the server is queued straight
+ * away (`sync-member`, from larry's bot through bot-events.ts) and synced against the latest run's
+ * lists. The consumer (consumeRoleSync) hands each job to syncDiscordMember. In `dry-run`, the only mode so far, that logs what it would change and changes
  * nothing.
  */
 
 /** Every message on the `role-sync` queue. Each new kind of job is a new member of this union. */
-export type RoleSyncMessage = {
-  /** One member's job from a cron run, with the roles they held when the run listed the server. */
-  type: 'run-member';
-  runId: string;
-  discordId: string;
-  roleIds: string[];
-};
+export type RoleSyncMessage =
+  | {
+      /** One member's job from a cron run, with the roles they held when the run listed the server. */
+      type: 'run-member';
+      runId: string;
+      discordId: string;
+      roleIds: string[];
+    }
+  | {
+      /** One member, now: someone joined the server (larry's bot, POST /bot/events). */
+      type: 'sync-member';
+      discordId: string;
+    };
 
 export type RoleSyncEnv = GuildEnv &
   Pick<SendEnv, 'SEND_CHANNELS' | 'LARRY_QUEUE'> & {
@@ -39,6 +46,8 @@ const ALERT_CHANNEL = 'tech-team-alerts';
 /** Set while a skipped run's alert stands, so an outage is posted once, not every 15 minutes. */
 const OUTAGE_KEY = 'role-sync:outage';
 const runKey = (runId: string) => `role-sync:run:${runId}`;
+/** The last good run's ID, so a job that isn't from a run (sync-member) can use its lists. */
+const LATEST_RUN_KEY = 'role-sync:latest-run';
 // Long past the time a run's jobs take; a job whose lists have gone is left to the next run.
 const RUN_LISTS_TTL_SECONDS = 60 * 60;
 // Queues takes at most 100 messages in one sendBatch.
@@ -66,6 +75,7 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   const runId = crypto.randomUUID();
   const run: RunLists = { people: peopleFrom(fetched.lists) };
   await env.KV.put(runKey(runId), JSON.stringify(run), { expirationTtl: RUN_LISTS_TTL_SECONDS });
+  await env.KV.put(LATEST_RUN_KEY, runId, { expirationTtl: RUN_LISTS_TTL_SECONDS });
 
   const jobs: MessageSendRequest<RoleSyncMessage>[] = members.flatMap((member) =>
     member.user ? [{ body: { type: 'run-member', runId, discordId: member.user.id, roleIds: member.roles } }] : [],
@@ -78,16 +88,33 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
 export async function consumeRoleSync(batch: MessageBatch<RoleSyncMessage>, env: RoleSyncEnv): Promise<void> {
   checkMode(env);
   const runs = new Map<string, RunLists | null>();
+  const listsOf = async (runId: string) => {
+    if (!runs.has(runId)) runs.set(runId, await env.KV.get<RunLists>(runKey(runId), 'json'));
+    return runs.get(runId) ?? null;
+  };
 
   for (const message of batch.messages) {
     try {
       const job = message.body;
-      if (!runs.has(job.runId)) runs.set(job.runId, await env.KV.get<RunLists>(runKey(job.runId), 'json'));
-      const run = runs.get(job.runId);
-      if (!run) {
-        console.warn(`Role sync: run ${job.runId}'s lists have expired; ${job.discordId} waits for the next run`);
-      } else {
-        await syncDiscordMember(env, run.people, { discordId: job.discordId, roleIds: job.roleIds });
+      switch (job.type) {
+        case 'run-member': {
+          const run = await listsOf(job.runId);
+          if (!run) console.warn(`Role sync: run ${job.runId}'s lists have expired; ${job.discordId} waits for the next run`);
+          else await syncDiscordMember(env, run.people, { discordId: job.discordId, roleIds: job.roleIds });
+          break;
+        }
+        case 'sync-member': {
+          // A join: the latest run's lists, and the roles the member holds now.
+          const runId = await env.KV.get(LATEST_RUN_KEY);
+          const run = runId ? await listsOf(runId) : null;
+          const member = run ? await fetchMember(env.DISCORD_TOKEN, guildId(env), job.discordId) : null;
+          if (!run) console.warn(`Role sync: no run's lists are kept; ${job.discordId} waits for the next run`);
+          else if (!member) console.warn(`Role sync: ${job.discordId} isn't in the server; nothing to sync`);
+          else await syncDiscordMember(env, run.people, { discordId: job.discordId, roleIds: member.roles });
+          break;
+        }
+        default:
+          throw new Error(`Unknown role-sync job type "${(job as { type?: unknown }).type}"`);
       }
       message.ack();
     } catch (error) {

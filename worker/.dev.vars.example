@@ -7,3 +7,5 @@ SEND_CHANNELS=
 GUILD_ID=
 # Categories callers may create channels under and post into by ID, as name:categoryId, e.g. training:333
 CHANNEL_CATEGORIES=
+# The secret larry's bot sends to POST /bot/events (BOT_EVENTS_SECRET in the bot's .env); any made-up value locally
+BOT_EVENTS_SECRET=
