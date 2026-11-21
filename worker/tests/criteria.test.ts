@@ -13,6 +13,7 @@ const person = (overrides: Partial<VatusaPerson> = {}): VatusaPerson => ({
   rosters: ['ZID'],
   roles: [],
   credentials: [],
+  name: null,
   ...overrides,
 });
 

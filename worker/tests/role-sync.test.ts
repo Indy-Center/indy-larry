@@ -113,8 +113,8 @@ describe('a good run', () => {
     const { lines, messages } = await cronAndConsume();
 
     expect(lines).toEqual([
-      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer`,
-      `Role sync (dry run): ${MENTOR} CID 1000002: add Mentor, Training Staff, Air Traffic Controller, Member; remove nothing`,
+      `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer; nickname "Test Person1000001"`,
+      `Role sync (dry run): ${MENTOR} CID 1000002: add Mentor, Training Staff, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000002"`,
       `Role sync (dry run): ${STRANGER} unresolved: no changes`,
       `Role sync (dry run): ${LARRY} unresolved: no changes`,
     ]);
@@ -125,7 +125,7 @@ describe('a good run', () => {
     fakeVatusaAndDiscord(goodLists(), server());
     const { lines } = await cronAndConsume();
     // The S3 holds Observer and a hand-given role the mapping doesn't name: only Observer goes.
-    expect(lines[0]).toMatch(/; remove Observer$/);
+    expect(lines[0]).toMatch(/; remove Observer;/);
     expect(lines.join('\n')).not.toMatch(/undefined|600000000000000042/);
   });
 
@@ -135,10 +135,10 @@ describe('a good run', () => {
     expect(writes).toEqual([]);
   });
 
-  it('refuses any mode but dry-run, queueing nothing', async () => {
+  it('refuses any mode but dry-run and live, queueing nothing', async () => {
     fakeVatusaAndDiscord(goodLists(), server());
-    env.ROLE_SYNC_MODE = 'live';
-    await expect(cron()).rejects.toThrow('ROLE_SYNC_MODE "live"');
+    env.ROLE_SYNC_MODE = 'on';
+    await expect(cron()).rejects.toThrow('ROLE_SYNC_MODE "on"');
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 });
@@ -156,7 +156,7 @@ describe('members the lists do not cover', () => {
     const { lines } = await cronAndConsume();
 
     expect(lines).toEqual([
-      `Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing`,
+      `Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000010"`,
       `Role sync (dry run): ${GHOST} unresolved: no changes`,
       `Role sync (dry run): ${LARRY} unresolved: no changes`,
     ]);
@@ -175,7 +175,7 @@ describe('members the lists do not cover', () => {
     const { lines } = await cronAndConsume();
 
     expect(userLookups(vatusaCalls)).toHaveLength(3);
-    expect(lines[0]).toBe(`Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing`);
+    expect(lines[0]).toBe(`Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000010"`);
     const day = 24 * 60 * 60;
     expect([...env.KV.ttls].filter(([key]) => key.startsWith('role-sync:vatusa-user:')).map(([, ttl]) => ttl)).toEqual([day, day, day]);
   });
@@ -200,7 +200,8 @@ describe('members the lists do not cover', () => {
   });
 
   describe("a known CID VATUSA has no record of (a link's CID)", () => {
-    const sync = (cid: number) => syncDiscordMember(env, { people: [], credentials: {} },{ discordId: PILOT, roleIds: [], cid });
+    const noServer = { skippedRoles: [], guard: { ownerId: '', meId: LARRY, adminRoles: [], aboveLarry: [] } };
+    const sync = (cid: number) => syncDiscordMember(env, { people: [], credentials: {}, server: noServer }, { discordId: PILOT, roleIds: [], nick: null, cid });
 
     it('takes their rating from VATSIM, and caches it for 24 hours', async () => {
       const { vatsimCalls } = fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { vatsimRatings: { 1000020: 4 } });

@@ -22,7 +22,11 @@ export type VatusaPerson = {
   roles: { facility: string; role: string }[];
   /** The training app's certification and endorsement codes they hold. Filled in when they are synced. */
   credentials: string[];
+  /** Their name as VATUSA has it, and whether they asked VATUSA to hide their last name. Null when VATUSA doesn't know them. */
+  name: VatusaName | null;
 };
+
+export type VatusaName = { first: string; last: string; privacy: boolean };
 
 /** One entry of roster/both or integration/staff, as far as the sync reads it. */
 export type VatusaRecord = {
@@ -81,6 +85,7 @@ function newPerson(entry: VatusaRecord): VatusaPerson {
     rosters: [],
     roles: [],
     credentials: [],
+    name: { first: entry.fname, last: entry.lname, privacy: entry.flag_nameprivacy === true },
   };
 }
 

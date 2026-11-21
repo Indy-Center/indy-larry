@@ -15,7 +15,8 @@
   // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables.
   // For wrangler dev, put them all in .dev.vars (see .dev.vars.example).
   "vars": {
-    // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing.
+    // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing;
+    // live changes members' mapped roles and nicknames.
     "ROLE_SYNC_MODE": "dry-run"
   },
   // The role sync: fetch VATUSA's lists and queue one job per Discord member on role-sync.

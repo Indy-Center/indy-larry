@@ -36,14 +36,26 @@ const POWERFUL =
   (1n << 34n) | // Manage Threads
   (1n << 40n); // Timeout Members
 
-type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean };
-export type DiscordMember = { user?: { id: string }; roles: string[] };
+export type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean; position?: number };
+export type DiscordMember = { user?: { id: string }; roles: string[]; nick?: string | null };
 
 /** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
 function refusal(role: DiscordRole, guild: string): string | null {
+  const refused = syncRefusal(role, guild);
+  if (refused) return refused;
+  if (BigInt(role.permissions ?? '0') & POWERFUL) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels`;
+  return null;
+}
+
+/**
+ * Why the role sync won't touch a role, or null when it may: only @everyone and a bot's or an
+ * integration's role. The sync's mapping may name roles with moderation permissions; what keeps a role
+ * out of its reach is sitting above Larry's highest role, which Discord enforces (role-sync.ts checks it
+ * once per run). Every other caller keeps refusal()'s narrower rule.
+ */
+export function syncRefusal(role: DiscordRole, guild: string): string | null {
   if (role.id === guild) return `"${role.name}" is @everyone`;
   if (role.managed) return `"${role.name}" belongs to a bot or an integration`;
-  if (BigInt(role.permissions ?? '0') & POWERFUL) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels`;
   return null;
 }
 

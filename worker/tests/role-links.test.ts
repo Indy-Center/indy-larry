@@ -83,7 +83,7 @@ describe('linkDiscord', () => {
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: NEW }]);
 
     const { lines, messages } = await consume();
-    expect(lines).toEqual([`Role sync (dry run): ${NEW} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing`]);
+    expect(lines).toEqual([`Role sync (dry run): ${NEW} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`]);
     expect(messages[0]!.acked).toBe(true);
   });
 
@@ -177,7 +177,7 @@ describe('the sync finds a member through their link first', () => {
     await cron();
     const { lines } = await consume();
 
-    expect(lines).toContain(`Role sync (dry run): ${NEW} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing`);
+    expect(lines).toContain(`Role sync (dry run): ${NEW} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`);
     expect(lines).toContain(`Role sync (dry run): ${OLD} unresolved (their CID is linked to another Discord account): no changes`);
   });
 
@@ -185,7 +185,7 @@ describe('the sync finds a member through their link first', () => {
     fakeVatusaAndDiscord(vatusaLists(), server());
     await cron();
     const { lines } = await consume();
-    expect(lines).toContain(`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing`);
+    expect(lines).toContain(`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`);
   });
 
   it("retries a member's job, and syncs nobody on a guess, when identity can't be reached", async () => {
@@ -248,7 +248,7 @@ describe('syncMember', () => {
     expect(await larry.syncMember(1000001)).toEqual({ queued: true });
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: OLD }]);
     const { lines } = await consume();
-    expect(lines).toEqual([`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing`]);
+    expect(lines).toEqual([`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`]);
     expect(vatusaCalls.length).toBe(before);
   });
 
@@ -278,7 +278,7 @@ describe('syncMember', () => {
   });
 
   it('follows ROLE_SYNC_MODE like every other job', async () => {
-    env.ROLE_SYNC_MODE = 'live';
-    await expect(larry.syncMember(1000002)).rejects.toThrow('ROLE_SYNC_MODE "live"');
+    env.ROLE_SYNC_MODE = 'on';
+    await expect(larry.syncMember(1000002)).rejects.toThrow('ROLE_SYNC_MODE "on"');
   });
 });
