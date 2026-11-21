@@ -4,7 +4,7 @@ import type { RoleSyncMessage } from '../src/role-sync';
 import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
-import { identityEnv } from './fake-identity';
+import { identityEnv, idUser } from './fake-identity';
 import { fakeTraining, trainee } from './fake-training';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
@@ -362,5 +362,75 @@ describe('a bad fetch', () => {
     ({ writes } = fakeVatusaAndDiscord(goodLists(), server(), ['/user/roles/ZHQ/ACE']));
     await cron();
     expect(alertsPosted(writes)).toEqual(["Role sync skipped: couldn't fetch the ACE list from VATUSA."]);
+  });
+});
+
+describe('one Discord ID on two CIDs', () => {
+  const SHARED = '800000000000000001';
+  const ALERT = `Role sync: Discord account ${SHARED} is on VATUSA for more than one member (CIDs 1000003, 1000004). It gets no roles until one of them links it on their profile.`;
+  const alertsPosted = (writes: { path: string; body?: Record<string, unknown> }[]) => writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content);
+  const sharedLists = (shared = true): VatusaLists => {
+    const base = goodLists();
+    base.rosters.ZME = [record({ cid: 1000003, facility: 'ZME', discord_id: SHARED })];
+    base.rosters.ZDC = [record({ cid: 1000004, facility: 'ZDC', discord_id: shared ? SHARED : '800000000000000002' })];
+    return base;
+  };
+  const sharedServer = (): Server => ({ roles: [], members: [member(SHARED, ROLE.member), member(LARRY)] });
+
+  for (const mode of ['dry-run', 'live']) {
+    it(`${mode}: changes nothing for the member, logs both CIDs and posts one alert`, async () => {
+      env.ROLE_SYNC_MODE = mode;
+      const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+      const { lines } = await cronAndConsume();
+
+      expect(lines).toContain(`Role sync: Discord account ${SHARED} is on VATUSA for more than one member (CIDs 1000003, 1000004)`);
+      expect(lines).toContain(`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${SHARED} unresolved (2 CIDs give this Discord ID): no changes`);
+      expect(writes.filter((write) => !write.path.startsWith(`/channels/${ALERTS}/`))).toEqual([]);
+      expect(alertsPosted(writes)).toEqual([ALERT]);
+    });
+  }
+
+  it('posts nothing more while the ID stays shared, and again after a run that no longer finds it shared', async () => {
+    let { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+    await cronAndConsume();
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([ALERT]);
+
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    ({ writes } = fakeVatusaAndDiscord(sharedLists(false), sharedServer()));
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([]);
+
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    ({ writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer()));
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([ALERT]);
+  });
+
+  it('tries the alert again next run when the post fails', async () => {
+    const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+    const fetched = globalThis.fetch;
+    let failing = true;
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+      failing && init?.method === 'POST' && url.endsWith(`/channels/${ALERTS}/messages`) ? Promise.resolve(new Response('Service Unavailable', { status: 503 })) : fetched(url, init),
+    );
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([]);
+
+    failing = false;
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([ALERT]);
+  });
+
+  it('takes the linked CID when the Discord ID is linked in identity: no log, no alert', async () => {
+    Object.assign(env, identityEnv([idUser(1000003, SHARED)]));
+    const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+    const { lines } = await cronAndConsume();
+
+    expect(lines.join('\n')).toContain(`${SHARED} CID 1000003:`);
+    expect(lines.join('\n')).not.toContain('more than one member');
+    expect(alertsPosted(writes)).toEqual([]);
   });
 });

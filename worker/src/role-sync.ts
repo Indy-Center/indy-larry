@@ -75,6 +75,8 @@ type Mode = 'dry-run' | 'live';
 const ALERT_CHANNEL = 'tech-team-alerts';
 /** Set while a skipped run's alert stands, so an outage is posted once, not every 15 minutes. */
 const OUTAGE_KEY = 'role-sync:outage';
+/** Set while a shared Discord ID's alert stands, so it is posted once per ID until a run no longer finds it shared. */
+const SHARED_PREFIX = 'role-sync:shared:';
 const runKey = (runId: string) => `role-sync:run:${runId}`;
 /** The newest run's ID, so a job that has no run of its own (sync-member, sync-cid) can read that run's lists. */
 const LATEST_RUN_KEY = 'role-sync:latest-run';
@@ -136,6 +138,7 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
     return;
   }
   await env.KV.delete(OUTAGE_KEY);
+  await clearSharedAlerts(env, peopleFrom(fetched.lists));
 
   const members = await listMembers(env.DISCORD_TOKEN, guildId(env));
   if (!members) throw new Error("Role sync can't list the server's members: switch on the Server Members intent");
@@ -207,12 +210,13 @@ export type MemberSync = { discordId: string; cid: number | null; add: string[];
  * place a member is synced, whatever asked for it. Throws when Discord refuses a change.
  */
 async function syncDiscordMember(
-  env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'KV' | 'DISCORD_TOKEN' | 'GUILD_ID'> & IdentityEnv,
+  env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'KV' | 'DISCORD_TOKEN' | 'GUILD_ID' | 'SEND_CHANNELS' | 'LARRY_QUEUE'> & IdentityEnv,
   run: RunLists,
   member: { discordId: string; roleIds: string[]; nick: string | null; cid?: number },
 ): Promise<MemberSync> {
   const mode = checkMode(env);
   const { person: found, ambiguous, linkedElsewhere, accountTaken, identity } = await resolvePerson(env, run, member);
+  if (ambiguous) await reportSharedId(env, member.discordId, ambiguous);
   const person = found && { ...found, credentials: run.credentials[String(found.cid)] ?? [] };
 
   const result: MemberSync = { discordId: member.discordId, cid: person?.cid ?? null, add: [], remove: [], nickname: null };
@@ -252,11 +256,18 @@ async function syncDiscordMember(
       : accountTaken
         ? 'unresolved (this Discord account is linked to another member)'
         : ambiguous
-          ? `unresolved (${ambiguous} CIDs give this Discord ID)`
+          ? `unresolved (${ambiguous.length} CIDs give this Discord ID)`
           : 'unresolved';
   const changes = person ? `add ${result.add.join(', ') || 'nothing'}; remove ${result.remove.join(', ') || 'nothing'}${nicknameNote(result.nickname)}` : 'no changes';
   console.log(`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${member.discordId} ${who}: ${changes}`);
   return result;
+}
+
+/** One Discord ID on more than one CID: log it, and tell the tech team once until a run no longer finds it shared. */
+async function reportSharedId(env: Pick<RoleSyncEnv, 'KV' | 'DISCORD_TOKEN' | 'SEND_CHANNELS' | 'LARRY_QUEUE'>, discordId: string, cids: number[]): Promise<void> {
+  const list = [...new Set(cids)].join(', ');
+  console.log(`Role sync: Discord account ${discordId} is on VATUSA for more than one member (CIDs ${list})`);
+  await postOnce(env, `${SHARED_PREFIX}${discordId}`, `Role sync: Discord account ${discordId} is on VATUSA for more than one member (CIDs ${list}). It gets no roles until one of them links it on their profile.`);
 }
 
 function nicknameNote(nickname: NicknameOutcome | null): string {
@@ -292,7 +303,7 @@ async function resolvePerson(
   env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv,
   run: RunLists,
   member: { discordId: string; cid?: number },
-): Promise<{ person: VatusaPerson | null; ambiguous?: number; linkedElsewhere?: boolean; accountTaken?: boolean; identity?: IdentityUser | null }> {
+): Promise<{ person: VatusaPerson | null; ambiguous?: number[]; linkedElsewhere?: boolean; accountTaken?: boolean; identity?: IdentityUser | null }> {
   // A CID was given (a link write, syncMember) and its account was settled when the job was queued. Look
   // again for the race (another member linked it since); if identity can't answer now, go on with the job.
   const holder = member.cid === undefined ? await findByDiscordId(env, member.discordId) : await findByDiscordId(env, member.discordId).catch(() => null);
@@ -300,7 +311,7 @@ async function resolvePerson(
   const cid = member.cid ?? holder?.cid;
   const identity = holder ?? undefined;
   const matches = run.people.filter((person) => (cid !== undefined ? person.cid === cid : person.discordId === member.discordId));
-  if (matches.length > 1) return { person: null, ambiguous: matches.length };
+  if (matches.length > 1) return { person: null, ambiguous: matches.map((match) => match.cid) };
 
   const person = matches[0] ?? (await lookupVatusa(env.KV, cid !== undefined ? { cid } : { discordId: member.discordId }));
   if (person) {
@@ -414,13 +425,39 @@ export async function getLinks(env: RoleSyncEnv, cid: number): Promise<Links> {
 /** Post to the tech team once per outage. If the post fails, the next skipped run tries again. */
 async function alertOnce(env: RoleSyncEnv, content: string): Promise<void> {
   console.warn(content);
-  if (await env.KV.get(OUTAGE_KEY)) return;
+  await postOnce(env, OUTAGE_KEY, content);
+}
+
+/** Post to the tech team unless `key` says this alert already stands; set `key` once it is posted. */
+async function postOnce(env: Pick<RoleSyncEnv, 'KV' | 'DISCORD_TOKEN' | 'SEND_CHANNELS' | 'LARRY_QUEUE'>, key: string, content: string): Promise<void> {
+  if (await env.KV.get(key)) return;
   try {
     await sendNow(env as SendEnv, 'channel', { channel: ALERT_CHANNEL, content, allowedMentions: { parse: [] } });
-    await env.KV.put(OUTAGE_KEY, new Date().toISOString());
+    await env.KV.put(key, new Date().toISOString());
   } catch (error) {
     console.error(`Role sync couldn't post its alert to ${ALERT_CHANNEL}: ${String(error)}`);
   }
+}
+
+/** The Discord IDs VATUSA's lists give to more than one CID. */
+function sharedDiscordIds(people: VatusaPerson[]): Set<string> {
+  const owners = new Map<string, Set<number>>();
+  for (const person of people) {
+    if (!person.discordId) continue;
+    owners.set(person.discordId, (owners.get(person.discordId) ?? new Set()).add(person.cid));
+  }
+  return new Set([...owners].filter(([, cids]) => cids.size > 1).map(([id]) => id));
+}
+
+/** A run that no longer finds a Discord ID shared forgets its alert, so a recurrence posts again. */
+async function clearSharedAlerts(env: Pick<RoleSyncEnv, 'KV'>, people: VatusaPerson[]): Promise<void> {
+  const shared = sharedDiscordIds(people);
+  let cursor: string | undefined;
+  do {
+    const page = await env.KV.list({ prefix: SHARED_PREFIX, cursor });
+    for (const { name } of page.keys) if (!shared.has(name.slice(SHARED_PREFIX.length))) await env.KV.delete(name);
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
 }
 
 function joinNames(names: string[]): string {
