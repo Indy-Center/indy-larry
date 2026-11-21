@@ -1,6 +1,6 @@
 // Larry's send Worker. Other Workers bind to it as a service and call send(), sendDirect(),
 // enqueue() and enqueueDirect(); see the README's "Sending messages from other apps".
-// It has no fetch handler, so it isn't reachable from the internet.
+// It has no fetch handler, so it isn't reachable from the internet. Its cron runs the role sync.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "indy-larry",
@@ -14,9 +14,31 @@
   // ENV_SEND_CHANNELS repo variable with --var. DISCORD_TOKEN is a Worker secret set by the same deploy.
   // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables.
   // For wrangler dev, put them all in .dev.vars (see .dev.vars.example).
+  "vars": {
+    // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing.
+    "ROLE_SYNC_MODE": "dry-run"
+  },
+  // The role sync: fetch VATUSA's lists and queue one job per Discord member on role-sync.
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  // indy-larry-worker: each role sync run's lists, and whether an outage has been alerted.
+  "kv_namespaces": [{ "binding": "KV", "id": "8d0096c00d624d73aa8da3bc06f149de" }],
   "queues": {
-    "producers": [{ "binding": "LARRY_QUEUE", "queue": "larry-messages" }],
+    "producers": [
+      { "binding": "LARRY_QUEUE", "queue": "larry-messages" },
+      { "binding": "ROLE_SYNC_QUEUE", "queue": "role-sync" }
+    ],
     "consumers": [
+      {
+        "queue": "role-sync",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        // One batch at a time, so the live sync to come stays inside Discord's rate limits.
+        "max_concurrency": 1,
+        "dead_letter_queue": "role-sync-dlq"
+      },
       {
         "queue": "larry-messages",
         "max_batch_size": 10,

@@ -37,7 +37,7 @@ const POWERFUL =
   (1n << 40n); // Timeout Members
 
 type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean };
-type DiscordMember = { user?: { id: string }; roles: string[] };
+export type DiscordMember = { user?: { id: string }; roles: string[] };
 
 /** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
 function refusal(role: DiscordRole, guild: string): string | null {
@@ -76,7 +76,7 @@ export function checkRoles(request: RolesSync): RoleSync[] {
 }
 
 /** Every member of the server, or null when the bot isn't allowed to list them. */
-async function listMembers(token: string, guild: string): Promise<DiscordMember[] | null> {
+export async function listMembers(token: string, guild: string): Promise<DiscordMember[] | null> {
   const members: DiscordMember[] = [];
   let after = '0';
   for (let page = 0; page < MAX_MEMBER_PAGES; page++) {
