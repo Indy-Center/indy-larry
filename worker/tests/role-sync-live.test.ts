@@ -256,6 +256,32 @@ describe("a member the sync can't resolve", () => {
   });
 });
 
+describe('an account whose CID is linked to another Discord account', () => {
+  const LINKED = '800000000000000005';
+  // VATUSA gives CID 1000001 the account JO, but identity has them linked to LINKED, so JO is a stale account.
+  const staleServer = () => serverWith([member(JO, 'Test Person1000001', ROLE.observer, ROLE.handGiven, ROLE.member)]);
+
+  it('live removes its managed roles, leaving the hand-given role', async () => {
+    start('live', [idUser(1000001, LINKED)]);
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), staleServer());
+    const { lines, messages } = await cronAndConsume();
+
+    expect(roleWrites(writes)).toEqual([`DELETE /guilds/${GUILD}/members/${JO}/roles/${ROLE.observer}`, `DELETE /guilds/${GUILD}/members/${JO}/roles/${ROLE.member}`]);
+    expect(nicknameWrites(writes)).toEqual([]);
+    expect(lines).toEqual([`Role sync (live): ${JO} unresolved (their CID is linked to another Discord account): remove Observer, Member`]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+
+  it('dry-run logs the roles it would remove and calls Discord for nothing', async () => {
+    start('dry-run', [idUser(1000001, LINKED)]);
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), staleServer());
+    const { lines } = await cronAndConsume();
+
+    expect(writes).toEqual([]);
+    expect(lines).toEqual([`Role sync (dry run): ${JO} unresolved (their CID is linked to another Discord account): remove Observer, Member`]);
+  });
+});
+
 describe("Larry's place in the role list", () => {
   // Jo is the ZID ATM (Senior Staff) and a mentor (Mentor, Training Staff).
   const atm = () => s3(1000001, JO, { roles: [role(1000001, 'ZID', 'ATM'), role(1000001, 'ZID', 'MTR')] });
