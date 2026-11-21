@@ -1,7 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
-import { consumeRoleSync, startRoleSync, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
+import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMember, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, type QueueJob, type SendEnv } from './send';
 
@@ -86,6 +86,22 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
       step(`refusing the call with: ${String(error)}`);
       throw error;
     }
+  }
+
+  linkDiscord(cid: number, discordId: string) {
+    return linkDiscord(this.env, cid, discordId);
+  }
+
+  unlink(cid: number, service: 'discord' | 'teamspeak') {
+    return unlink(this.env, cid, service);
+  }
+
+  getLinks(cid: number) {
+    return getLinks(this.env, cid);
+  }
+
+  syncMember(cid: number) {
+    return syncMember(this.env, cid);
   }
 
   /** Both queues come here: `role-sync` to the role sync, `larry-messages` to the sender. */

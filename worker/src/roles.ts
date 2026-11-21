@@ -95,6 +95,16 @@ export async function listMembers(token: string, guild: string): Promise<Discord
   throw new Error(`The server has more than ${MAX_MEMBER_PAGES * MEMBERS_PAGE} members; refusing to sync roles on a partial list`);
 }
 
+/** One member of the server, or null when they aren't in it. */
+export async function getMember(token: string, guild: string, userId: string): Promise<DiscordMember | null> {
+  try {
+    return await discord<DiscordMember>(token, 'GET', `/guilds/${guild}/members/${userId}`);
+  } catch (error) {
+    if (error instanceof DiscordError && error.code === UNKNOWN_MEMBER) return null;
+    throw error;
+  }
+}
+
 /** RPC: make each role's membership match, and say what changed. */
 export async function syncRoles(env: GuildEnv, request: RolesSync): Promise<RolesResult> {
   const guild = guildId(env);

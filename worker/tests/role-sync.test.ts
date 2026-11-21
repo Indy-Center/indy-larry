@@ -4,6 +4,7 @@ import { syncDiscordMember, type RoleSyncMessage } from '../src/role-sync';
 import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
+import { fakeIdentity } from './fake-identity';
 import { fakeTraining, trainee } from './fake-training';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
@@ -33,6 +34,7 @@ function makeEnv() {
     ROLE_SYNC_MODE: 'dry-run',
     KV: fakeKv(),
     TRAINING: fakeTraining({ members: [trainee(1000001)] }),
+    IDENTITY: fakeIdentity(),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
   };
@@ -198,7 +200,7 @@ describe('members the lists do not cover', () => {
   });
 
   describe("a known CID VATUSA has no record of (a link's CID)", () => {
-    const sync = (cid: number) => syncDiscordMember({ ROLE_SYNC_MODE: 'dry-run', KV: env.KV }, { people: [], credentials: {} }, { discordId: PILOT, roleIds: [], cid });
+    const sync = (cid: number) => syncDiscordMember({ ROLE_SYNC_MODE: 'dry-run', KV: env.KV }, { people: [], credentials: {}, links: [] }, { discordId: PILOT, roleIds: [], cid });
 
     it('takes their rating from VATSIM, and caches it for 24 hours', async () => {
       const { vatsimCalls } = fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { vatsimRatings: { 1000020: 4 } });
