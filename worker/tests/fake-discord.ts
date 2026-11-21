@@ -9,7 +9,7 @@ export type Server = {
   larryRoles?: string[];
   channels?: { id: string; name: string; type: number; parent_id?: string | null; guild_id?: string }[];
   /** Null stands for the Server Members intent being off. */
-  members?: { user: { id: string }; roles: string[]; nick?: string | null }[] | null;
+  members?: { user: { id: string; bot?: boolean }; roles: string[]; nick?: string | null }[] | null;
   /** The server owner's user ID. */
   owner?: string;
   /** User IDs Discord answers "Unknown Member" for when a role is added. */

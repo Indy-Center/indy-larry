@@ -37,7 +37,7 @@ const POWERFUL =
   (1n << 40n); // Timeout Members
 
 export type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean; position?: number };
-export type DiscordMember = { user?: { id: string }; roles: string[]; nick?: string | null };
+export type DiscordMember = { user?: { id: string; bot?: boolean }; roles: string[]; nick?: string | null };
 
 /** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
 function refusal(role: DiscordRole, guild: string): string | null {

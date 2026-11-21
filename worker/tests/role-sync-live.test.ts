@@ -163,6 +163,99 @@ describe('roles', () => {
   });
 });
 
+describe("a member the sync can't resolve", () => {
+  // On no list, and VATUSA answers 404 for their Discord ID: two managed roles and a hand-given one.
+  const strangerServer = (extra: Partial<Server> = {}) => serverWith([member(STRANGER, 'Someone', ROLE.observer, ROLE.handGiven, ROLE.member)], [], extra);
+  const removals = (writes: Write[]) => roleWrites(writes).filter((write) => write.startsWith('DELETE'));
+
+  it('live removes exactly their managed roles, leaving the hand-given role and the nickname', async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(), strangerServer());
+    const { lines, messages } = await cronAndConsume();
+
+    expect(roleWrites(writes)).toEqual([`DELETE /guilds/${GUILD}/members/${STRANGER}/roles/${ROLE.observer}`, `DELETE /guilds/${GUILD}/members/${STRANGER}/roles/${ROLE.member}`]);
+    expect(nicknameWrites(writes)).toEqual([]);
+    expect(lines).toEqual([`Role sync (live): ${STRANGER} unresolved: remove Observer, Member`]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+
+  it('dry-run calls Discord for nothing and logs the roles it would remove', async () => {
+    start('dry-run');
+    const { writes } = fakeVatusaAndDiscord(listsWith(), strangerServer());
+    const { lines } = await cronAndConsume();
+
+    expect(writes).toEqual([]);
+    expect(lines).toEqual([`Role sync (dry run): ${STRANGER} unresolved: remove Observer, Member`]);
+  });
+
+  it('still skips a mapped role at or above Larry\'s highest', async () => {
+    const server = serverWith([member(STRANGER, null, ROLE.seniorStaff, ROLE.member)], [{ id: ROLE.seniorStaff, name: 'Senior Staff', position: 20 }]);
+    const { writes } = fakeVatusaAndDiscord(listsWith(), server);
+    await cronAndConsume();
+
+    expect(roleWrites(writes)).toEqual([`DELETE /guilds/${GUILD}/members/${STRANGER}/roles/${ROLE.member}`]);
+    expect(warnings).toContain("Role sync: skipping mapped role Senior Staff this run: it is at or above Larry's highest role");
+  });
+
+  for (const mode of ['live', 'dry-run']) {
+    it(`${mode}: leaves a bot account alone, mapped role and all, without looking it up`, async () => {
+      start(mode);
+      const { writes, vatusaCalls } = fakeVatusaAndDiscord(listsWith(), serverWith([{ user: { id: STRANGER, bot: true }, roles: [ROLE.member], nick: null }]));
+      const { lines, messages } = await cronAndConsume();
+
+      expect(writes).toEqual([]);
+      expect(vatusaCalls).not.toContain(`/user/${STRANGER}?d`);
+      expect(lines).toEqual([`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${STRANGER} is a bot account: left alone`]);
+      expect(messages[0]!.acked).toBe(true);
+    });
+  }
+
+  it('leaves a bot account alone when it joins (sync-member)', async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(), serverWith([{ user: { id: STRANGER, bot: true }, roles: [ROLE.member], nick: null }]));
+    const { lines } = await consume([{ type: 'sync-member', discordId: STRANGER }]);
+
+    expect(roleWrites(writes)).toEqual([]);
+    expect(lines).toEqual([`Role sync (live): ${STRANGER} is a bot account: left alone`]);
+  });
+
+  it('fails the job, removing nothing, when the per-user lookup answers 500', async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(), strangerServer());
+    const fetched = globalThis.fetch;
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+      url.endsWith(`/user/${STRANGER}?d`) ? Promise.resolve(new Response('Internal Server Error', { status: 500 })) : fetched(url, init),
+    );
+    const { messages } = await cronAndConsume();
+
+    expect(removals(writes)).toEqual([]);
+    expect(messages.map((message) => [message.acked, message.retried])).toEqual([[false, true]]);
+  });
+
+  it('fails the job, removing nothing, when identity is down', async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(), strangerServer());
+    await cron();
+    env.IDENTITY.down = true;
+    const { messages } = await consume();
+
+    expect(removals(writes)).toEqual([]);
+    expect(messages.map((message) => [message.acked, message.retried])).toEqual([[false, true]]);
+  });
+
+  it("removes the managed roles of an account unlinked in identity, at the next run, when it isn't anyone's VATUSA Discord ID", async () => {
+    const LINKED = '800000000000000005';
+    start('live', [idUser(1000001, LINKED)]);
+    // Their VATUSA Discord ID is JO, not the account they had linked.
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), serverWith([member(LINKED, 'Test Person1000001', ROLE.student3, ROLE.member, ROLE.atc)]));
+    await cronAndConsume();
+    expect(roleWrites(writes)).toEqual([]);
+
+    await larry.unlink(1000001, 'discord');
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    const { lines } = await cronAndConsume();
+
+    expect(removals(writes)).toEqual([ROLE.student3, ROLE.atc, ROLE.member].map((id) => `DELETE /guilds/${GUILD}/members/${LINKED}/roles/${id}`));
+    expect(lines).toEqual([`Role sync (live): ${LINKED} unresolved: remove Student 3, Air Traffic Controller, Member`]);
+  });
+});
+
 describe("Larry's place in the role list", () => {
   // Jo is the ZID ATM (Senior Staff) and a mentor (Mentor, Training Staff).
   const atm = () => s3(1000001, JO, { roles: [role(1000001, 'ZID', 'ATM'), role(1000001, 'ZID', 'MTR')] });
