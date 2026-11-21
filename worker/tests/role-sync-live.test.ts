@@ -5,7 +5,7 @@ import type { VatusaRecord } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server, type Write } from './fake-discord';
 import { identityEnv, idUser, type FakeUser } from './fake-identity';
-import { fakeTraining, trainee } from './fake-training';
+import { fakeSource } from './fake-source';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
 
@@ -38,7 +38,7 @@ function makeEnv(mode: string, users: FakeUser[] = []) {
     SEND_CHANNELS: 'tech-team-alerts:300000000000000001',
     ROLE_SYNC_MODE: mode,
     KV: fakeKv(),
-    TRAINING: fakeTraining({ members: [trainee(1000001)] }),
+    TRAINING: fakeSource(),
     ...identityEnv(users),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),

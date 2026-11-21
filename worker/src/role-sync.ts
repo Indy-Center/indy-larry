@@ -1,14 +1,16 @@
-import type { Links, SyncMemberResult } from './client/api';
+import { postOnce, type AlertEnv } from './alerts';
+import type { Links, SyncMemberResult, SyncMembersResult } from './client/api';
 import { rolesFor } from './criteria';
 import { discord, guildId, SNOWFLAKE, type GuildEnv } from './discord';
+import type { GroupSourcesEnv } from './group-sources';
+import { groupChanges, syncGroups, type GroupChanges } from './groups';
 import { findByDiscordId, getUser, IdentityConflict, writeDiscordId, type IdentityEnv, type IdentityUser } from './identity';
 import { lookupVatsimRating, lookupVatusa } from './lookups';
-import { checkMapping, MAPPING } from './mapping';
+import { MAPPING } from './mapping';
 import { nicknameFor } from './nickname-rule';
 import { applyNickname, nicknameGuard, type NicknameGuard, type NicknameOutcome } from './nicknames';
 import { getMember, listMembers, syncRefusal, type DiscordMember, type DiscordRole } from './roles';
-import { sendNow, type SendEnv } from './send';
-import { fetchCredentials, type Credentials, type TrainingBinding } from './training';
+import type { SendEnv } from './send';
 import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
 
 /**
@@ -28,8 +30,11 @@ import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
  * failure fails that member's job, so the queue retries it.
  *
  * A member's Discord link lives in identity and is read through identity.ts: a Discord account that is
- * someone's link takes that CID, whatever VATUSA says. syncMember() and the link writes queue one
+ * someone's link takes that CID, whatever VATUSA says. syncMembers() and the link writes queue one
  * member's job by CID (`sync-cid`).
+ *
+ * Every job also gives and takes the roles of the groups apps serve (groups.ts), from each source's
+ * latest copy as it stands when the job runs, under that source's mode as well as `ROLE_SYNC_MODE`.
  */
 
 /** Every message on the `role-sync` queue. Each new kind of job is a new member of this union. */
@@ -53,7 +58,7 @@ export type RoleSyncMessage =
       discordId: string;
     }
   | {
-      /** One member's job by CID, from syncMember() and the link writes. Their roles are read when it runs. */
+      /** One member's job by CID, from syncMembers() and the link writes. Their roles are read when it runs. */
       type: 'sync-cid';
       cid: number;
       discordId: string;
@@ -61,10 +66,9 @@ export type RoleSyncMessage =
 
 export type RoleSyncEnv = GuildEnv &
   Pick<SendEnv, 'SEND_CHANNELS' | 'LARRY_QUEUE'> &
-  IdentityEnv & {
+  IdentityEnv &
+  GroupSourcesEnv & {
     KV: KVNamespace;
-    /** `training-tools`' `TrainingRpc`: certifications and endorsements. */
-    TRAINING: TrainingBinding;
     ROLE_SYNC_QUEUE: Queue<RoleSyncMessage>;
     /** `dry-run` (the default): log what would change, change nothing. `live`: change it. */
     ROLE_SYNC_MODE?: string;
@@ -74,14 +78,10 @@ export type RoleSyncEnv = GuildEnv &
 export type RunServer = { skippedRoles: string[]; guard: NicknameGuard };
 
 /** The lists a run fetched, as kept in KV for that run's jobs. */
-export type RunLists = { people: VatusaPerson[]; credentials: Credentials; server: RunServer };
+export type RunLists = { people: VatusaPerson[]; server: RunServer };
 
 type Mode = 'dry-run' | 'live';
 
-/** What posting an alert to the tech team needs. */
-type AlertEnv = Pick<RoleSyncEnv, 'KV' | 'DISCORD_TOKEN' | 'SEND_CHANNELS' | 'LARRY_QUEUE'>;
-
-const ALERT_CHANNEL = 'tech-team-alerts';
 /** Set while a skipped run's alert stands, so an outage is posted once, not every 15 minutes. */
 const OUTAGE_KEY = 'role-sync:outage';
 /** Set while a shared Discord ID's alert stands, so it is posted once per ID until a run no longer finds it shared. */
@@ -89,7 +89,7 @@ const SHARED_PREFIX = 'role-sync:shared:';
 const runKey = (runId: string) => `role-sync:run:${runId}`;
 /** The newest run's ID, so a job that has no run of its own (sync-member, sync-cid) can read that run's lists. */
 const LATEST_RUN_KEY = 'role-sync:latest-run';
-/** Set when a member's sync is queued by syncMember(), so the profile buttons can't flood the queue. */
+/** Set when a member's sync is queued by syncMembers(), so the profile buttons can't flood the queue. */
 const memberKey = (cid: number) => `role-sync:member:${cid}`;
 const MEMBER_COOLDOWN_SECONDS = 120;
 // Long past the time a run's jobs take; a job whose lists have gone is left to the next run.
@@ -138,18 +138,15 @@ async function readServer(env: GuildEnv): Promise<RunServer> {
   return { skippedRoles, guard: nicknameGuard(info.owner_id, me.id, others, larryTop) };
 }
 
-/** The cron: fetch VATUSA's lists, then queue one job per Discord member. A bad fetch skips the run. */
+/**
+ * The cron: fetch VATUSA's lists, make the groups' roles and rooms (groups.ts), then queue one job per
+ * Discord member. A bad VATUSA fetch skips the run; a group source's trouble skips only its groups.
+ */
 export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   checkMode(env);
-  checkMapping(MAPPING);
   const fetched = await fetchLists();
   if ('failed' in fetched) {
     await alertOnce(env, `Role sync skipped: couldn't fetch ${joinNames(fetched.failed)} from VATUSA.`);
-    return;
-  }
-  const credentials = await fetchCredentials(env.TRAINING);
-  if (!credentials) {
-    await alertOnce(env, "Role sync skipped: couldn't fetch the training roster.");
     return;
   }
   await env.KV.delete(OUTAGE_KEY);
@@ -158,8 +155,9 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   const members = await listMembers(env.DISCORD_TOKEN, guildId(env));
   if (!members) throw new Error("Role sync can't list the server's members: switch on the Server Members intent");
 
+  await syncGroups(env);
   const runId = crypto.randomUUID();
-  const run: RunLists = { people: peopleFrom(fetched.lists), credentials, server: await readServer(env) };
+  const run: RunLists = { people: peopleFrom(fetched.lists), server: await readServer(env) };
   await env.KV.put(runKey(runId), JSON.stringify(run), { expirationTtl: RUN_LISTS_TTL_SECONDS });
   await env.KV.put(LATEST_RUN_KEY, runId, { expirationTtl: RUN_LISTS_TTL_SECONDS });
 
@@ -233,11 +231,7 @@ function memberFrom(discordId: string, held: DiscordMember): SyncTarget {
  * (`live`) or log what would change (`dry-run`). `roleIds` and `nick` are what they hold now. The one
  * place a member is synced, whatever asked for it. Throws when Discord refuses a change.
  */
-async function syncDiscordMember(
-  env: AlertEnv & Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'GUILD_ID'> & IdentityEnv,
-  run: RunLists,
-  member: SyncTarget,
-): Promise<MemberSync> {
+async function syncDiscordMember(env: RoleSyncEnv, run: RunLists, member: SyncTarget): Promise<MemberSync> {
   const mode = checkMode(env);
   const label = mode === 'live' ? 'live' : 'dry run';
   const result: MemberSync = { discordId: member.discordId, cid: null, add: [], remove: [], nickname: null };
@@ -249,7 +243,7 @@ async function syncDiscordMember(
 
   const found = await resolvePerson(env, run, member);
   if (found.kind === 'shared-id') await reportSharedId(env, member.discordId, found.sharedCids);
-  const person = found.kind === 'person' ? { ...found.person, credentials: run.credentials[String(found.person.cid)] ?? [] } : null;
+  const person = found.kind === 'person' ? found.person : null;
   result.cid = person?.cid ?? null;
 
   const addIds: string[] = [];
@@ -272,10 +266,19 @@ async function syncDiscordMember(
     }
   }
 
+  // The groups' roles, the same way: an account another member has linked is left to its own job.
+  const groups = found.kind === 'account-taken' ? [] : await groupChanges(env, person?.cid ?? null, member.roleIds);
+
   if (mode === 'live') {
     const guild = guildId(env);
-    for (const id of addIds) await discord(env.DISCORD_TOKEN, 'PUT', `/guilds/${guild}/members/${member.discordId}/roles/${id}`, undefined, 'Role sync');
-    for (const id of removeIds) await discord(env.DISCORD_TOKEN, 'DELETE', `/guilds/${guild}/members/${member.discordId}/roles/${id}`, undefined, 'Role sync');
+    const route = (id: string) => `/guilds/${guild}/members/${member.discordId}/roles/${id}`;
+    for (const id of addIds) await discord(env.DISCORD_TOKEN, 'PUT', route(id), undefined, 'Role sync');
+    for (const id of removeIds) await discord(env.DISCORD_TOKEN, 'DELETE', route(id), undefined, 'Role sync');
+    for (const change of groups) {
+      if (!change.apply) continue;
+      for (const role of change.add) await discord(env.DISCORD_TOKEN, 'PUT', route(role.id), undefined, `Group sync: ${change.source}`);
+      for (const role of change.remove) await discord(env.DISCORD_TOKEN, 'DELETE', route(role.id), undefined, `Group sync: ${change.source}`);
+    }
   }
 
   if (person && found.kind === 'person') {
@@ -283,8 +286,20 @@ async function syncDiscordMember(
     if (to) result.nickname = await applyNickname(env, run.server.guard, member, to, mode === 'dry-run');
   }
 
-  console.log(`Role sync (${label}): ${member.discordId} ${summary(found, result)}`);
+  console.log(`Role sync (${label}): ${member.discordId} ${summary(found, result)}${groupNote(groups, mode)}`);
   return result;
+}
+
+/** The log line's account of a member's group roles, per source, when any would change. */
+function groupNote(groups: GroupChanges[], mode: Mode): string {
+  return groups
+    .filter((change) => change.add.length > 0 || change.remove.length > 0)
+    .map((change) => {
+      const label = mode === 'live' && change.apply ? 'live' : 'dry run';
+      const names = (roles: { name: string }[]) => roles.map((role) => role.name).join(', ') || 'nothing';
+      return `; ${change.source} groups (${label}): add ${names(change.add)}; remove ${names(change.remove)}`;
+    })
+    .join('');
 }
 
 /** The log line's account of a member: who they are, and what the sync changes. */
@@ -355,7 +370,7 @@ type Resolution =
 type LinkAnswer = { holder: IdentityUser | null } | { holder: null; unreachable: unknown };
 
 async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: RunLists, member: { discordId: string; cid?: number }): Promise<Resolution> {
-  // A CID was given (a link write, syncMember) and its account was settled when the job was queued. Look
+  // A CID was given (a link write, syncMembers) and its account was settled when the job was queued. Look
   // again for the race (another member linked it since); if identity can't answer now, go on with the job.
   const link: LinkAnswer =
     member.cid === undefined
@@ -390,22 +405,23 @@ async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: Ru
   }
   return {
     kind: 'person',
-    person: { cid, discordId: member.discordId, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], credentials: [], name: null },
+    person: { cid, discordId: member.discordId, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], name: null },
     identity,
   };
 }
 
+/** The newest run's lists, while they are kept. */
+async function latestRun(env: Pick<RoleSyncEnv, 'KV'>): Promise<RunLists | null> {
+  const latestId = await env.KV.get(LATEST_RUN_KEY);
+  return latestId ? await env.KV.get<RunLists>(runKey(latestId), 'json') : null;
+}
+
 /**
  * The lists a single member's job reads, which has no run of its own: the newest run's if it is still
- * kept, otherwise only the training roster and no VATUSA lists (the per-user lookups cover the member).
+ * kept, otherwise no VATUSA lists (the per-user lookups cover the member).
  */
 export async function runListsForMember(env: RoleSyncEnv): Promise<RunLists> {
-  const latestId = await env.KV.get(LATEST_RUN_KEY);
-  const latest = latestId ? await env.KV.get<RunLists>(runKey(latestId), 'json') : null;
-  if (latest) return latest;
-  const credentials = await fetchCredentials(env.TRAINING);
-  if (!credentials) throw new Error("Can't sync a member: couldn't fetch the training roster");
-  return { people: [], credentials, server: await readServer(env) };
+  return (await latestRun(env)) ?? { people: [], server: await readServer(env) };
 }
 
 /**
@@ -425,16 +441,17 @@ export async function syncMemberJob(env: RoleSyncEnv, member: { discordId: strin
 const NO_ACCOUNT = 'No Discord account or TeamSpeak identity is known for this member.';
 
 /**
- * The Discord account to sync for a CID: their identity link, else the VATUSA Discord ID (from the lists,
- * else VATUSA's per-user lookup), unless another member has linked that account.
+ * The Discord account to sync for a CID, by the role sync's rule: their identity link, else the VATUSA
+ * Discord ID (from the lists, else VATUSA's per-user lookup), unless another member has linked that
+ * account or the lists give it to more than one CID.
  */
-async function discordIdFor(env: RoleSyncEnv, cid: number): Promise<{ id: string; source: 'linked' | 'vatusa' } | null> {
+export async function discordIdFor(env: RoleSyncEnv, cid: number): Promise<{ id: string; source: 'linked' | 'vatusa' } | null> {
   const linked = (await getUser(env, cid))?.discordId;
   if (linked) return { id: linked, source: 'linked' };
-  const latestId = await env.KV.get(LATEST_RUN_KEY);
-  const latest = latestId ? await env.KV.get<RunLists>(runKey(latestId), 'json') : null;
+  const latest = await latestRun(env);
   const person = latest?.people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
   if (!person?.discordId) return null;
+  if (latest && sharedDiscordIds(latest.people).has(person.discordId)) return null;
   const holder = await findByDiscordId(env, person.discordId);
   return holder && holder.cid !== cid ? null : { id: person.discordId, source: 'vatusa' };
 }
@@ -447,11 +464,28 @@ async function queueMemberSync(env: RoleSyncEnv, cid: number): Promise<SyncMembe
   return { queued: true };
 }
 
-/** RPC: queue one member's sync now. At most once every 2 minutes per member. */
-export async function syncMember(env: RoleSyncEnv, cid: number): Promise<SyncMemberResult> {
+/** The most CIDs one syncMembers() call takes. */
+const MAX_SYNC_MEMBERS = 100;
+
+/**
+ * RPC: sync these members now. Reads every group source again first (`refresh`, groups.ts), so their
+ * jobs see what the app has just changed, then queues each CID's job. At most once every 2 minutes per member.
+ */
+export async function syncMembers(env: RoleSyncEnv, cids: number[], refresh: () => Promise<void>): Promise<SyncMembersResult> {
   checkMode(env);
-  if (await env.KV.get(memberKey(cid))) return { queued: false, reason: 'Synced moments ago; try again in a minute.' };
-  return queueMemberSync(env, cid);
+  if (!Array.isArray(cids) || cids.length === 0 || cids.length > MAX_SYNC_MEMBERS) throw new Error(`cids must be a list of 1 to ${MAX_SYNC_MEMBERS} CIDs`);
+  for (const cid of cids) if (!Number.isSafeInteger(cid) || cid <= 0) throw new Error(`"${cid}" isn't a CID`);
+
+  const unique = [...new Set(cids)];
+  const due: number[] = [];
+  const results = new Map<number, SyncMemberResult>();
+  for (const cid of unique) {
+    if (await env.KV.get(memberKey(cid))) results.set(cid, { queued: false, reason: 'Synced moments ago; try again in a minute.' });
+    else due.push(cid);
+  }
+  if (due.length > 0) await refresh();
+  for (const cid of due) results.set(cid, await queueMemberSync(env, cid));
+  return unique.map((cid) => ({ cid, ...results.get(cid)! }));
 }
 
 /** RPC: link a Discord account to a member in identity, and queue their sync. */
@@ -490,17 +524,6 @@ export async function getLinks(env: RoleSyncEnv, cid: number): Promise<Links> {
 async function alertOnce(env: RoleSyncEnv, content: string): Promise<void> {
   console.warn(content);
   await postOnce(env, OUTAGE_KEY, content);
-}
-
-/** Post to the tech team unless `key` says this alert already stands; set `key` once it is posted. */
-async function postOnce(env: AlertEnv, key: string, content: string): Promise<void> {
-  if (await env.KV.get(key)) return;
-  try {
-    await sendNow(env as SendEnv, 'channel', { channel: ALERT_CHANNEL, content, allowedMentions: { parse: [] } });
-    await env.KV.put(key, new Date().toISOString());
-  } catch (error) {
-    console.error(`Role sync couldn't post its alert to ${ALERT_CHANNEL}: ${String(error)}`);
-  }
 }
 
 /** The Discord IDs VATUSA's lists give to more than one CID. */

@@ -1,4 +1,4 @@
-// Public types of @indy-center/indy-larry-worker 1.2.0.
+// Public types of @indy-center/indy-larry-worker 1.3.0.
 export type {
   AllowedMentions,
   ChannelEdit,
@@ -11,9 +11,18 @@ export type {
   DeleteResult,
   Deletion,
   DirectSend,
+  Group,
+  GroupNotice,
+  GroupPost,
+  GroupPostResult,
+  GroupsAnswer,
+  GroupSource,
+  GroupState,
+  GroupStatus,
   LarryBinding,
   LarryRpc,
   LinkButton,
+  Links,
   ManagedChannel,
   MemberRole,
   Message,
@@ -23,4 +32,6 @@ export type {
   RolesResult,
   RolesSync,
   Sent,
+  SyncMemberResult,
+  SyncMembersResult,
 } from './api';

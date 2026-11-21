@@ -23,7 +23,9 @@ const MEMBER_PERMISSIONS =
   (1n << 15n) | // Attach Files
   (1n << 6n); // Add Reactions
 
-type DiscordChannel = { id: string; name: string; type: number; parent_id?: string | null; guild_id?: string };
+export const GUILD_TEXT_CHANNEL = GUILD_TEXT;
+
+export type DiscordChannel = { id: string; name: string; type: number; parent_id?: string | null; guild_id?: string };
 
 /** A channel name the way Discord stores it: lowercase, accents dropped, anything else a hyphen. */
 export function channelName(name: string): string {
@@ -37,7 +39,7 @@ export function channelName(name: string): string {
 }
 
 /** CHANNEL_CATEGORIES, "training:111, events:222", as name -> category ID. Same format as SEND_CHANNELS. */
-function categories(env: Pick<GuildEnv, 'CHANNEL_CATEGORIES'>): Map<string, string> {
+export function categories(env: Pick<GuildEnv, 'CHANNEL_CATEGORIES'>): Map<string, string> {
   return parseChannels(env.CHANNEL_CATEGORIES);
 }
 
@@ -84,59 +86,21 @@ export async function syncChannels(env: GuildEnv, request: ChannelsSync): Promis
     discord<DiscordChannel[]>(token, 'GET', `/guilds/${guild}/channels`),
     discord<{ id: string }>(token, 'GET', '/users/@me'),
   ]);
+  const place: ChannelPlace = { token, guild, me: me.id, channels };
 
   const results: ChannelSyncResult[] = [];
 
   for (const wanted of wantedChannels) {
-    const categoryId = known.get(wanted.category)!;
     const name = channelName(wanted.name);
     const result: ChannelSyncResult = { key: wanted.key, channelId: null, channelName: name, channel: 'found' };
     results.push(result);
 
     try {
-      // By ID, then by name under the category, then made there.
-      const inCategory = channels.filter((channel) => channel.type === GUILD_TEXT && channel.parent_id === categoryId);
-      const sameName = inCategory.filter((channel) => channel.name === name);
-      const byId = inCategory.find((candidate) => candidate.id === wanted.id);
-      const channel = byId ?? (sameName.length === 1 ? sameName[0] : undefined);
-      if (!channel && sameName.length > 1) throw new Error(`${sameName.length} channels are named "${name}"; give the channel's ID`);
-
-      if (channel) {
-        // Found, so its permissions are left as they are: someone set them, and they are not Larry's to change.
-        result.channelId = channel.id;
-        result.channelName = channel.name;
-        // Only a channel the caller knows by ID can have drifted: one found by name already has it.
-        if (wanted.rename && channel.name !== name) {
-          if (!dryRun) await discord(token, 'PATCH', `/channels/${channel.id}`, { name }, 'Channel sync: renamed');
-          result.renamedFrom = channel.name;
-          result.channelName = name;
-          channel.name = name;
-        }
-      } else if (dryRun) {
-        result.channel = 'would-create';
-      } else {
-        const allow = MEMBER_PERMISSIONS.toString();
-        const created = await discord<DiscordChannel>(
-          token,
-          'POST',
-          `/guilds/${guild}/channels`,
-          {
-            name,
-            type: GUILD_TEXT,
-            parent_id: categoryId,
-            permission_overwrites: [
-              { id: guild, type: 0, deny: VIEW_CHANNEL.toString() }, // @everyone
-              ...[...new Set(wanted.visibleTo)].map((id) => ({ id, type: 0, allow })),
-              { id: me.id, type: 1, allow }, // Larry itself, or it could not post here
-            ],
-          },
-          'Channel sync',
-        );
-        channels.push(created);
-        result.channelId = created.id;
-        result.channelName = created.name;
-        result.channel = 'created';
-      }
+      const placed = await placeChannel(place, { categoryId: known.get(wanted.category)!, id: wanted.id, name, rename: wanted.rename, visibleTo: wanted.visibleTo }, { dryRun });
+      result.channelId = placed.channelId;
+      result.channelName = placed.channelName;
+      result.channel = placed.outcome === 'renamed' ? 'found' : placed.outcome;
+      if (placed.renamedFrom !== undefined) result.renamedFrom = placed.renamedFrom;
     } catch (error) {
       result.error = error instanceof Error ? error.message : String(error);
       console.error(`Channel "${wanted.key}" could not be synced: ${result.error}`);
@@ -144,6 +108,61 @@ export async function syncChannels(env: GuildEnv, request: ChannelsSync): Promis
   }
 
   return { dryRun, channels: results };
+}
+
+/** The server's channels as read once, and who Larry is there. A channel placeChannel() creates is added to `channels`. */
+export type ChannelPlace = { token: string; guild: string; me: string; channels: DiscordChannel[] };
+
+/** A private text channel to find or create. `name` is already a channelName(). */
+export type WantedChannel = { categoryId: string; id?: string | null; name: string; rename?: boolean; visibleTo: string[] };
+
+export type PlacedChannel = { channelId: string | null; channelName: string; outcome: 'found' | 'renamed' | 'created' | 'would-create'; renamedFrom?: string };
+
+/**
+ * Find a channel by ID, then by name under its category, else create it there, visible only to
+ * `visibleTo` and Larry. A found channel keeps its permissions; one found by ID is renamed when `rename`
+ * and its name has drifted. `dryRun` changes nothing; `mayCreate: false` reports `would-create` instead
+ * of creating. Throws when two channels in the category share the name, or Discord refuses.
+ */
+export async function placeChannel(place: ChannelPlace, wanted: WantedChannel, { dryRun, mayCreate = true }: { dryRun: boolean; mayCreate?: boolean }): Promise<PlacedChannel> {
+  const { token, guild, channels } = place;
+  const { categoryId, name } = wanted;
+  const inCategory = channels.filter((channel) => channel.type === GUILD_TEXT && channel.parent_id === categoryId);
+  const sameName = inCategory.filter((channel) => channel.name === name);
+  const byId = wanted.id ? inCategory.find((candidate) => candidate.id === wanted.id) : undefined;
+  const channel = byId ?? (sameName.length === 1 ? sameName[0] : undefined);
+  if (!channel && sameName.length > 1) throw new Error(`${sameName.length} channels are named "${name}"; give the channel's ID`);
+
+  if (channel) {
+    // Found, so its permissions are left as they are: someone set them, and they are not Larry's to change.
+    // Only a channel the caller knows by ID can have drifted: one found by name already has it.
+    if (!(wanted.rename && channel.name !== name)) return { channelId: channel.id, channelName: channel.name, outcome: 'found' };
+    if (!dryRun) await discord(token, 'PATCH', `/channels/${channel.id}`, { name }, 'Channel sync: renamed');
+    const renamedFrom = channel.name;
+    channel.name = name;
+    return { channelId: channel.id, channelName: name, outcome: 'renamed', renamedFrom };
+  }
+  if (dryRun || !mayCreate) return { channelId: null, channelName: name, outcome: 'would-create' };
+
+  const allow = MEMBER_PERMISSIONS.toString();
+  const created = await discord<DiscordChannel>(
+    token,
+    'POST',
+    `/guilds/${guild}/channels`,
+    {
+      name,
+      type: GUILD_TEXT,
+      parent_id: categoryId,
+      permission_overwrites: [
+        { id: guild, type: 0, deny: VIEW_CHANNEL.toString() }, // @everyone
+        ...[...new Set(wanted.visibleTo)].map((id) => ({ id, type: 0, allow })),
+        { id: place.me, type: 1, allow }, // Larry itself, or it could not post here
+      ],
+    },
+    'Channel sync',
+  );
+  channels.push(created);
+  return { channelId: created.id, channelName: created.name, outcome: 'created' };
 }
 
 /** RPC: delete channels, and every message in them. One that is already gone counts as done. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rolesFor } from '../src/criteria';
-import { checkMapping, MAPPING, type MappingEntry } from '../src/mapping';
+import { MAPPING } from '../src/mapping';
 import { peopleFrom } from '../src/vatusa';
 import { lists, record, role } from './vatusa-records';
 
@@ -55,29 +55,5 @@ describe('the seeded mapping', () => {
     const from = lists({ ZID: [inactive] }, [us2]);
     expect(namesFor(1000007, from)).toEqual(['Controller 3', 'Member', 'VATUSA Staff']);
     expect(namesFor(1000008, from)).toEqual([]);
-  });
-});
-
-describe('checking a mapping when it loads', () => {
-  const certification = { type: 'certification', value: 'T-RC' } as const;
-
-  it('accepts the seeded mapping', () => {
-    expect(() => checkMapping(MAPPING)).not.toThrow();
-  });
-
-  it('accepts a certification entry that gives only a Discord role', () => {
-    const entries: MappingEntry[] = [{ name: 'Radar', discordRoleId: '900000000000000001', criteria: [{ conditions: [certification] }] }];
-    expect(() => checkMapping(entries)).not.toThrow();
-  });
-
-  it("refuses a certification condition on an entry with a TeamSpeak group, in any criterion", () => {
-    const entries: MappingEntry[] = [
-      { name: 'Radar', discordRoleId: '900000000000000001', teamspeakGroupId: 12, criteria: [{ conditions: [{ type: 'all' }] }, { conditions: [{ type: 'all' }, certification] }] },
-    ];
-    expect(() => checkMapping(entries)).toThrow("Mapping entry Radar: certifications can't give TeamSpeak groups");
-  });
-
-  it('accepts a TeamSpeak group on an entry with no certification condition', () => {
-    expect(() => checkMapping([{ name: 'Members', teamspeakGroupId: 12, criteria: [{ conditions: [{ type: 'all' }] }] }])).not.toThrow();
   });
 });

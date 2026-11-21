@@ -33,8 +33,6 @@ function conditionMatches(condition: Condition, person: VatusaPerson): boolean {
     }
     case 'role':
       return person.roles.some((held) => held.role === condition.value);
-    case 'certification':
-      return person.credentials.includes(condition.value);
     case 'division_staff':
       return person.roles.some((held) => held.role.startsWith('US') && /\d/.test(held.role));
   }
