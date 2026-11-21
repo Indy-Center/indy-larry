@@ -178,7 +178,7 @@ describe('the sync finds a member through their link first', () => {
     const { lines } = await consume();
 
     expect(lines).toContain(`Role sync (dry run): ${NEW} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`);
-    expect(lines).toContain(`Role sync (dry run): ${OLD} unresolved (their CID is linked to another Discord account): no changes`);
+    expect(lines).toContain(`Role sync (dry run): ${OLD} unresolved (their CID is linked to another Discord account): remove nothing`);
   });
 
   it('still finds a member by their VATUSA Discord ID when nobody has linked that CID', async () => {

@@ -19,6 +19,9 @@ export function fakeKv(): FakeKv {
     async delete(key: string) {
       store.delete(key);
     },
+    async list(options?: { prefix?: string }) {
+      return { keys: [...store.keys()].filter((name) => name.startsWith(options?.prefix ?? '')).map((name) => ({ name })), list_complete: true };
+    },
   } as unknown as FakeKv;
 }
 

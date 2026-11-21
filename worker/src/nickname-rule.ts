@@ -8,7 +8,8 @@ import type { VatusaName } from './vatusa';
  * 1. Their identity `preferred_name`, as typed, cut to 32 characters.
  * 2. Else VATUSA's "First Last", or "First CID" when VATUSA's name-privacy flag is on, shortened as
  *    VATUSA's bot does.
- * 3. Else (VATUSA doesn't know them) identity's `given_name` and their CID.
+ * 3. Else (VATUSA doesn't know them) identity's `given_name` and their CID. Over 32 characters, the
+ *    CID stays whole and the given name is cut to fit (trailing spaces trimmed).
  *
  * Nobody rated below 1 gets one. `identity` is null when identity has no user for them or couldn't be
  * reached.
@@ -22,13 +23,13 @@ export function nicknameFor(
   if (preferred?.trim()) return cut(preferred);
   if (person.name) return shorten(person.name.privacy ? `${person.name.first} ${person.cid}` : `${person.name.first} ${person.name.last}`);
   const given = identity?.givenName?.trim();
-  if (given) return cut(`${given} ${person.cid}`);
+  if (given) return `${cut(given, MAX_NICKNAME_LENGTH - 1 - String(person.cid).length).trimEnd()} ${person.cid}`;
   return null;
 }
 
 /** Discord counts characters, not UTF-16 units; so does this. */
 const characters = (text: string) => Array.from(text);
-const cut = (text: string) => characters(text).slice(0, MAX_NICKNAME_LENGTH).join('');
+const cut = (text: string, max = MAX_NICKNAME_LENGTH) => characters(text).slice(0, max).join('');
 
 /**
  * VATUSA's bot's shortenNickname (discord-bot-v3, internal/bot/nickname.go) with no title: the name as

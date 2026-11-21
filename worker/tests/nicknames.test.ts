@@ -8,7 +8,9 @@ const ADMIN = '500000000000000004';
 const ADMIN_ROLE = '600000000000000001';
 
 const env = { DISCORD_TOKEN: 'token', GUILD_ID: GUILD };
-const guard = nicknameGuard(OWNER, LARRY, [{ id: ADMIN_ROLE, permissions: String(1n << 3n) }, { id: '600000000000000002', permissions: '0' }]);
+const ABOVE_ROLE = '600000000000000002';
+// ADMIN_ROLE carries Administrator but sits below Larry's highest role (position 10); ABOVE_ROLE sits above it.
+const guard = nicknameGuard(OWNER, LARRY, [{ id: ADMIN_ROLE, position: 5 }, { id: ABOVE_ROLE, position: 20 }], 10);
 const member = (discordId: string, nick: string | null = null, ...roleIds: string[]) => ({ discordId, roleIds, nick });
 
 afterEach(() => {
@@ -35,12 +37,18 @@ describe('applyNickname', () => {
     expect(writes).toEqual([]);
   });
 
-  it('skips the owner, administrators and Larry itself, without touching them', async () => {
+  it('skips the owner, Larry itself and anyone holding a role at or above Larry\'s, without touching them', async () => {
     const writes = fakeDiscord({});
-    const outcomes = await Promise.all([member(OWNER), member(ADMIN, null, ADMIN_ROLE), member(LARRY)].map((m) => applyNickname(env, guard, m, 'New', false)));
+    const outcomes = await Promise.all([member(OWNER), member(ADMIN, null, ABOVE_ROLE), member(LARRY)].map((m) => applyNickname(env, guard, m, 'New', false)));
     expect(outcomes.map((o) => o.outcome)).toEqual(['skipped', 'skipped', 'skipped']);
     expect(outcomes.every((o) => o.outcome === 'skipped' && o.reason)).toBe(true);
     expect(writes).toEqual([]);
+  });
+
+  it('renames an administrator whose roles are below Larry\'s', async () => {
+    const writes = fakeDiscord({});
+    expect(await applyNickname(env, guard, member(ADMIN, null, ADMIN_ROLE), 'New', false)).toMatchObject({ outcome: 'set' });
+    expect(writes).toEqual([{ method: 'PATCH', path: `/guilds/${GUILD}/members/${ADMIN}`, body: { nick: 'New' } }]);
   });
 
   // Their top role is above Larry's: the caller's job fails, so the queue retries it.

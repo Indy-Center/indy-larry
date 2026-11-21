@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { MAPPING } from '../src/mapping';
 
 export const GUILD = '100000000000000000';
 export const LARRY = '400000000000000000';
@@ -9,14 +10,27 @@ export type Server = {
   larryRoles?: string[];
   channels?: { id: string; name: string; type: number; parent_id?: string | null; guild_id?: string }[];
   /** Null stands for the Server Members intent being off. */
-  members?: { user: { id: string }; roles: string[]; nick?: string | null }[] | null;
+  members?: { user: { id: string; bot?: boolean }; roles: string[]; nick?: string | null }[] | null;
   /** The server owner's user ID. */
   owner?: string;
   /** User IDs Discord answers "Unknown Member" for when a role is added. */
   unknown?: string[];
   /** IDs (of anything) Discord answers "Missing Permissions" for on a write. */
   forbidden?: string[];
+  /** Mapped role IDs the server doesn't have. The guild read (`GET /guilds/<id>`) lists every other mapped role. */
+  missingMapped?: string[];
 };
+
+/** The guild's roles as a run reads them: the server's own, plus each mapped role the test hasn't placed or removed, below every other role (position -1) so Larry outranks it even with no roles of its own. */
+function guildRoles(server: Server) {
+  const listed = server.roles ?? [];
+  const mapped = MAPPING.flatMap((entry) =>
+    entry.discordRoleId && !listed.some((role) => role.id === entry.discordRoleId) && !(server.missingMapped ?? []).includes(entry.discordRoleId)
+      ? [{ id: entry.discordRoleId, name: entry.name, position: -1 }]
+      : [],
+  );
+  return [...listed, ...mapped];
+}
 
 export type Write = { method: string; path: string; body?: Record<string, unknown> };
 
@@ -39,7 +53,7 @@ export function fakeDiscord(server: Server): Write[] {
         if (path.startsWith(`/guilds/${GUILD}/members?`)) {
           return server.members === null ? json({ message: 'Missing Access', code: 50001 }, 403) : json(server.members ?? []);
         }
-        if (path === `/guilds/${GUILD}`) return json({ id: GUILD, owner_id: server.owner ?? '999999999999999999', roles: server.roles ?? [] });
+        if (path === `/guilds/${GUILD}`) return json({ id: GUILD, owner_id: server.owner ?? '999999999999999999', roles: guildRoles(server) });
         const single = path.match(new RegExp(`^/guilds/${GUILD}/members/(\\d+)$`))?.[1];
         if (single) {
           // Larry is always in its server, with `larryRoles` unless the test lists it as a member.

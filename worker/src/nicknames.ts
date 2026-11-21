@@ -5,25 +5,24 @@ import { discord, guildId, type GuildEnv } from './discord';
  * why it won't; it doesn't know how a name is chosen.
  *
  * The bot needs Manage Nicknames, and its own role above the people it renames. Discord never lets a
- * bot rename the server's owner, and Larry also leaves administrators alone.
+ * bot rename the server's owner or anyone holding a role at or above its own. Administrators below it
+ * are renamed like everyone else.
  */
 
 /** Discord's limit on a server nickname. */
 export const MAX_NICKNAME_LENGTH = 32;
-const ADMINISTRATOR = 1n << 3n;
 
 /** Who Larry won't rename, worked out from the server. */
-export type NicknameGuard = { ownerId: string; meId: string; adminRoles: string[]; aboveLarry: string[] };
+export type NicknameGuard = { ownerId: string; meId: string; aboveLarry: string[] };
 
 /**
- * The guard for a server: its owner, Larry itself, the roles that carry Administrator, and the roles at
- * or above Larry's highest (`larryTop`, a role position), whose holders Discord won't let Larry rename.
+ * The guard for a server: its owner, Larry itself, and the roles at or above Larry's highest (`larryTop`,
+ * a role position), whose holders Discord won't let Larry rename.
  */
-export function nicknameGuard(ownerId: string, meId: string, roles: { id: string; permissions?: string; position?: number }[], larryTop = Infinity): NicknameGuard {
+export function nicknameGuard(ownerId: string, meId: string, roles: { id: string; position?: number }[], larryTop = Infinity): NicknameGuard {
   return {
     ownerId,
     meId,
-    adminRoles: roles.filter((role) => BigInt(role.permissions ?? '0') & ADMINISTRATOR).map((role) => role.id),
     aboveLarry: roles.filter((role) => (role.position ?? 0) >= larryTop).map((role) => role.id),
   };
 }
@@ -32,7 +31,6 @@ export function nicknameGuard(ownerId: string, meId: string, roles: { id: string
 export function leaveAlone(member: { discordId: string; roleIds: string[] }, guard: NicknameGuard): string | null {
   if (member.discordId === guard.ownerId) return "the server's owner can't be renamed by a bot";
   if (member.discordId === guard.meId) return 'Larry does not rename itself';
-  if (member.roleIds.some((id) => guard.adminRoles.includes(id))) return 'administrators are left alone';
   if (member.roleIds.some((id) => guard.aboveLarry.includes(id))) return "their highest role is at or above Larry's";
   return null;
 }

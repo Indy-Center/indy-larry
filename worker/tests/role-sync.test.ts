@@ -4,7 +4,7 @@ import type { RoleSyncMessage } from '../src/role-sync';
 import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
-import { identityEnv } from './fake-identity';
+import { identityEnv, idUser } from './fake-identity';
 import { fakeTraining, trainee } from './fake-training';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
@@ -115,8 +115,8 @@ describe('a good run', () => {
     expect(lines).toEqual([
       `Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer; nickname "Test Person1000001"`,
       `Role sync (dry run): ${MENTOR} CID 1000002: add Mentor, Training Staff, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000002"`,
-      `Role sync (dry run): ${STRANGER} unresolved: no changes`,
-      `Role sync (dry run): ${LARRY} unresolved: no changes`,
+      `Role sync (dry run): ${STRANGER} unresolved: remove Air Traffic Controller`,
+      `Role sync (dry run): ${LARRY} unresolved: remove nothing`,
     ]);
     expect(messages.every((message) => message.acked)).toBe(true);
   });
@@ -227,8 +227,8 @@ describe('members the lists do not cover', () => {
 
     expect(lines).toEqual([
       `Role sync (dry run): ${PILOT} CID 1000010: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000010"`,
-      `Role sync (dry run): ${GHOST} unresolved: no changes`,
-      `Role sync (dry run): ${LARRY} unresolved: no changes`,
+      `Role sync (dry run): ${GHOST} unresolved: remove nothing`,
+      `Role sync (dry run): ${LARRY} unresolved: remove nothing`,
     ]);
   });
 
@@ -298,7 +298,17 @@ describe('members the lists do not cover', () => {
     it('stays unresolved when VATSIM has no such member', async () => {
       fakeVatusaAndDiscord(goodLists(), pilotsServer());
       const { lines } = await consumeCid(1000022);
-      expect(lines).toEqual([`Role sync (dry run): ${PILOT} unresolved: no changes`]);
+      expect(lines).toEqual([`Role sync (dry run): ${PILOT} unresolved: remove nothing`]);
+    });
+
+    it("retries, and removes nothing, when VATSIM has no such member but identity can't be asked whose account it is", async () => {
+      env.ROLE_SYNC_MODE = 'live';
+      const { writes } = fakeVatusaAndDiscord(goodLists(), { roles: [], members: [member(PILOT, ROLE.member)] });
+      env.IDENTITY.down = true;
+      const { messages } = await consumeCid(1000022);
+
+      expect(writes).toEqual([]);
+      expect(messages.map((message) => [message.acked, message.retried])).toEqual([[false, true]]);
     });
   });
 });
@@ -378,5 +388,77 @@ describe('a bad fetch', () => {
     ({ writes } = fakeVatusaAndDiscord(goodLists(), server(), ['/user/roles/ZHQ/ACE']));
     await cron();
     expect(alertsPosted(writes)).toEqual(["Role sync skipped: couldn't fetch the ACE list from VATUSA."]);
+  });
+});
+
+describe('one Discord ID on two CIDs', () => {
+  const SHARED = '800000000000000001';
+  const ALERT = `Role sync: Discord account ${SHARED} is on VATUSA for more than one member (CIDs 1000003, 1000004). It gets no roles until one of them links it on their profile.`;
+  const alertsPosted = (writes: { path: string; body?: Record<string, unknown> }[]) => writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content);
+  const sharedLists = (shared = true): VatusaLists => {
+    const base = goodLists();
+    base.rosters.ZME = [record({ cid: 1000003, facility: 'ZME', discord_id: SHARED })];
+    base.rosters.ZDC = [record({ cid: 1000004, facility: 'ZDC', discord_id: shared ? SHARED : '800000000000000002' })];
+    return base;
+  };
+  const sharedServer = (): Server => ({ roles: [], members: [member(SHARED, ROLE.member), member(LARRY)] });
+
+  for (const mode of ['dry-run', 'live']) {
+    it(`${mode}: ${mode === 'live' ? 'removes' : 'logs'} the member's managed roles, logs both CIDs and posts one alert`, async () => {
+      env.ROLE_SYNC_MODE = mode;
+      const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+      const { lines } = await cronAndConsume();
+
+      expect(lines).toContain(`Role sync: Discord account ${SHARED} is on VATUSA for more than one member (CIDs 1000003, 1000004)`);
+      expect(lines).toContain(`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${SHARED} unresolved (2 CIDs give this Discord ID): remove Member`);
+      expect(writes.filter((write) => !write.path.startsWith(`/channels/${ALERTS}/`))).toEqual(
+        mode === 'live' ? [{ method: 'DELETE', path: `/guilds/${GUILD}/members/${SHARED}/roles/${ROLE.member}`, body: undefined }] : [],
+      );
+      expect(alertsPosted(writes)).toEqual([ALERT]);
+    });
+  }
+
+  it('posts nothing more while the ID stays shared, and again after a run that no longer finds it shared', async () => {
+    let { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+    await cronAndConsume();
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([ALERT]);
+
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    ({ writes } = fakeVatusaAndDiscord(sharedLists(false), sharedServer()));
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([]);
+
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    ({ writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer()));
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([ALERT]);
+  });
+
+  it('tries the alert again next run when the post fails', async () => {
+    const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+    const fetched = globalThis.fetch;
+    let failing = true;
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+      failing && init?.method === 'POST' && url.endsWith(`/channels/${ALERTS}/messages`) ? Promise.resolve(new Response('Service Unavailable', { status: 503 })) : fetched(url, init),
+    );
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([]);
+
+    failing = false;
+    env.ROLE_SYNC_QUEUE.sent.length = 0;
+    await cronAndConsume();
+    expect(alertsPosted(writes)).toEqual([ALERT]);
+  });
+
+  it('takes the linked CID when the Discord ID is linked in identity: no log, no alert', async () => {
+    Object.assign(env, identityEnv([idUser(1000003, SHARED)]));
+    const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
+    const { lines } = await cronAndConsume();
+
+    expect(lines.join('\n')).toContain(`${SHARED} CID 1000003:`);
+    expect(lines.join('\n')).not.toContain('more than one member');
+    expect(alertsPosted(writes)).toEqual([]);
   });
 });
