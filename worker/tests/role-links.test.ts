@@ -9,7 +9,7 @@ import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
 
 // Member 1000001 is an S3 whose VATUSA Discord ID is OLD; they link NEW in identity.
-const OLD = '1146457348798431314';
+const OLD = '9000000000000000001';
 const NEW = '800000000000000010';
 const OTHER_MEMBER_ACCOUNT = '800000000000000011';
 const ALERTS = '300000000000000001';
@@ -196,6 +196,45 @@ describe('the sync finds a member through their link first', () => {
 
     expect(lines).toEqual([]);
     expect(messages.every((message) => message.retried && !message.acked)).toBe(true);
+  });
+});
+
+describe('a VATUSA Discord ID another member has linked', () => {
+  // CID 1000020's VATUSA Discord ID is VATUSA_ACCOUNT, but member 1000030 has linked that account.
+  const VATUSA_ACCOUNT = '800000000000000020';
+  beforeEach(() => {
+    env.IDENTITY.users.push(idUser(1000020), idUser(1000030, VATUSA_ACCOUNT));
+  });
+
+  it("is not reported as the first member's account", async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [offList] });
+    expect(await larry.getLinks(1000020)).toEqual({ discord: null, teamspeak: null });
+    expect(await larry.getLinks(1000030)).toEqual({ discord: { id: VATUSA_ACCOUNT, source: 'linked' }, teamspeak: null });
+  });
+
+  it('is not queued for syncMember or unlink of the first member', async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [offList] });
+    expect(await larry.syncMember(1000020)).toEqual({ queued: false, reason: 'No Discord account or TeamSpeak identity is known for this member.' });
+    await larry.unlink(1000020, 'discord');
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
+  });
+
+  it('gives the first member no roles when a job queued before the link arrives', async () => {
+    const { writes } = fakeVatusaAndDiscord(vatusaLists(), { roles: [], members: [member(VATUSA_ACCOUNT), member(LARRY)] }, [], { users: [offList] });
+    env.ROLE_SYNC_QUEUE.sent.push({ type: 'sync-cid', cid: 1000020, discordId: VATUSA_ACCOUNT });
+    const { lines, messages } = await consume();
+
+    expect(lines).toEqual([`Role sync (dry run): ${VATUSA_ACCOUNT} unresolved (this Discord account is linked to another member): no changes`]);
+    expect(messages[0]!.acked).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
+  it('gives the account to the member who linked it', async () => {
+    env.TRAINING = fakeTraining({ members: [trainee(1000030)] });
+    fakeVatusaAndDiscord(vatusaLists(), { roles: [], members: [member(VATUSA_ACCOUNT), member(LARRY)] }, [], { users: [offList, record({ cid: 1000030, rating_short: 'S3', discord_id: null })] });
+    env.ROLE_SYNC_QUEUE.sent.push({ type: 'sync-cid', cid: 1000030, discordId: VATUSA_ACCOUNT });
+    const { lines } = await consume();
+    expect(lines).toEqual([`Role sync (dry run): ${VATUSA_ACCOUNT} CID 1000030: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000030"`]);
   });
 });
 

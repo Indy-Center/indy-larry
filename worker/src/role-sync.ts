@@ -19,7 +19,7 @@ import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
  * Every 15 minutes the cron (startRoleSync) fetches the lists once, keeps them in KV for that run, and
  * queues one job per Discord member on `role-sync`. A member who joins the server is queued straight
  * away (`sync-member`, from larry's bot through bot-events.ts) and synced against the latest run's
- * lists. The consumer (consumeRoleSync) hands each job to syncDiscordMember. `ROLE_SYNC_MODE` says what
+ * lists, or the per-user lookups when no run's lists are kept. The consumer (consumeRoleSync) hands each job to syncDiscordMember. `ROLE_SYNC_MODE` says what
  * that does: `dry-run` logs what it would change and changes nothing; `live` changes it. A Discord
  * failure fails that member's job, so the queue retries it.
  *
@@ -178,7 +178,7 @@ export async function consumeRoleSync(batch: MessageBatch<RoleSyncMessage>, env:
           break;
         }
         case 'sync-member':
-          // A join: the latest run's lists, and the roles the member holds now.
+          // A join: the latest run's lists if one is kept (else the per-user lookups), and the roles the member holds now.
           await syncMemberJob(env, { discordId: job.discordId });
           break;
         case 'sync-cid':
@@ -206,13 +206,13 @@ export type MemberSync = { discordId: string; cid: number | null; add: string[];
  * (`live`) or log what would change (`dry-run`). `roleIds` and `nick` are what they hold now. The one
  * place a member is synced, whatever asked for it. Throws when Discord refuses a change.
  */
-export async function syncDiscordMember(
+async function syncDiscordMember(
   env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'KV' | 'DISCORD_TOKEN' | 'GUILD_ID'> & IdentityEnv,
   run: RunLists,
   member: { discordId: string; roleIds: string[]; nick: string | null; cid?: number },
 ): Promise<MemberSync> {
   const mode = checkMode(env);
-  const { person: found, ambiguous, linkedElsewhere, identity } = await resolvePerson(env, run, member);
+  const { person: found, ambiguous, linkedElsewhere, accountTaken, identity } = await resolvePerson(env, run, member);
   const person = found && { ...found, credentials: run.credentials[String(found.cid)] ?? [] };
 
   const result: MemberSync = { discordId: member.discordId, cid: person?.cid ?? null, add: [], remove: [], nickname: null };
@@ -249,9 +249,11 @@ export async function syncDiscordMember(
     ? `CID ${person.cid}`
     : linkedElsewhere
       ? 'unresolved (their CID is linked to another Discord account)'
-      : ambiguous
-        ? `unresolved (${ambiguous} CIDs give this Discord ID)`
-        : 'unresolved';
+      : accountTaken
+        ? 'unresolved (this Discord account is linked to another member)'
+        : ambiguous
+          ? `unresolved (${ambiguous} CIDs give this Discord ID)`
+          : 'unresolved';
   const changes = person ? `add ${result.add.join(', ') || 'nothing'}; remove ${result.remove.join(', ') || 'nothing'}${nicknameNote(result.nickname)}` : 'no changes';
   console.log(`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${member.discordId} ${who}: ${changes}`);
   return result;
@@ -290,10 +292,13 @@ async function resolvePerson(
   env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv,
   run: RunLists,
   member: { discordId: string; cid?: number },
-): Promise<{ person: VatusaPerson | null; ambiguous?: number; linkedElsewhere?: boolean; identity?: IdentityUser | null }> {
-  const linkedUser = member.cid === undefined ? await findByDiscordId(env, member.discordId) : undefined;
-  const cid = member.cid ?? linkedUser?.cid;
-  const identity = linkedUser ?? undefined;
+): Promise<{ person: VatusaPerson | null; ambiguous?: number; linkedElsewhere?: boolean; accountTaken?: boolean; identity?: IdentityUser | null }> {
+  // A CID was given (a link write, syncMember) and its account was settled when the job was queued. Look
+  // again for the race (another member linked it since); if identity can't answer now, go on with the job.
+  const holder = member.cid === undefined ? await findByDiscordId(env, member.discordId) : await findByDiscordId(env, member.discordId).catch(() => null);
+  if (member.cid !== undefined && holder && holder.cid !== member.cid) return { person: null, accountTaken: true };
+  const cid = member.cid ?? holder?.cid;
+  const identity = holder ?? undefined;
   const matches = run.people.filter((person) => (cid !== undefined ? person.cid === cid : person.discordId === member.discordId));
   if (matches.length > 1) return { person: null, ambiguous: matches.length };
 
@@ -344,14 +349,19 @@ export async function syncMemberJob(env: RoleSyncEnv, member: { discordId: strin
 
 const NO_ACCOUNT = 'No Discord account or TeamSpeak identity is known for this member.';
 
-/** The Discord account to sync for a CID: their identity link, else the VATUSA Discord ID (from the lists, else VATUSA's per-user lookup). */
+/**
+ * The Discord account to sync for a CID: their identity link, else the VATUSA Discord ID (from the lists,
+ * else VATUSA's per-user lookup), unless another member has linked that account.
+ */
 async function discordIdFor(env: RoleSyncEnv, cid: number): Promise<{ id: string; source: 'linked' | 'vatusa' } | null> {
   const linked = (await getUser(env, cid))?.discordId;
   if (linked) return { id: linked, source: 'linked' };
   const latestId = await env.KV.get(LATEST_RUN_KEY);
   const latest = latestId ? await env.KV.get<RunLists>(runKey(latestId), 'json') : null;
   const person = latest?.people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
-  return person?.discordId ? { id: person.discordId, source: 'vatusa' } : null;
+  if (!person?.discordId) return null;
+  const holder = await findByDiscordId(env, person.discordId);
+  return holder && holder.cid !== cid ? null : { id: person.discordId, source: 'vatusa' };
 }
 
 async function queueMemberSync(env: RoleSyncEnv, cid: number): Promise<SyncMemberResult> {
