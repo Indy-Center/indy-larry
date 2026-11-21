@@ -29,7 +29,8 @@
     "crons": ["*/15 * * * *"]
   },
   // indy-larry-worker: each role sync run's lists, and whether an outage has been alerted.
-  // The training app's RPC, read once per run for certifications and endorsements.
+  // The training app's RPC: a group source (src/group-sources.ts), its getGroups() read once per run and on
+  // syncMembers() and postToGroup(). Its mode is GROUP_SYNC_TRAINING, passed by the deploy (README, Group sync).
   // identity (the Worker named `id`), reached through its fetch handler: Discord links are read per member and written by
   // linkDiscord() and unlink(). IDENTITY_CLIENT_ID and IDENTITY_CLIENT_SECRET are set by the deploy (README, Role sync).
   "services": [
