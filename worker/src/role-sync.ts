@@ -1,7 +1,7 @@
 import type { Links, SyncMemberResult } from './client/api';
 import { rolesFor } from './criteria';
 import { guildId, SNOWFLAKE, type GuildEnv } from './discord';
-import { linksOf, listIdentityMembers, writeDiscordId, type IdentityBinding, type Member } from './identity';
+import { findByDiscordId, getUser, IdentityConflict, writeDiscordId, type IdentityEnv } from './identity';
 import { lookupVatsimRating, lookupVatusa } from './lookups';
 import { checkMapping, MAPPING } from './mapping';
 import { getMember, listMembers } from './roles';
@@ -40,19 +40,18 @@ export type RoleSyncMessage =
     };
 
 export type RoleSyncEnv = GuildEnv &
-  Pick<SendEnv, 'SEND_CHANNELS' | 'LARRY_QUEUE'> & {
+  Pick<SendEnv, 'SEND_CHANNELS' | 'LARRY_QUEUE'> &
+  IdentityEnv & {
     KV: KVNamespace;
     /** `training-tools`' `TrainingRpc`: certifications and endorsements. */
     TRAINING: TrainingBinding;
-    /** identity's RPC: who has linked which Discord account. */
-    IDENTITY: IdentityBinding;
     ROLE_SYNC_QUEUE: Queue<RoleSyncMessage>;
     /** `dry-run` (the default): log what would change, change nothing. */
     ROLE_SYNC_MODE?: string;
   };
 
-/** The lists a run fetched, as kept in KV for that run's jobs; `links` are identity's Discord links. */
-export type RunLists = { people: VatusaPerson[]; credentials: Credentials; links: { cid: number; discordId: string }[] };
+/** The lists a run fetched, as kept in KV for that run's jobs. */
+export type RunLists = { people: VatusaPerson[]; credentials: Credentials };
 
 const ALERT_CHANNEL = 'tech-team-alerts';
 /** Set while a skipped run's alert stands, so an outage is posted once, not every 15 minutes. */
@@ -74,16 +73,6 @@ function checkMode(env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE'>): 'dry-run' {
   return mode;
 }
 
-/** Identity's members, or null when the call fails (a run on a partial or empty link list would strip linked accounts). */
-async function fetchIdentityMembers(env: Pick<RoleSyncEnv, 'IDENTITY'>): Promise<Member[] | null> {
-  try {
-    return await listIdentityMembers(env.IDENTITY);
-  } catch (error) {
-    console.warn(`identity's member list failed: ${String(error)}`);
-    return null;
-  }
-}
-
 /** The cron: fetch VATUSA's lists, then queue one job per Discord member. A bad fetch skips the run. */
 export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   checkMode(env);
@@ -98,18 +87,13 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
     await alertOnce(env, "Role sync skipped: couldn't fetch the training roster.");
     return;
   }
-  const identityMembers = await fetchIdentityMembers(env);
-  if (!identityMembers) {
-    await alertOnce(env, "Role sync skipped: couldn't fetch the Discord links from identity.");
-    return;
-  }
   await env.KV.delete(OUTAGE_KEY);
 
   const members = await listMembers(env.DISCORD_TOKEN, guildId(env));
   if (!members) throw new Error("Role sync can't list the server's members: switch on the Server Members intent");
 
   const runId = crypto.randomUUID();
-  const run: RunLists = { people: peopleFrom(fetched.lists), credentials, links: linksOf(identityMembers) };
+  const run: RunLists = { people: peopleFrom(fetched.lists), credentials };
   await env.KV.put(runKey(runId), JSON.stringify(run), { expirationTtl: RUN_LISTS_TTL_SECONDS });
   await env.KV.put(LATEST_RUN_KEY, runId, { expirationTtl: RUN_LISTS_TTL_SECONDS });
 
@@ -155,7 +139,7 @@ export type MemberSync = { discordId: string; cid: number | null; add: string[];
  * would change. The one place a member is synced, whatever asked for it.
  */
 export async function syncDiscordMember(
-  env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'KV'>,
+  env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE' | 'KV'> & IdentityEnv,
   run: RunLists,
   member: { discordId: string; roleIds: string[]; cid?: number },
 ): Promise<MemberSync> {
@@ -194,17 +178,19 @@ export async function syncDiscordMember(
  * VATUSA doesn't know, only their rating from VATSIM. Null when nothing identifies them.
  */
 async function resolvePerson(
-  env: Pick<RoleSyncEnv, 'KV'>,
+  env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv,
   run: RunLists,
   member: { discordId: string; cid?: number },
 ): Promise<{ person: VatusaPerson | null; ambiguous?: number; linkedElsewhere?: boolean }> {
-  const cid = member.cid ?? run.links.find((link) => link.discordId === member.discordId)?.cid;
+  const cid = member.cid ?? (await findByDiscordId(env, member.discordId))?.cid;
   const matches = run.people.filter((person) => (cid !== undefined ? person.cid === cid : person.discordId === member.discordId));
   if (matches.length > 1) return { person: null, ambiguous: matches.length };
 
   const person = matches[0] ?? (await lookupVatusa(env.KV, cid !== undefined ? { cid } : { discordId: member.discordId }));
   if (person) {
-    const linkedElsewhere = cid === undefined && run.links.some((link) => link.cid === person.cid && link.discordId !== member.discordId);
+    // Found by Discord ID alone: if their CID has linked a different account, this one is stale.
+    const linked = cid === undefined ? (await getUser(env, person.cid))?.discordId : null;
+    const linkedElsewhere = !!linked && linked !== member.discordId;
     return linkedElsewhere ? { person: null, linkedElsewhere } : { person };
   }
   if (cid === undefined) return { person: null };
@@ -219,16 +205,14 @@ async function resolvePerson(
 /**
  * The lists a single member's job reads, which has no run of its own: the newest run's if it is still
  * kept, otherwise only the training roster and no VATUSA lists (the per-user lookups cover the member).
- * The links are always read fresh, so a link written a moment ago counts.
  */
 export async function runListsForMember(env: RoleSyncEnv): Promise<RunLists> {
   const latestId = await env.KV.get(LATEST_RUN_KEY);
   const latest = latestId ? await env.KV.get<RunLists>(runKey(latestId), 'json') : null;
-  const links = linksOf(await listIdentityMembers(env.IDENTITY));
-  if (latest) return { ...latest, links };
+  if (latest) return latest;
   const credentials = await fetchCredentials(env.TRAINING);
   if (!credentials) throw new Error("Can't sync a member: couldn't fetch the training roster");
-  return { people: [], credentials, links };
+  return { people: [], credentials };
 }
 
 /**
@@ -249,7 +233,7 @@ const NO_ACCOUNT = 'No Discord account or TeamSpeak identity is known for this m
 
 /** The Discord account to sync for a CID: their identity link, else the VATUSA Discord ID (from the lists, else VATUSA's per-user lookup). */
 async function discordIdFor(env: RoleSyncEnv, cid: number): Promise<{ id: string; source: 'linked' | 'vatusa' } | null> {
-  const linked = (await listIdentityMembers(env.IDENTITY)).find((member) => member.cid === cid)?.discordId;
+  const linked = (await getUser(env, cid))?.discordId;
   if (linked) return { id: linked, source: 'linked' };
   const latestId = await env.KV.get(LATEST_RUN_KEY);
   const latest = latestId ? await env.KV.get<RunLists>(runKey(latestId), 'json') : null;
@@ -276,10 +260,17 @@ export async function syncMember(env: RoleSyncEnv, cid: number): Promise<SyncMem
 export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: string): Promise<void> {
   checkMode(env);
   if (!SNOWFLAKE.test(discordId)) throw new Error('discordId must be a Discord user ID.');
-  const members = await listIdentityMembers(env.IDENTITY);
-  if (members.some((member) => member.discordId === discordId && member.cid !== cid)) throw new Error('That Discord account is linked to another member.');
-  if (!members.some((member) => member.cid === cid)) throw new Error('Sign in to flyindycenter.com once before linking.');
-  await writeDiscordId(env.IDENTITY, cid, discordId);
+  const holder = await findByDiscordId(env, discordId);
+  if (holder && holder.cid !== cid) throw new Error('That Discord account is linked to another member.');
+  const signIn = 'Sign in to flyindycenter.com once before linking.';
+  if (!(await getUser(env, cid))) throw new Error(signIn);
+  try {
+    if (!(await writeDiscordId(env, cid, discordId))) throw new Error(signIn);
+  } catch (error) {
+    // Someone linked it between the check and the write.
+    if (error instanceof IdentityConflict) throw new Error('That Discord account is linked to another member.');
+    throw error;
+  }
   await env.ROLE_SYNC_QUEUE.send({ type: 'sync-cid', cid, discordId });
 }
 
@@ -287,7 +278,7 @@ export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: stri
 export async function unlink(env: RoleSyncEnv, cid: number, service: 'discord' | 'teamspeak'): Promise<void> {
   checkMode(env);
   if (service === 'teamspeak') throw new Error("TeamSpeak links aren't available yet.");
-  await writeDiscordId(env.IDENTITY, cid, null);
+  await writeDiscordId(env, cid, null);
   await queueMemberSync(env, cid);
 }
 

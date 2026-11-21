@@ -1,31 +1,114 @@
 /**
- * Identity's user records, the role sync's source for Discord links. The only file that talks to the
- * `IDENTITY` service binding, so a later swap to a lookup method or a typed field is a change here.
+ * Identity's users, the role sync's source for Discord links. The only file that talks to identity, so
+ * a later swap to a different lookup is a change here.
+ *
+ * Identity is a plain fetch handler (no RPC): its `/api/users` routes take a bearer token from the
+ * client-credentials grant at `/oauth/token`. larry calls them through the `IDENTITY` service binding's
+ * `fetch`, which reaches the same routes with no trip over the public internet. The client needs the
+ * `users:read` and `users:write` scopes. There is no "list every user" route: a user is found by CID
+ * (`GET /api/users/{cid}`) or by Discord ID (`GET /api/users?discord_id=`).
  */
 
-/** The part of a user record the sync reads. Identity keeps the CID as text. */
-export type IdentityUser = { cid: string | number; discordId?: string | null };
-
-/** The `IDENTITY` binding's RPC methods the sync calls. */
-export type IdentityBinding = {
-  listUsers(): Promise<IdentityUser[]>;
-  setAttributes(cid: string, attributes: { discordId: string | null }): Promise<unknown>;
+export type IdentityEnv = {
+  /** The identity Worker (`id`), as a service binding. */
+  IDENTITY: Fetcher;
+  /** The registered client's ID (a var) and secret (a Worker secret). */
+  IDENTITY_CLIENT_ID: string;
+  IDENTITY_CLIENT_SECRET: string;
 };
 
-/** Everyone identity knows: their CID, and the Discord account they linked (null for none). */
-export type Member = { cid: number; discordId: string | null };
+/** The user claims the sync reads (identity's `/api/users` fields, camel-cased). */
+export type IdentityUser = {
+  cid: number;
+  /** The Discord account they linked, or null. */
+  discordId: string | null;
+  preferredName: string | null;
+  givenName: string | null;
+  familyName: string | null;
+};
 
-/** Identity's whole member list in one call. Throws if the call fails. */
-export async function listIdentityMembers(identity: IdentityBinding): Promise<Member[]> {
-  const users = await identity.listUsers();
-  return users.map((user) => ({ cid: Number(user.cid), discordId: user.discordId || null }));
+/** A user as `/api/users` sends it (identity's `Claims`). */
+type Claims = {
+  sub: string;
+  discord_id: string | null;
+  preferred_name: string | null;
+  given_name: string | null;
+  family_name: string | null;
+};
+
+// Only the path matters over a service binding; this is identity's address.
+const ORIGIN = 'https://id.flyindycenter.com';
+const SCOPE = 'users:read users:write';
+// Ask for a new token this long before the old one expires.
+const EXPIRY_MARGIN_MS = 60_000;
+
+/** Raised for a write identity refuses because the Discord ID is already someone's (409). */
+export class IdentityConflict extends Error {}
+
+const tokens = new WeakMap<Fetcher, { token: string; expiresAt: number }>();
+
+/** A client-credentials token, kept for its lifetime within the isolate. */
+async function token(env: IdentityEnv): Promise<string> {
+  const kept = tokens.get(env.IDENTITY);
+  if (kept &&kept.expiresAt - EXPIRY_MARGIN_MS > Date.now()) return kept.token;
+
+  const res = await env.IDENTITY.fetch(`${ORIGIN}/oauth/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${btoa(`${env.IDENTITY_CLIENT_ID}:${env.IDENTITY_CLIENT_SECRET}`)}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ grant_type: 'client_credentials', scope: SCOPE }).toString(),
+  });
+  if (!res.ok) throw new Error(`identity's /oauth/token answered ${res.status}`);
+  const body = (await res.json()) as { access_token: string; expires_in: number };
+  tokens.set(env.IDENTITY, { token: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 });
+  return body.access_token;
 }
 
-/** The Discord accounts linked in identity, as the sync keeps them for a run. */
-export const linksOf = (members: Member[]): { cid: number; discordId: string }[] =>
-  members.flatMap((member) => (member.discordId ? [{ cid: member.cid, discordId: member.discordId }] : []));
+async function call(env: IdentityEnv, method: string, path: string, body?: unknown): Promise<Response> {
+  const res = await env.IDENTITY.fetch(`${ORIGIN}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${await token(env)}`, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  // A token identity no longer accepts: drop it so the next call asks for a new one.
+  if (res.status === 401) tokens.delete(env.IDENTITY);
+  return res;
+}
 
-/** Link a Discord account to a CID, or (null) clear the link. */
-export async function writeDiscordId(identity: IdentityBinding, cid: number, discordId: string | null): Promise<void> {
-  await identity.setAttributes(String(cid), { discordId });
+const userFrom = (claims: Claims): IdentityUser => ({
+  cid: Number(claims.sub),
+  discordId: claims.discord_id || null,
+  preferredName: claims.preferred_name ?? null,
+  givenName: claims.given_name ?? null,
+  familyName: claims.family_name ?? null,
+});
+
+/** The identity user with this CID, or null when they haven't signed in. */
+export async function getUser(env: IdentityEnv, cid: number): Promise<IdentityUser | null> {
+  const res = await call(env, 'GET', `/api/users/${cid}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`identity's GET /api/users/${cid} answered ${res.status}`);
+  return userFrom((await res.json()) as Claims);
+}
+
+/** The identity user whose link is this Discord account, or null. */
+export async function findByDiscordId(env: IdentityEnv, discordId: string): Promise<IdentityUser | null> {
+  const res = await call(env, 'GET', `/api/users?discord_id=${encodeURIComponent(discordId)}`);
+  if (!res.ok) throw new Error(`identity's GET /api/users?discord_id answered ${res.status}`);
+  const found = (await res.json()) as Claims[];
+  return found[0] ? userFrom(found[0]) : null;
+}
+
+/**
+ * Link a Discord account to a CID, or (null) clear the link. Returns false when identity has no user
+ * for the CID; throws IdentityConflict when the Discord ID is already someone else's.
+ */
+export async function writeDiscordId(env: IdentityEnv, cid: number, discordId: string | null): Promise<boolean> {
+  const res = await call(env, 'PATCH', `/api/users/${cid}`, { discord_id: discordId });
+  if (res.status === 404) return false;
+  if (res.status === 409) throw new IdentityConflict('discord_id already in use');
+  if (!res.ok) throw new Error(`identity's PATCH /api/users/${cid} answered ${res.status}`);
+  return true;
 }

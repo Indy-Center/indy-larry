@@ -3,7 +3,7 @@ import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
-import { fakeIdentity, idUser } from './fake-identity';
+import { identityEnv, idUser, TOKEN_LIFETIME_SECONDS } from './fake-identity';
 import { fakeTraining, trainee } from './fake-training';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
@@ -24,7 +24,7 @@ function makeEnv() {
     ROLE_SYNC_MODE: 'dry-run',
     KV: fakeKv(),
     TRAINING: fakeTraining({ members: [trainee(1000001)] }),
-    IDENTITY: fakeIdentity([idUser(1000001), idUser(1000002, OTHER_MEMBER_ACCOUNT)]),
+    ...identityEnv([idUser(1000001), idUser(1000002, OTHER_MEMBER_ACCOUNT)]),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
   };
@@ -79,7 +79,7 @@ describe('linkDiscord', () => {
     fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [record({ cid: 1000001, rating_short: 'S3', discord_id: OLD })] });
     await larry.linkDiscord(1000001, NEW);
 
-    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', attributes: { discordId: NEW } }]);
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: NEW } }]);
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: NEW }]);
 
     const { lines, messages } = await consume();
@@ -99,6 +99,19 @@ describe('linkDiscord', () => {
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 
+  it("answers the same refusal when identity's own uniqueness check (409) catches it first", async () => {
+    // Someone linked it after larry's lookup: the lookup sees nobody, the write is refused.
+    const claimed = idUser(1000050, NEW);
+    const find = env.IDENTITY.fetch;
+    env.IDENTITY.fetch = async (input: string, init?: RequestInit) => {
+      if (input.includes('discord_id=')) return new Response('[]', { status: 200 });
+      return find(input, init);
+    };
+    env.IDENTITY.users.push(claimed);
+    await expect(larry.linkDiscord(1000001, NEW)).rejects.toThrow('That Discord account is linked to another member.');
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
+  });
+
   it('lets a member link the account they already linked', async () => {
     await larry.linkDiscord(1000002, OTHER_MEMBER_ACCOUNT);
     expect(env.IDENTITY.writes).toHaveLength(1);
@@ -112,13 +125,13 @@ describe('linkDiscord', () => {
 
 describe('unlink', () => {
   it("clears the link and queues the sync of the account VATUSA holds", async () => {
-    env.IDENTITY.users[0]!.discordId = NEW;
+    env.IDENTITY.users[0]!.discord_id = NEW;
     fakeVatusaAndDiscord(vatusaLists(), server());
     await cron();
     env.ROLE_SYNC_QUEUE.sent.length = 0;
     await larry.unlink(1000001, 'discord');
 
-    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', attributes: { discordId: null } }]);
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: null } }]);
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: OLD }]);
   });
 
@@ -151,7 +164,7 @@ describe('getLinks', () => {
   });
 
   it('prefers the link over the VATUSA Discord ID', async () => {
-    env.IDENTITY.users[0]!.discordId = NEW;
+    env.IDENTITY.users[0]!.discord_id = NEW;
     fakeVatusaAndDiscord(vatusaLists(), server());
     expect(await larry.getLinks(1000001)).toEqual({ discord: { id: NEW, source: 'linked' }, teamspeak: null });
   });
@@ -159,7 +172,7 @@ describe('getLinks', () => {
 
 describe('the sync finds a member through their link first', () => {
   it('gives the linked account the roles and the stale VATUSA one none', async () => {
-    env.IDENTITY.users[0]!.discordId = NEW;
+    env.IDENTITY.users[0]!.discord_id = NEW;
     fakeVatusaAndDiscord(vatusaLists(), server());
     await cron();
     const { lines } = await consume();
@@ -175,23 +188,43 @@ describe('the sync finds a member through their link first', () => {
     expect(lines).toContain(`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing`);
   });
 
-  it('reads identity once per run', async () => {
+  it("retries a member's job, and syncs nobody on a guess, when identity can't be reached", async () => {
     fakeVatusaAndDiscord(vatusaLists(), server());
     await cron();
-    await consume();
-    expect(env.IDENTITY.listCalls).toBe(1);
+    env.IDENTITY.down = true;
+    const { lines, messages } = await consume();
+
+    expect(lines).toEqual([]);
+    expect(messages.every((message) => message.retried && !message.acked)).toBe(true);
+  });
+});
+
+describe("larry's client credentials at identity", () => {
+  it('asks for a token once with its client ID and secret, and reuses it for every call', async () => {
+    env.IDENTITY.users[0]!.discord_id = NEW;
+    await larry.getLinks(1000001);
+    await larry.getLinks(1000002);
+    await larry.getLinks(1000001);
+
+    expect(env.IDENTITY.tokenRequests).toEqual([{ authorization: `Basic ${btoa('larry:larry-secret')}`, body: 'grant_type=client_credentials&scope=users%3Aread+users%3Awrite' }]);
+    expect(env.IDENTITY.apiCalls).toEqual(['GET /api/users/1000001', 'GET /api/users/1000002', 'GET /api/users/1000001']);
   });
 
-  it("skips the run and alerts once when identity's list can't be read", async () => {
-    const { writes } = fakeVatusaAndDiscord(vatusaLists(), server());
-    env.IDENTITY.down = true;
-    await cron();
-    await cron();
+  it('asks again once the token is about to expire', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      await larry.getLinks(1000001);
+      vi.advanceTimersByTime((TOKEN_LIFETIME_SECONDS - 30) * 1000);
+      await larry.getLinks(1000001);
+      expect(env.IDENTITY.tokenRequests).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
-    expect(writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content)).toEqual([
-      "Role sync skipped: couldn't fetch the Discord links from identity.",
-    ]);
+  it('fails the call, naming identity, when the client is refused', async () => {
+    env.IDENTITY_CLIENT_SECRET = 'wrong';
+    await expect(larry.getLinks(1000001)).rejects.toThrow("identity's /oauth/token answered 401");
   });
 });
 

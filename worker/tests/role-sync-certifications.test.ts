@@ -3,7 +3,7 @@ import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD } from './fake-discord';
-import { fakeIdentity } from './fake-identity';
+import { identityEnv } from './fake-identity';
 import { fakeTraining, trainee } from './fake-training';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
@@ -47,7 +47,7 @@ describe('the certification condition', () => {
       ROLE_SYNC_MODE: 'dry-run',
       KV: fakeKv(),
       TRAINING: fakeTraining({ members: [trainee(1000001, 'T-RC'), trainee(1000002, 'S3', ['OCN']), trainee(1000003, 'S3')] }),
-      IDENTITY: fakeIdentity(),
+      ...identityEnv(),
       ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
       LARRY_QUEUE: fakeQueue<never>(),
     };

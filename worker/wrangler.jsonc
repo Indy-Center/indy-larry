@@ -24,7 +24,8 @@
   },
   // indy-larry-worker: each role sync run's lists, and whether an outage has been alerted.
   // The training app's RPC, read once per run for certifications and endorsements.
-  // identity's RPC (the Worker named `id`): the Discord links, read once per run and written by linkDiscord() and unlink().
+  // identity (the Worker named `id`), reached through its fetch handler: Discord links are read per member and written by
+  // linkDiscord() and unlink(). IDENTITY_CLIENT_ID and IDENTITY_CLIENT_SECRET are set by the deploy (README, Role sync).
   "services": [
     { "binding": "TRAINING", "service": "training-tools", "entrypoint": "TrainingRpc" },
     { "binding": "IDENTITY", "service": "id" }
