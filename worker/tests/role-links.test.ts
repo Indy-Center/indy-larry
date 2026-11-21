@@ -178,7 +178,7 @@ describe('the sync finds a member through their link first', () => {
     const { lines } = await consume();
 
     expect(lines).toContain(`Role sync (dry run): ${NEW} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`);
-    expect(lines).toContain(`Role sync (dry run): ${OLD} unresolved (their CID is linked to another Discord account): no changes`);
+    expect(lines).toContain(`Role sync (dry run): ${OLD} unresolved (their CID is linked to another Discord account): remove nothing`);
   });
 
   it('still finds a member by their VATUSA Discord ID when nobody has linked that CID', async () => {
@@ -225,6 +225,18 @@ describe('a VATUSA Discord ID another member has linked', () => {
     const { lines, messages } = await consume();
 
     expect(lines).toEqual([`Role sync (dry run): ${VATUSA_ACCOUNT} unresolved (this Discord account is linked to another member): no changes`]);
+    expect(messages[0]!.acked).toBe(true);
+    expect(writes).toEqual([]);
+  });
+
+  it("live leaves the account's managed role in someone else's job, with no Discord write for it", async () => {
+    const MEMBER_ROLE = '1125403438545641564';
+    env.ROLE_SYNC_MODE = 'live';
+    const { writes } = fakeVatusaAndDiscord(vatusaLists(), { roles: [], members: [member(VATUSA_ACCOUNT, MEMBER_ROLE), member(LARRY)] }, [], { users: [offList] });
+    env.ROLE_SYNC_QUEUE.sent.push({ type: 'sync-cid', cid: 1000020, discordId: VATUSA_ACCOUNT });
+    const { lines, messages } = await consume();
+
+    expect(lines).toEqual([`Role sync (live): ${VATUSA_ACCOUNT} unresolved (this Discord account is linked to another member): no changes`]);
     expect(messages[0]!.acked).toBe(true);
     expect(writes).toEqual([]);
   });

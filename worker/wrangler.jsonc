@@ -9,6 +9,8 @@
   // The public address larry's bot posts to: https://indy-larry.indy-center.workers.dev. Every route
   // behind it needs a bot's secret (BOT_EVENTS_SECRET, a Worker secret set by build-and-deploy.yml).
   "workers_dev": true,
+  // workers_dev would also turn on preview URLs; nothing uses them.
+  "preview_urls": false,
   "compatibility_date": "2026-09-01",
   "observability": {
     "enabled": true
