@@ -403,14 +403,14 @@ describe('one Discord ID on two CIDs', () => {
   };
   const sharedServer = (): Server => ({ roles: [], members: [member(SHARED, ROLE.member), member(LARRY)] });
 
-  for (const mode of ['dry-run', 'live']) {
+  for (const [mode, label] of [['dry-run', 'dry run'], ['live', 'live']] as const) {
     it(`${mode}: ${mode === 'live' ? 'removes' : 'logs'} the member's managed roles, logs both CIDs and posts one alert`, async () => {
       env.ROLE_SYNC_MODE = mode;
       const { writes } = fakeVatusaAndDiscord(sharedLists(), sharedServer());
       const { lines } = await cronAndConsume();
 
       expect(lines).toContain(`Role sync: Discord account ${SHARED} is on VATUSA for more than one member (CIDs 1000003, 1000004)`);
-      expect(lines).toContain(`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${SHARED} unresolved (2 CIDs give this Discord ID): remove Member`);
+      expect(lines).toContain(`Role sync (${label}): ${SHARED} unresolved (2 CIDs give this Discord ID): remove Member`);
       expect(writes.filter((write) => !write.path.startsWith(`/channels/${ALERTS}/`))).toEqual(
         mode === 'live' ? [{ method: 'DELETE', path: `/guilds/${GUILD}/members/${SHARED}/roles/${ROLE.member}`, body: undefined }] : [],
       );

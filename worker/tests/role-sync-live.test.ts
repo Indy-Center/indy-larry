@@ -13,6 +13,8 @@ const JO = '800000000000000001';
 const SAM = '800000000000000002';
 const STRANGER = '800000000000000003';
 const OWNER = '800000000000000004';
+/** An account a member has linked in identity, which isn't their VATUSA Discord ID. */
+const LINKED = '800000000000000005';
 
 const ROLE = {
   observer: '896858108054368298',
@@ -196,7 +198,7 @@ describe("a member the sync can't resolve", () => {
     expect(warnings).toContain("Role sync: skipping mapped role Senior Staff this run: it is at or above Larry's highest role");
   });
 
-  for (const mode of ['live', 'dry-run']) {
+  for (const [mode, label] of [['live', 'live'], ['dry-run', 'dry run']] as const) {
     it(`${mode}: leaves a bot account alone, mapped role and all, without looking it up`, async () => {
       start(mode);
       const { writes, vatusaCalls } = fakeVatusaAndDiscord(listsWith(), serverWith([{ user: { id: STRANGER, bot: true }, roles: [ROLE.member], nick: null }]));
@@ -204,7 +206,7 @@ describe("a member the sync can't resolve", () => {
 
       expect(writes).toEqual([]);
       expect(vatusaCalls).not.toContain(`/user/${STRANGER}?d`);
-      expect(lines).toEqual([`Role sync (${mode === 'live' ? 'live' : 'dry run'}): ${STRANGER} is a bot account: left alone`]);
+      expect(lines).toEqual([`Role sync (${label}): ${STRANGER} is a bot account: left alone`]);
       expect(messages[0]!.acked).toBe(true);
     });
   }
@@ -240,7 +242,6 @@ describe("a member the sync can't resolve", () => {
   });
 
   it("removes the managed roles of an account unlinked in identity, at the next run, when it isn't anyone's VATUSA Discord ID", async () => {
-    const LINKED = '800000000000000005';
     start('live', [idUser(1000001, LINKED)]);
     // Their VATUSA Discord ID is JO, not the account they had linked.
     const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), serverWith([member(LINKED, 'Test Person1000001', ROLE.student3, ROLE.member, ROLE.atc)]));
@@ -257,7 +258,6 @@ describe("a member the sync can't resolve", () => {
 });
 
 describe('an account whose CID is linked to another Discord account', () => {
-  const LINKED = '800000000000000005';
   // VATUSA gives CID 1000001 the account JO, but identity has them linked to LINKED, so JO is a stale account.
   const staleServer = () => serverWith([member(JO, 'Test Person1000001', ROLE.observer, ROLE.handGiven, ROLE.member)]);
 
