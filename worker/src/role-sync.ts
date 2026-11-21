@@ -2,8 +2,8 @@ import { postOnce, type AlertEnv } from './alerts';
 import type { Links, SyncMemberResult, SyncMembersResult } from './client/api';
 import { rolesFor } from './criteria';
 import { discord, guildId, SNOWFLAKE, type GuildEnv } from './discord';
-import type { GroupSourcesEnv } from './group-sources';
-import { groupChanges, syncGroups, type GroupChanges } from './groups';
+import { GROUP_SOURCES, type GroupSourcesEnv } from './group-sources';
+import { groupChanges, refreshSource, syncGroups, type GroupChanges } from './groups';
 import { findByDiscordId, getUser, IdentityConflict, writeDiscordId, type IdentityEnv, type IdentityUser } from './identity';
 import { lookupVatsimRating, lookupVatusa } from './lookups';
 import { MAPPING } from './mapping';
@@ -468,10 +468,10 @@ async function queueMemberSync(env: RoleSyncEnv, cid: number): Promise<SyncMembe
 const MAX_SYNC_MEMBERS = 100;
 
 /**
- * RPC: sync these members now. Reads every group source again first (`refresh`, groups.ts), so their
- * jobs see what the app has just changed, then queues each CID's job. At most once every 2 minutes per member.
+ * RPC: sync these members now. Reads every group source again first (groups.ts), so their jobs see what
+ * the app has just changed, then queues each CID's job. At most once every 2 minutes per member.
  */
-export async function syncMembers(env: RoleSyncEnv, cids: number[], refresh: () => Promise<void>): Promise<SyncMembersResult> {
+export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<SyncMembersResult> {
   checkMode(env);
   if (!Array.isArray(cids) || cids.length === 0 || cids.length > MAX_SYNC_MEMBERS) throw new Error(`cids must be a list of 1 to ${MAX_SYNC_MEMBERS} CIDs`);
   for (const cid of cids) if (!Number.isSafeInteger(cid) || cid <= 0) throw new Error(`"${cid}" isn't a CID`);
@@ -483,7 +483,7 @@ export async function syncMembers(env: RoleSyncEnv, cids: number[], refresh: () 
     if (await env.KV.get(memberKey(cid))) results.set(cid, { queued: false, reason: 'Synced moments ago; try again in a minute.' });
     else due.push(cid);
   }
-  if (due.length > 0) await refresh();
+  if (due.length > 0) for (const config of GROUP_SOURCES) await refreshSource(env, config);
   for (const cid of due) results.set(cid, await queueMemberSync(env, cid));
   return unique.map((cid) => ({ cid, ...results.get(cid)! }));
 }

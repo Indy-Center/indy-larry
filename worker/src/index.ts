@@ -2,9 +2,9 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, GroupPost, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
 import { handleFetch, type BotEventsEnv } from './bot-events';
-import { postToGroup, syncMembersNow } from './group-rpc';
+import { postToGroup } from './group-rpc';
 import { getGroupStatus } from './groups';
-import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
+import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, type QueueJob, type SendEnv } from './send';
 
@@ -104,7 +104,7 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   }
 
   syncMembers(cids: number[]) {
-    return syncMembersNow(this.env, cids);
+    return syncMembers(this.env, cids);
   }
 
   postToGroup(request: GroupPost) {

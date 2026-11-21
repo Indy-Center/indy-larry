@@ -1,20 +1,9 @@
-import type { GroupNotice, GroupPost, GroupPostResult, SyncMembersResult } from './client/api';
-import { GROUP_SOURCES, sourceMode } from './group-sources';
-import { findSource, groupRecord, refreshSource } from './groups';
+import type { GroupNotice, GroupPost, GroupPostResult } from './client/api';
+import { effectiveMode, findSource, groupRecord, refreshSource } from './groups';
 import { prepareChannelIdSend } from './managed-channels';
-import { discordIdFor, syncMemberJob, syncMembers, type RoleSyncEnv } from './role-sync';
+import { discordIdFor, syncMemberJob, type RoleSyncEnv } from './role-sync';
 
-/**
- * The group RPCs that need the role sync as well as the groups: syncMembers() reads every source again
- * before queueing, and postToGroup() syncs who it mentions before posting.
- */
-
-/** RPC: read every group source again, then queue these members' syncs (role-sync.ts). */
-export function syncMembersNow(env: RoleSyncEnv, cids: number[]): Promise<SyncMembersResult> {
-  return syncMembers(env, cids, async () => {
-    for (const config of GROUP_SOURCES) await refreshSource(env, config);
-  });
-}
+/** postToGroup(), which needs the role sync as well as the groups: it syncs who it mentions before posting. */
 
 // Discord's embed limits.
 const MAX_TITLE = 256;
@@ -61,7 +50,8 @@ export async function postToGroup(env: RoleSyncEnv, request: GroupPost): Promise
   const mention = request.mention ?? [];
   if (!Array.isArray(mention) || mention.some((cid) => typeof cid !== 'string' || !/^\d{1,10}$/.test(cid))) throw new Error('mention must be a list of CIDs, as digit strings');
 
-  if (sourceMode(env, config) !== 'live') return 'not-live';
+  // Under ROLE_SYNC_MODE dry-run the mentioned members' roles wouldn't change, so they couldn't see the post.
+  if (effectiveMode(env, config) !== 'live') return 'not-live';
   const read = await refreshSource(env, config);
   // A group the source has just stopped giving a room has none, whatever its record still holds.
   if (read?.accepted && !read.groups.find((group) => group.key === request.key)?.room) return 'no-room';

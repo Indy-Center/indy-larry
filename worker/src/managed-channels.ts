@@ -12,7 +12,7 @@ import { checkMessage, type Job } from './send';
  * way to create or post in channels anywhere else on the server.
  */
 
-const GUILD_TEXT = 0;
+export const GUILD_TEXT = 0;
 const VIEW_CHANNEL = 1n << 10n;
 // What the roles a channel is visible to can do in one Larry creates.
 const MEMBER_PERMISSIONS =
@@ -22,8 +22,6 @@ const MEMBER_PERMISSIONS =
   (1n << 14n) | // Embed Links
   (1n << 15n) | // Attach Files
   (1n << 6n); // Add Reactions
-
-export const GUILD_TEXT_CHANNEL = GUILD_TEXT;
 
 export type DiscordChannel = { id: string; name: string; type: number; parent_id?: string | null; guild_id?: string };
 

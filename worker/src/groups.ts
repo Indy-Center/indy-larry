@@ -2,9 +2,9 @@ import { clearAlert, postOnce, type AlertEnv } from './alerts';
 import type { Group, GroupState, GroupStatus } from './client/api';
 import { discord, DiscordError, guildId, MAX_NAME_LENGTH, type GuildEnv } from './discord';
 import { GROUP_SOURCES, sourceMode, type GroupMode, type GroupSourceConfig, type GroupSourcesEnv } from './group-sources';
-import { categories, channelName, GUILD_TEXT_CHANNEL, placeChannel, type ChannelPlace, type DiscordChannel } from './managed-channels';
+import { categories, channelName, GUILD_TEXT, placeChannel, type ChannelPlace, type DiscordChannel } from './managed-channels';
 import { MAPPING } from './mapping';
-import { getMember, refusal, syncRefusal, type DiscordRole } from './roles';
+import { getMember, refusal, type DiscordRole } from './roles';
 
 /**
  * Group sync: apps serve groups (group-sources.ts, the contract in client/api.ts), and larry turns each
@@ -304,6 +304,10 @@ async function makeGroup(run: SourceRun, group: Group, record: GroupRecord, room
 
 /** A failure that needs no alert: it is logged, and settles itself or is a choice. */
 class Quiet extends Error {}
+/** Quiet, and already logged once for the whole run. */
+class Ignored extends Quiet {}
+
+const waitsForNextRun = () => new Quiet(`waits for the next run: ${MAX_CREATES} roles and channels are made at most per run`);
 
 async function failGroup(run: SourceRun, group: Group, line: GroupLine, part: 'role' | 'room', error: unknown): Promise<GroupLine> {
   line.error = errorText(error);
@@ -311,6 +315,7 @@ async function failGroup(run: SourceRun, group: Group, line: GroupLine, part: 'r
   // A room isn't made, or kept in step, while its role fails.
   if (part === 'role' && line.room) line.room = 'failed';
   const what = `Group sync: ${run.config.source} group "${group.key}" (${group.name}): its ${part} failed: ${line.error}`;
+  if (error instanceof Ignored) return line;
   if (error instanceof Quiet) console.warn(what);
   else {
     console.error(what);
@@ -334,7 +339,7 @@ async function placeRole(run: SourceRun, group: Group, record: GroupRecord): Pro
     if (MAPPED_ROLE_IDS.has(role.id)) {
       if (!run.mappedLogged) console.warn(`Group sync: ${run.config.source}: ignoring group roles the mapping manages this run`);
       run.mappedLogged = true;
-      throw new Quiet(`role ${role.id} is one the mapping manages; ignored`);
+      throw new Ignored(`role ${role.id} is one the mapping manages; ignored`);
     }
     // Without this, a name clash would hand a moderator role to a group and take it from everyone else.
     const refused = refusal(role, server.guild);
@@ -348,7 +353,7 @@ async function placeRole(run: SourceRun, group: Group, record: GroupRecord): Pro
     return 'renamed';
   }
 
-  if (run.creates >= MAX_CREATES) throw new Quiet(`waits for the next run: ${MAX_CREATES} roles and channels are made at most per run`);
+  if (run.creates >= MAX_CREATES) throw waitsForNextRun();
   run.creates += 1;
   if (!run.live) return 'created';
   // No permissions, at the bottom of the list (Discord's default for a new role).
@@ -366,7 +371,7 @@ async function placeRoom(run: SourceRun, record: GroupRecord, name: string): Pro
   const placed = await placeChannel(server, { categoryId: run.categoryId, id: record.channelId, name, rename: true, visibleTo }, { dryRun: !run.live, mayCreate });
   if (placed.channelId) record.channelId = placed.channelId;
   if (placed.outcome === 'would-create') {
-    if (!mayCreate) throw new Quiet(`waits for the next run: ${MAX_CREATES} roles and channels are made at most per run`);
+    if (!mayCreate) throw waitsForNextRun();
     run.creates += 1;
     return 'created';
   }
@@ -385,8 +390,8 @@ async function retireGroup(run: SourceRun, key: string, stored: GroupRecord): Pr
   const now = Date.now();
 
   if (!stored.missingSince) {
-    // dry-run reports it and alerts, but doesn't start the grace period.
-    if (run.live) await env.KV.put(recordKey(config.source, key), JSON.stringify({ ...stored, missingSince: new Date(now).toISOString() }));
+    // Kept in dry-run too: it is larry's own record, not a change in Discord, and lets the status say what would happen.
+    await env.KV.put(recordKey(config.source, key), JSON.stringify({ ...stored, missingSince: new Date(now).toISOString() }));
     await postOnce(
       env,
       groupAlertKey(config.source, 'missing', key),
@@ -430,7 +435,7 @@ async function retireGroup(run: SourceRun, key: string, stored: GroupRecord): Pr
 async function deleteRoom(server: GroupServer, categoryId: string | undefined, channelId: string): Promise<void> {
   const channel = server.channels.find((candidate) => candidate.id === channelId);
   if (!channel) return;
-  if (channel.type !== GUILD_TEXT_CHANNEL || !categoryId || channel.parent_id !== categoryId) throw new Error(`#${channel.name} isn't a text channel under the source's room category`);
+  if (channel.type !== GUILD_TEXT || !categoryId || channel.parent_id !== categoryId) throw new Error(`#${channel.name} isn't a text channel under the source's room category`);
   await deleteGone(server.token, `/channels/${channelId}`, 'Group sync: no longer served');
 }
 

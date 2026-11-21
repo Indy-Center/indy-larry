@@ -311,6 +311,18 @@ describe('a group no longer served', () => {
     expect((await larry.getGroupStatus('training')).groups).toEqual([{ key: 'JR', name: 'Teacher JR', role: 'deleted', room: 'deleted' }]);
   });
 
+  it('in dry-run starts the grace period and reports the deletion it would make, deleting nothing', async () => {
+    await goneAfterARun();
+    env.GROUP_SYNC_TRAINING = 'dry-run';
+    await cron();
+    vi.setSystemTime(new Date(Date.now() + 49 * HOUR));
+    await cron();
+
+    expect(deletions()).toEqual([]);
+    expect(record_('JR')).toEqual({ roleId: ROLE, channelId: ROOM, missingSince: '2026-11-21T12:00:00.000Z' });
+    expect((await larry.getGroupStatus('training')).groups).toEqual([{ key: 'JR', name: 'Teacher JR', role: 'deleted', room: 'deleted' }]);
+  });
+
   it('keeps its record until Discord confirms each deletion', async () => {
     await goneAfterARun();
     await cron();
@@ -531,6 +543,9 @@ describe('postToGroup', () => {
     expect(await larry.postToGroup({ source: 'training', key: 'JR', notice })).toBe('no-room');
 
     env.GROUP_SYNC_TRAINING = 'dry-run';
+    expect(await larry.postToGroup({ source: 'training', key: 'JR', notice })).toBe('not-live');
+    env.GROUP_SYNC_TRAINING = 'live';
+    env.ROLE_SYNC_MODE = 'dry-run';
     expect(await larry.postToGroup({ source: 'training', key: 'JR', notice })).toBe('not-live');
     expect(env.LARRY_QUEUE.sent).toEqual([]);
   });
