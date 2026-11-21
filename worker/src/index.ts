@@ -1,11 +1,18 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
+import { handleFetch, type BotEventsEnv } from './bot-events';
+import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMember, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, type QueueJob, type SendEnv } from './send';
 
-/** Larry's send Worker. Other Workers reach these methods over a service binding; there's no fetch handler. */
-export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc {
+type Env = SendEnv & RoleSyncEnv & BotEventsEnv;
+
+/**
+ * Larry's Worker. Other Workers reach these methods over a service binding. The fetch handler is
+ * only for the bots on the VPS (bot-events.ts). The cron runs the role sync (role-sync.ts).
+ */
+export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   send(request: ChannelSend) {
     return sendNow(this.env, 'channel', request);
   }
@@ -82,7 +89,34 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
     }
   }
 
-  queue(batch: MessageBatch<QueueJob>) {
-    return consume(batch, this.env);
+  linkDiscord(cid: number, discordId: string) {
+    return linkDiscord(this.env, cid, discordId);
+  }
+
+  unlink(cid: number, service: 'discord' | 'teamspeak') {
+    return unlink(this.env, cid, service);
+  }
+
+  getLinks(cid: number) {
+    return getLinks(this.env, cid);
+  }
+
+  syncMember(cid: number) {
+    return syncMember(this.env, cid);
+  }
+
+  /** Both queues come here: `role-sync` to the role sync, `larry-messages` to the sender. */
+  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage>) {
+    if (batch.queue === 'role-sync') return consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env);
+    return consume(batch as MessageBatch<QueueJob>, this.env);
+  }
+
+  /** The bots' routes: `POST /bot/events` from larry's bot. */
+  fetch(request: Request) {
+    return handleFetch(request, this.env);
+  }
+
+  scheduled(_controller: ScheduledController) {
+    return startRoleSync(this.env);
   }
 }
