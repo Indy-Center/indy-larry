@@ -35,6 +35,8 @@ jobs:
       CHANNEL_CATEGORIES: ${{ vars.ENV_CHANNEL_CATEGORIES }}
       # The role sync's client at identity (README, Role sync): the ID is a var, the secret a Worker secret.
       IDENTITY_CLIENT_ID: ${{ vars.ENV_IDENTITY_CLIENT_ID }}
+      # The training app's group sync (README, Group sync): off, dry-run or live. Unset is off.
+      GROUP_SYNC_TRAINING: ${{ vars.ENV_GROUP_SYNC_TRAINING }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +60,7 @@ jobs:
           --var "GUILD_ID:$GUILD_ID"
           --var "CHANNEL_CATEGORIES:$CHANNEL_CATEGORIES"
           --var "IDENTITY_CLIENT_ID:$IDENTITY_CLIENT_ID"
+          --var "GROUP_SYNC_TRAINING:$GROUP_SYNC_TRAINING"
 
       # Same token as the VPS bot, so messages come from Larry. Re-set on every deploy to stay in step with it.
       - name: Set DISCORD_TOKEN

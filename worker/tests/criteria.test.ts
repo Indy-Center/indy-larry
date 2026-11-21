@@ -12,7 +12,6 @@ const person = (overrides: Partial<VatusaPerson> = {}): VatusaPerson => ({
   facility: 'ZID',
   rosters: ['ZID'],
   roles: [],
-  credentials: [],
   name: null,
   ...overrides,
 });
@@ -40,9 +39,6 @@ describe('each condition type', () => {
     ['division_staff is not USWT', { type: 'division_staff' }, { roles: [{ facility: 'ZHQ', role: 'USWT' }] }, false],
     ['division_staff is not facility staff', { type: 'division_staff' }, { roles: [{ facility: 'ZID', role: 'ATM' }] }, false],
     ['all matches anyone rated', { type: 'all' }, {}, true],
-    ['certification matches a credential held', { type: 'certification', value: 'T-RC' }, { credentials: ['T-RC'] }, true],
-    ['certification is not another credential', { type: 'certification', value: 'T-RC' }, { credentials: ['OCN'] }, false],
-    ['certification is not held without the training roster', { type: 'certification', value: 'T-RC' }, {}, false],
   ];
 
   it.each(cases)('%s', (_, condition, overrides, expected) => {

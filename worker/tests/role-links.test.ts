@@ -4,7 +4,7 @@ import type { RoleSyncMessage } from '../src/role-sync';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
 import { identityEnv, idUser, TOKEN_LIFETIME_SECONDS } from './fake-identity';
-import { fakeTraining, trainee } from './fake-training';
+import { fakeSource } from './fake-source';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
 
@@ -23,7 +23,7 @@ function makeEnv() {
     SEND_CHANNELS: `tech-team-alerts:${ALERTS}`,
     ROLE_SYNC_MODE: 'dry-run',
     KV: fakeKv(),
-    TRAINING: fakeTraining({ members: [trainee(1000001)] }),
+    TRAINING: fakeSource(),
     ...identityEnv([idUser(1000001), idUser(1000002, OTHER_MEMBER_ACCOUNT)]),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
@@ -64,6 +64,13 @@ afterEach(() => {
 });
 
 const cron = () => larry.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.now(), noRetry() {} } as ScheduledController);
+
+/** syncMembers() for one CID, as the profile buttons call it: its one answer, without the CID. */
+async function syncOne(cid: number) {
+  const [first] = await larry.syncMembers([cid]);
+  const { cid: _, ...answer } = first!;
+  return answer;
+}
 
 /** Deliver everything queued so far to the consumer, and return its log lines and messages. */
 async function consume() {
@@ -212,9 +219,9 @@ describe('a VATUSA Discord ID another member has linked', () => {
     expect(await larry.getLinks(1000030)).toEqual({ discord: { id: VATUSA_ACCOUNT, source: 'linked' }, teamspeak: null });
   });
 
-  it('is not queued for syncMember or unlink of the first member', async () => {
+  it('is not queued for syncMembers or unlink of the first member', async () => {
     fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [offList] });
-    expect(await larry.syncMember(1000020)).toEqual({ queued: false, reason: 'No Discord account or TeamSpeak identity is known for this member.' });
+    expect(await syncOne(1000020)).toEqual({ queued: false, reason: 'No Discord account or TeamSpeak identity is known for this member.' });
     await larry.unlink(1000020, 'discord');
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
@@ -242,7 +249,6 @@ describe('a VATUSA Discord ID another member has linked', () => {
   });
 
   it('gives the account to the member who linked it', async () => {
-    env.TRAINING = fakeTraining({ members: [trainee(1000030)] });
     fakeVatusaAndDiscord(vatusaLists(), { roles: [], members: [member(VATUSA_ACCOUNT), member(LARRY)] }, [], { users: [offList, record({ cid: 1000030, rating_short: 'S3', discord_id: null })] });
     env.ROLE_SYNC_QUEUE.sent.push({ type: 'sync-cid', cid: 1000030, discordId: VATUSA_ACCOUNT });
     const { lines } = await consume();
@@ -279,13 +285,26 @@ describe("larry's client credentials at identity", () => {
   });
 });
 
-describe('syncMember', () => {
+describe('syncMembers', () => {
+  it('answers for each CID asked, once each, in order', async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.syncMembers([1000002, 1999999, 1000002])).toEqual([
+      { cid: 1000002, queued: true },
+      { cid: 1999999, queued: false, reason: 'No Discord account or TeamSpeak identity is known for this member.' },
+    ]);
+  });
+
+  it('refuses a call that names no CIDs, or something that is not one', async () => {
+    await expect(larry.syncMembers([])).rejects.toThrow('cids must be a list of 1 to 100 CIDs');
+    await expect(larry.syncMembers([1.5])).rejects.toThrow('"1.5" isn\'t a CID');
+  });
+
   it('queues a known member, by their link, and then declines for 2 minutes', async () => {
     fakeVatusaAndDiscord(vatusaLists(), server());
-    expect(await larry.syncMember(1000002)).toEqual({ queued: true });
+    expect(await syncOne(1000002)).toEqual({ queued: true });
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000002, discordId: OTHER_MEMBER_ACCOUNT }]);
 
-    expect(await larry.syncMember(1000002)).toEqual({ queued: false, reason: 'Synced moments ago; try again in a minute.' });
+    expect(await syncOne(1000002)).toEqual({ queued: false, reason: 'Synced moments ago; try again in a minute.' });
     expect(env.ROLE_SYNC_QUEUE.sent).toHaveLength(1);
     expect(env.KV.ttls.get('role-sync:member:1000002')).toBe(120);
   });
@@ -296,7 +315,7 @@ describe('syncMember', () => {
     await consume();
     const before = vatusaCalls.length;
 
-    expect(await larry.syncMember(1000001)).toEqual({ queued: true });
+    expect(await syncOne(1000001)).toEqual({ queued: true });
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: OLD }]);
     const { lines } = await consume();
     expect(lines).toEqual([`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`]);
@@ -305,13 +324,13 @@ describe('syncMember', () => {
 
   it("looks the member up in VATUSA when no run's lists are kept", async () => {
     const { vatusaCalls } = fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [offList] });
-    expect(await larry.syncMember(1000020)).toEqual({ queued: true });
+    expect(await syncOne(1000020)).toEqual({ queued: true });
     expect(vatusaCalls).toEqual(['/user/1000020']);
   });
 
   it('declines a CID nobody knows a Discord account for', async () => {
     fakeVatusaAndDiscord(vatusaLists(), server());
-    expect(await larry.syncMember(1999999)).toEqual({
+    expect(await syncOne(1999999)).toEqual({
       queued: false,
       reason: 'No Discord account or TeamSpeak identity is known for this member.',
     });
@@ -330,6 +349,6 @@ describe('syncMember', () => {
 
   it('follows ROLE_SYNC_MODE like every other job', async () => {
     env.ROLE_SYNC_MODE = 'on';
-    await expect(larry.syncMember(1000002)).rejects.toThrow('ROLE_SYNC_MODE "on"');
+    await expect(syncOne(1000002)).rejects.toThrow('ROLE_SYNC_MODE "on"');
   });
 });

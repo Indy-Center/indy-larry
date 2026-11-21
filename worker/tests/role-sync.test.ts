@@ -5,7 +5,7 @@ import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
 import { identityEnv, idUser } from './fake-identity';
-import { fakeTraining, trainee } from './fake-training';
+import { fakeSource } from './fake-source';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
 
@@ -33,7 +33,7 @@ function makeEnv() {
     SEND_CHANNELS: `tech-team-alerts:${ALERTS},events:111`,
     ROLE_SYNC_MODE: 'dry-run',
     KV: fakeKv(),
-    TRAINING: fakeTraining({ members: [trainee(1000001)] }),
+    TRAINING: fakeSource(),
     ...identityEnv(),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
@@ -310,36 +310,6 @@ describe('members the lists do not cover', () => {
       expect(writes).toEqual([]);
       expect(messages.map((message) => [message.acked, message.retried])).toEqual([[false, true]]);
     });
-  });
-});
-
-describe('the training roster', () => {
-  const alertsPosted = (writes: { path: string; body?: Record<string, unknown> }[]) => writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content);
-
-  it('is read once per run', async () => {
-    fakeVatusaAndDiscord(goodLists(), server());
-    await cronAndConsume();
-    expect((env.TRAINING as ReturnType<typeof fakeTraining>).calls).toBe(1);
-  });
-
-  it('skips the run and alerts once when getRoster() fails', async () => {
-    env.TRAINING = fakeTraining(null);
-    const { writes } = fakeVatusaAndDiscord(goodLists(), server());
-    await cron();
-    await cron();
-
-    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
-    expect(alertsPosted(writes)).toEqual(["Role sync skipped: couldn't fetch the training roster."]);
-  });
-
-  it('skips the run and alerts once when the roster has no members', async () => {
-    env.TRAINING = fakeTraining({ members: [] });
-    const { writes } = fakeVatusaAndDiscord(goodLists(), server());
-    await cron();
-    await cron();
-
-    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
-    expect(alertsPosted(writes)).toEqual(["Role sync skipped: couldn't fetch the training roster."]);
   });
 });
 

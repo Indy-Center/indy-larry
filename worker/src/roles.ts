@@ -39,8 +39,8 @@ const POWERFUL =
 export type DiscordRole = { id: string; name: string; permissions?: string; managed?: boolean; position?: number };
 export type DiscordMember = { user?: { id: string; bot?: boolean }; roles: string[]; nick?: string | null };
 
-/** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike. */
-function refusal(role: DiscordRole, guild: string): string | null {
+/** Why Larry won't touch a role, or null when it may. The one rule for syncing and deleting alike, groups included. */
+export function refusal(role: DiscordRole, guild: string): string | null {
   const refused = syncRefusal(role, guild);
   if (refused) return refused;
   if (BigInt(role.permissions ?? '0') & POWERFUL) return `"${role.name}" carries moderation permissions; Larry only manages roles that are labels`;
