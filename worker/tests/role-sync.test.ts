@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
-import { syncDiscordMember, type RoleSyncMessage } from '../src/role-sync';
+import type { RoleSyncMessage } from '../src/role-sync';
 import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Server } from './fake-discord';
@@ -10,7 +10,7 @@ import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record, role } from './vatusa-records';
 
 // Past Number.MAX_SAFE_INTEGER, so a parse that rounds it would lose the member.
-const STUDENT = '1146457348798431314';
+const STUDENT = '9000000000000000001';
 const MENTOR = '500000000000000002';
 const STRANGER = '500000000000000003';
 const ALERTS = '300000000000000001';
@@ -187,10 +187,12 @@ describe('a join (sync-member)', () => {
   });
 
   it('syncs through the per-user lookups when no run has kept its lists', async () => {
-    fakeVatusaAndDiscord(goodLists(), server());
+    const { vatusaCalls } = fakeVatusaAndDiscord(goodLists(), server(), [], {
+      users: [record({ cid: 1000001, rating: 4, rating_short: 'S3', discord_id: STUDENT })],
+    });
     const { lines, messages } = await consumeJoins(STUDENT);
-    expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain(`${STUDENT} `);
+    expect(lines).toEqual([`Role sync (dry run): ${STUDENT} CID 1000001: add Student 3, Air Traffic Controller; remove Observer; nickname "Test Person1000001"`]);
+    expect(vatusaCalls).toContain(`/user/${STUDENT}?d`);
     expect(messages[0]!.acked).toBe(true);
   });
 });
@@ -252,13 +254,20 @@ describe('members the lists do not cover', () => {
   });
 
   describe("a known CID VATUSA has no record of (a link's CID)", () => {
-    const noServer = { skippedRoles: [], guard: { ownerId: '', meId: LARRY, adminRoles: [], aboveLarry: [] } };
-    const sync = (cid: number) => syncDiscordMember(env, { people: [], credentials: {}, server: noServer }, { discordId: PILOT, roleIds: [], nick: null, cid });
+    /** Deliver a sync-cid job for PILOT, as a link write or syncMember() queues it. Returns the consumer's log lines. */
+    async function consumeCid(cid: number) {
+      const { batch, messages } = batchOf<RoleSyncMessage>('role-sync', [{ type: 'sync-cid', cid, discordId: PILOT }]);
+      logs = [];
+      await larry.queue(batch as never);
+      return { lines: logs.filter((line) => line.startsWith('Role sync')), messages };
+    }
 
     it('takes their rating from VATSIM, and caches it for 24 hours', async () => {
       const { vatsimCalls } = fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { vatsimRatings: { 1000020: 4 } });
-      expect(await sync(1000020)).toMatchObject({ cid: 1000020, add: ['Student 3', 'Member'] });
-      await sync(1000020);
+      const first = await consumeCid(1000020);
+      expect(first.lines).toEqual([`Role sync (dry run): ${PILOT} CID 1000020: add Student 3, Member; remove nothing`]);
+      expect(first.messages[0]!.acked).toBe(true);
+      await consumeCid(1000020);
 
       expect(vatsimCalls).toEqual(['/members/1000020']);
       expect(env.KV.ttls.get('role-sync:vatsim-rating:1000020')).toBe(24 * 60 * 60);
@@ -266,12 +275,14 @@ describe('members the lists do not cover', () => {
 
     it('gives no Member role at rating 0 (suspended)', async () => {
       fakeVatusaAndDiscord(goodLists(), pilotsServer(), [], { vatsimRatings: { 1000021: 0 } });
-      expect(await sync(1000021)).toMatchObject({ cid: 1000021, add: [], remove: [] });
+      const { lines } = await consumeCid(1000021);
+      expect(lines).toEqual([`Role sync (dry run): ${PILOT} CID 1000021: add nothing; remove nothing`]);
     });
 
     it('stays unresolved when VATSIM has no such member', async () => {
       fakeVatusaAndDiscord(goodLists(), pilotsServer());
-      expect(await sync(1000022)).toMatchObject({ cid: null, add: [], remove: [] });
+      const { lines } = await consumeCid(1000022);
+      expect(lines).toEqual([`Role sync (dry run): ${PILOT} unresolved: no changes`]);
     });
   });
 });
