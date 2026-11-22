@@ -2,28 +2,25 @@ import { MAX_NICKNAME_LENGTH } from './nicknames';
 import type { VatusaName } from './vatusa';
 
 /**
- * The one rule for a member's Discord nickname, until member-profile moves nicknames to identity's
- * `name`. Null leaves their nickname as it is.
+ * The one rule for a member's Discord nickname. Null leaves their nickname as it is.
  *
- * 1. Their identity `preferred_name`, as typed, cut to 32 characters.
- * 2. Else VATUSA's "First Last", or "First CID" when VATUSA's name-privacy flag is on, shortened as
- *    VATUSA's bot does.
- * 3. Else (VATUSA doesn't know them) identity's `given_name` and their CID. Over 32 characters, the
- *    CID stays whole and the given name is cut to fit (trailing spaces trimmed).
+ * 1. Nobody rated below 1 gets one.
+ * 2. Else identity's `name` (their preferred name, else their VATSIM first and last name) whenever
+ *    identity knows them, shortened as VATUSA's bot does. VATUSA's name-privacy flag is not applied.
+ * 3. Else VATUSA's "First Last", or "First CID" when VATUSA's name-privacy flag is on, shortened the
+ *    same way.
+ * 4. Else null.
  *
- * Nobody rated below 1 gets one. `identity` is null when identity has no user for them or couldn't be
- * reached.
+ * `identity` is null when identity has no user for them or couldn't be reached.
  */
 export function nicknameFor(
   person: { cid: number; rating: number; name: VatusaName | null },
-  identity: { preferredName: string | null; givenName: string | null } | null,
+  identity: { name: string | null } | null,
 ): string | null {
   if (person.rating < 1) return null;
-  const preferred = identity?.preferredName;
-  if (preferred?.trim()) return cut(preferred);
+  const name = identity?.name?.trim();
+  if (name) return shorten(name);
   if (person.name) return shorten(person.name.privacy ? `${person.name.first} ${person.cid}` : `${person.name.first} ${person.name.last}`);
-  const given = identity?.givenName?.trim();
-  if (given) return `${cut(given, MAX_NICKNAME_LENGTH - 1 - String(person.cid).length).trimEnd()} ${person.cid}`;
   return null;
 }
 

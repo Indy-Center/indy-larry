@@ -342,7 +342,7 @@ async function identityForNickname(env: IdentityEnv, cid: number, discordId: str
   try {
     return await getUser(env, cid);
   } catch (error) {
-    console.warn(`Role sync: couldn't reach identity for ${discordId}'s preferred name; using VATUSA's name: ${String(error)}`);
+    console.warn(`Role sync: couldn't reach identity for ${discordId}'s name; using VATUSA's name: ${String(error)}`);
     return null;
   }
 }

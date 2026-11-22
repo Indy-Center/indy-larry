@@ -22,6 +22,8 @@ export type IdentityUser = {
   cid: number;
   /** The Discord account they linked, or null. */
   discordId: string | null;
+  /** identity's `name` claim: the preferred name, else their VATSIM first and last name. */
+  name: string | null;
   preferredName: string | null;
   givenName: string | null;
   familyName: string | null;
@@ -31,6 +33,7 @@ export type IdentityUser = {
 type Claims = {
   sub: string;
   discord_id: string | null;
+  name: string | null;
   preferred_name: string | null;
   given_name: string | null;
   family_name: string | null;
@@ -80,6 +83,7 @@ async function call(env: IdentityEnv, method: string, path: string, body?: unkno
 const userFrom = (claims: Claims): IdentityUser => ({
   cid: Number(claims.sub),
   discordId: claims.discord_id || null,
+  name: claims.name ?? null,
   preferredName: claims.preferred_name ?? null,
   givenName: claims.given_name ?? null,
   familyName: claims.family_name ?? null,
