@@ -14,7 +14,7 @@ import { checkMode, type Change, type MemberLookups, type Mode, type Platform, t
 /**
  * The role sync's Discord adapter: the server's members are its accounts, and their mapped roles and
  * nickname (nickname-rule.ts) what it sets. Only roles the mapping names are ever added or removed, and
- * only those below larry's highest role (decision 0005); the groups' roles (groups.ts) go with them.
+ * only those below larry's highest role (Discord's role order is the guard); the groups' roles (groups.ts) go with them.
  *
  * A Discord account's CID is its identity link, else the CID whose VATUSA Discord ID it is. An account the
  * sources confirm is no one (unresolved: see resolvePerson) loses every mapped role it holds, as with
