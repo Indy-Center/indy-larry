@@ -54,6 +54,15 @@ export class TeamSpeakJobs extends DurableObject {
     return jobId;
   }
 
+  /**
+   * Adds a job after deleting any older job of the same type that hasn't been pulled (no lease, no try),
+   * so at most one of them waits. A leased or retried one is left alone. Returns the new job's ID.
+   */
+  enqueueReplacing(request: TsJobRequest): string {
+    this.sql.exec("DELETE FROM jobs WHERE leased_until = 0 AND tries = 0 AND json_extract(body, '$.type') = ?", request.type);
+    return this.enqueue(request);
+  }
+
   /** Up to `max` (at most 10) of the oldest jobs not leased, each now leased for 60 seconds. */
   pull(max: number): TsJob[] {
     const now = Date.now();
