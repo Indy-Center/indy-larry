@@ -322,6 +322,7 @@ Secrets:
 | `ENV_BOT_EVENTS_SECRET` | Secret | The join sync's shared secret (`openssl rand -base64 32`); the deploy writes it into the bot's `.env` and sets it on the Worker as `BOT_EVENTS_SECRET`. Changing it changes both on the next deploy |
 | `ENV_IDENTITY_CLIENT_ID` | Variable | The ID of larry's client in identity (scopes `users:read` and `users:write`); the deploy sets it on the Worker as `IDENTITY_CLIENT_ID` ([Role sync](#role-sync)) |
 | `ENV_IDENTITY_CLIENT_SECRET` | Secret | That client's secret; the deploy sets it on the Worker as the `IDENTITY_CLIENT_SECRET` secret |
+| `ENV_DISCORD_JOIN_BOT_TOKEN` | Secret | Optional; the "Indy Center" Discord app's bot token, which adds members who link Discord to the server; the deploy sets it on the Worker as the `DISCORD_JOIN_BOT_TOKEN` secret, and skips it while it's unset ([Role sync](#role-sync)) |
 | `ENV_GROUP_SYNC_TRAINING` | Variable | The training app's group sync: `off` (or unset), `dry-run` or `live`; the deploy sets it on the Worker as `GROUP_SYNC_TRAINING` ([Group sync](#group-sync)) |
 | `CLOUDFLARE_WORKERS_API_KEY` | Secret | Cloudflare API token for the Worker deploy (Workers Scripts:Edit, Queues:Edit) |
 

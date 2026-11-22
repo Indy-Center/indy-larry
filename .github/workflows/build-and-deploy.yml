@@ -84,6 +84,15 @@ jobs:
           IDENTITY_CLIENT_SECRET: ${{ secrets.ENV_IDENTITY_CLIENT_SECRET }}
         run: printf '%s' "$IDENTITY_CLIENT_SECRET" | npx wrangler secret put IDENTITY_CLIENT_SECRET
 
+      # The "Indy Center" app's bot, which adds members who link Discord to the server (README, Role sync).
+      # Skipped until the repo secret exists; without it linking still works and adds nobody.
+      - name: Set DISCORD_JOIN_BOT_TOKEN
+        env:
+          DISCORD_JOIN_BOT_TOKEN: ${{ secrets.ENV_DISCORD_JOIN_BOT_TOKEN }}
+        run: |
+          if [ -z "$DISCORD_JOIN_BOT_TOKEN" ]; then echo "ENV_DISCORD_JOIN_BOT_TOKEN isn't set; skipping"; exit 0; fi
+          printf '%s' "$DISCORD_JOIN_BOT_TOKEN" | npx wrangler secret put DISCORD_JOIN_BOT_TOKEN
+
   # Publishes the callers' types (worker/src/client) to npm when worker/package.json names a version
   # npm doesn't have yet. Merging without a version bump publishes nothing.
   #
