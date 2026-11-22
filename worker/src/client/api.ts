@@ -373,7 +373,7 @@ export type SyncMembersResult = ({ cid: number } & SyncMemberResult)[];
 export type Links = {
   /** The account the sync uses: `linked` when they linked it, `vatusa` when it is the one VATUSA holds. */
   discord: { id: string; source: 'linked' | 'vatusa' } | null;
-  /** Always null until TeamSpeak links arrive. */
+  /** The TeamSpeak identity (unique ID) linked to them in identity, or null. */
   teamspeak: { uid: string } | null;
 };
 

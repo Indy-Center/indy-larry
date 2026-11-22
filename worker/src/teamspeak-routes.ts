@@ -1,10 +1,13 @@
+import { receiveAccounts } from './platforms/teamspeak';
+import type { RoleSyncEnv } from './role-sync';
 import { jobsStore, MAX_PULL, type TeamSpeakJobsEnv } from './teamspeak-jobs';
 import type { TsResult } from './teamspeak-shape';
 
 /**
  * teamspeak-bot's three routes, behind TEAMSPEAK_BOT_SECRET (bot-events.ts checks it). The bot pulls
  * its jobs from the jobs store (teamspeak-jobs.ts), acks them, and posts its results, which go on
- * `teamspeak-results` for the consumer below.
+ * `teamspeak-results` for the consumer below. `accounts` (the answer to the cron's `report-accounts`)
+ * goes on to the role sync's TeamSpeak adapter (platforms/teamspeak.ts).
  */
 
 export type TeamSpeakEnv = TeamSpeakJobsEnv & {
@@ -42,9 +45,22 @@ export async function postResults(request: Request, env: TeamSpeakEnv): Promise<
   return status(202);
 }
 
-/** The `teamspeak-results` consumer: logs each result. */
-export function consumeTsResults(batch: MessageBatch<TsResult>) {
-  for (const { body } of batch.messages) (body?.type === 'failed' ? console.warn : console.log)(describeResult(body));
+/**
+ * The `teamspeak-results` consumer: logs each result, and hands `accounts` to the role sync's TeamSpeak
+ * adapter, which queues its jobs. A result that throws there is retried on its own.
+ */
+export async function consumeTsResults(batch: MessageBatch<TsResult>, env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_QUEUE'>): Promise<void> {
+  for (const message of batch.messages) {
+    const { body } = message;
+    try {
+      if (body?.type === 'accounts') await receiveAccounts(env, body);
+      else (body?.type === 'failed' ? console.warn : console.log)(describeResult(body));
+      message.ack();
+    } catch (error) {
+      console.error(`TeamSpeak result failed, retrying: ${String(error)}`);
+      message.retry({ delaySeconds: 10 * message.attempts });
+    }
+  }
 }
 
 function describeResult(result: TsResult): string {
@@ -57,6 +73,8 @@ function describeResult(result: TsResult): string {
       return `teamspeak-bot heartbeat at ${result.at}`;
     case 'reconnected':
       return `teamspeak-bot reconnected to ServerQuery at ${result.at}`;
+    case 'accounts':
+      return `teamspeak-bot reported ${result.holders.length} accounts`;
     default:
       return `teamspeak-bot sent an unknown result: ${JSON.stringify(result)}`;
   }
@@ -64,8 +82,13 @@ function describeResult(result: TsResult): string {
 
 function isResult(value: unknown): value is TsResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const { type, jobId, error, at } = value as Record<string, unknown>;
+  const { type, jobId, error, at, holders, connected } = value as Record<string, unknown>;
+  const isUid = (uid: unknown) => typeof uid === 'string' && uid !== '';
+  const isHolder = (holder: unknown) =>
+    !!holder && typeof holder === 'object' && isUid((holder as { uid?: unknown }).uid) && isGroups((holder as { groups?: unknown }).groups);
   switch (type) {
+    case 'accounts':
+      return Array.isArray(holders) && holders.every(isHolder) && Array.isArray(connected) && connected.every(isUid);
     case 'applied':
       return typeof jobId === 'string' && jobId !== '';
     case 'failed':
@@ -76,6 +99,10 @@ function isResult(value: unknown): value is TsResult {
     default:
       return false;
   }
+}
+
+function isGroups(groups: unknown): boolean {
+  return Array.isArray(groups) && groups.every((id) => Number.isInteger(id) && id > 0);
 }
 
 async function readJson(request: Request): Promise<unknown> {

@@ -151,7 +151,7 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
       return reported(this.env, this.ctx, 'Role sync queue consumer', () => consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env));
     }
     if (batch.queue === 'teamspeak-results') {
-      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTsResults(batch as MessageBatch<TsResult>));
+      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTsResults(batch as MessageBatch<TsResult>, this.env));
     }
     return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
   }
