@@ -1,7 +1,8 @@
 import { receiveAccounts } from './platforms/teamspeak';
 import { receiveConnect } from './platforms/teamspeak-links';
-import type { RoleSyncEnv } from './role-sync';
+import { startRoleSync, type RoleSyncEnv } from './role-sync';
 import { jobsStore, MAX_PULL, type TeamSpeakJobsEnv } from './teamspeak-jobs';
+import { noteResult } from './teamspeak-quiet';
 import type { TsResult } from './teamspeak-shape';
 
 /**
@@ -48,14 +49,20 @@ export async function postResults(request: Request, env: TeamSpeakEnv): Promise<
 
 /**
  * The `teamspeak-results` consumer: logs each result, hands `accounts` to the role sync's TeamSpeak
- * adapter, which queues its jobs, and `client-connected` to the TeamSpeak links (platforms/teamspeak-links.ts).
- * A result that throws there is retried on its own.
+ * adapter, which queues its jobs, `client-connected` to the TeamSpeak links (platforms/teamspeak-links.ts),
+ * and `reconnected` to a full sync, as the cron runs. Every result keeps its time for the quiet alert
+ * (teamspeak-quiet.ts). A result that throws there is retried on its own.
  */
 export async function consumeTsResults(batch: MessageBatch<TsResult>, env: RoleSyncEnv): Promise<void> {
   for (const message of batch.messages) {
     const { body } = message;
     try {
-      if (body?.type === 'accounts') await receiveAccounts(env, body);
+      // Any result shows the bot is up: keep its time, and clear a standing quiet alert.
+      await noteResult(env);
+      if (body?.type === 'reconnected') {
+        console.log(describeResult(body));
+        await startRoleSync(env);
+      } else if (body?.type === 'accounts') await receiveAccounts(env, body);
       else if (body?.type === 'client-connected') await receiveConnect(env, body);
       else (body?.type === 'failed' ? console.warn : console.log)(describeResult(body));
       message.ack();

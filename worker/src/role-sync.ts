@@ -279,6 +279,23 @@ async function queueMemberSync(env: RoleSyncEnv, cid: number): Promise<SyncMembe
   return { queued: false, reason: NO_ACCOUNT };
 }
 
+/** Set when a member's sync is queued because they connected to TeamSpeak, so reconnecting doesn't queue another for 5 minutes. */
+const connectKey = (cid: number) => `role-sync:connect:${cid}`;
+const CONNECT_SECONDS = 5 * 60;
+
+/**
+ * A linked member connected to TeamSpeak: queue their one job, unless they were synced in the last 5
+ * minutes (by an earlier connect, or by syncMembers(), whose 2-minute mark is memberKey).
+ */
+export async function syncOnConnect(env: RoleSyncEnv, cid: number): Promise<void> {
+  if ((await env.KV.get(connectKey(cid))) || (await env.KV.get(memberKey(cid)))) {
+    console.log(`Role sync: CID ${cid} connected to TeamSpeak; synced in the last 5 minutes, so no new sync`);
+    return;
+  }
+  const { queued } = await queueMemberSync(env, cid);
+  if (queued) await env.KV.put(connectKey(cid), new Date().toISOString(), { expirationTtl: CONNECT_SECONDS });
+}
+
 /** The most CIDs one syncMembers() call takes. */
 const MAX_SYNC_MEMBERS = 100;
 

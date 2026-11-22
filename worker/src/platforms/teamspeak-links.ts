@@ -1,5 +1,5 @@
 import { findByTeamspeakUid, getUser, IdentityConflict, writeTeamspeakUid } from '../identity';
-import type { RoleSyncEnv } from '../role-sync';
+import { syncOnConnect, type RoleSyncEnv } from '../role-sync';
 import { jobsStore } from '../teamspeak-jobs';
 import type { TsResult } from '../teamspeak-shape';
 import { checkMode } from './platform';
@@ -35,8 +35,9 @@ export async function receiveConnect(env: RoleSyncEnv, result: Extract<TsResult,
   const mode = checkMode(env);
   const holder = await findByTeamspeakUid(env, result.uid);
   if (holder) {
-    // A UID a member holds: the member's sync on connect belongs here. For now it is only logged.
+    // A UID a member holds: their sync, unless they were synced in the last 5 minutes.
     console.log(`TeamSpeak ${result.uid} connected: linked to CID ${holder.cid}`);
+    await syncOnConnect(env, holder.cid);
     return;
   }
 

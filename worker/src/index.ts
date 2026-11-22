@@ -11,6 +11,7 @@ import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type Rol
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
 import { consumeTsResults } from './teamspeak-routes';
+import { checkQuiet } from './teamspeak-quiet';
 import type { TsResult } from './teamspeak-shape';
 
 // The TeamSpeak jobs store, a Durable Object (wrangler.jsonc's durable_objects), exported for the runtime.
@@ -167,6 +168,10 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   }
 
   scheduled(_controller: ScheduledController) {
-    return reported(this.env, this.ctx, 'Role sync cron', () => startRoleSync(this.env));
+    return reported(this.env, this.ctx, 'Role sync cron', async () => {
+      // The quiet check first, so a failed VATUSA fetch doesn't skip it.
+      await checkQuiet(this.env);
+      await startRoleSync(this.env);
+    });
   }
 }
