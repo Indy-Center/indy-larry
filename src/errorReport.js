@@ -35,7 +35,9 @@ const EXIT_FLUSH_MS = 5000;
 // How often uptime.json is touched while Larry runs, so a hard kill's downtime is known to within this much.
 const HEARTBEAT_MS = 60_000;
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
+// A plain timer, not unref'd: an unref'd one can leave a waiting retry with nothing holding the process open (the
+// test runner then fails the test). Every exit path calls process.exit right after its wait, so none is held up.
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The text of an error with its stack, or of anything else thrown. Never throws. */
 function describe(value) {
