@@ -444,6 +444,7 @@ async function refresh() {
 
 client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
+  announceUp(); // first, so the "back up" post doesn't wait on (or fail with) the first refresh
   channel = await client.channels.fetch(config.channelId);
   if (!channel?.isTextBased()) throw new Error(`Channel ${config.channelId} is not a text channel`);
 
@@ -456,7 +457,6 @@ client.once(Events.ClientReady, async () => {
   await refresh();
   setInterval(refresh, config.pollSeconds * 1000);
   console.log(`Polling every ${config.pollSeconds}s${config.artccIds.length ? ` for ${config.artccIds.join(', ')}` : ''}.`);
-  announceUp();
 
   if (notifyConfig.panelChannelId) {
     notifications = new Notifications(client, notifyConfig);

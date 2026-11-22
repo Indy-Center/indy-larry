@@ -109,3 +109,13 @@ test('upMessage says how long Larry was down, and whether it said goodbye', () =
   assert.match(upMessage(name, { state: 'up', at: 0 }, 10 * 60_000), /back up after about 10 min\. It went down without warning/);
   assert.equal(upMessage(name, { state: 'down', at: 10_000 }, 0), '🟢 **Larry bot** is up.'); // clock went backwards
 });
+
+test('say() posts a status line as it is and resolves with whether it went out', async () => {
+  const ok = setup();
+  assert.equal(await ok.reporter.say('🟢 **Larry bot** is up.'), true);
+  assert.equal(ok.posts[0].body.content, '🟢 **Larry bot** is up.');
+
+  const refused = setup({ answers: [{ status: 403, body: { message: 'Missing Access', code: 50001 } }] });
+  assert.equal(await refused.reporter.say('🟢 **Larry bot** is up.'), false);
+  assert.match(refused.logs[0], /Missing Access/);
+});

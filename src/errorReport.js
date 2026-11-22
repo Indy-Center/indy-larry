@@ -330,7 +330,10 @@ function installErrorReporting(env = process.env, { uptimeFile } = {}) {
     const last = readLast();
     mark('up');
     setInterval(() => mark('up'), HEARTBEAT_MS).unref();
-    reporter.say(upMessage(reporter.name, last, Date.now()));
+    // Logged either way; the line has "error" in it so the deploy's log shows it.
+    reporter.say(upMessage(reporter.name, last, Date.now())).then((ok) => {
+      if (ok) console.log('Posted the up notice in the error channel.');
+    });
   }
 
   process.on('uncaughtException', (err) => fatal(err));
