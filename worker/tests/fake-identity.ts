@@ -1,5 +1,5 @@
 /** A user as identity's `/api/users` sends it (its `Claims`), with made-up names. */
-export type FakeUser = { sub: string; discord_id: string | null; name: string | null; preferred_name: string | null; given_name: string | null; family_name: string | null };
+export type FakeUser = { sub: string; discord_id: string | null; teamspeak_uid?: string | null; name: string | null; preferred_name: string | null; given_name: string | null; family_name: string | null };
 
 export const CLIENT_ID = 'larry';
 export const CLIENT_SECRET = 'larry-secret';
@@ -25,7 +25,7 @@ export const identityEnv = (users: FakeUser[] = []) => ({
 
 /**
  * A stand-in for the `IDENTITY` service binding, answering as identity's fetch handler does:
- * `/oauth/token` (client credentials, Basic auth), `GET /api/users?discord_id=`, `GET /api/users/{cid}`
+ * `/oauth/token` (client credentials, Basic auth), `GET /api/users?discord_id=|teamspeak_uid=` (exact), `GET /api/users/{cid}`
  * and `PATCH /api/users/{cid}`, all but the first behind the bearer token it issued. `writes` records the
  * PATCH bodies; a PATCH giving one user another's Discord ID answers 409, like identity's unique column.
  * `down` makes every call answer 503.
@@ -55,6 +55,8 @@ export function fakeIdentity(users: FakeUser[] = []) {
       identity.apiCalls.push(`${init.method ?? 'GET'} ${url.pathname}${url.search}`);
 
       if (url.pathname === '/api/users') {
+        const uid = url.searchParams.get('teamspeak_uid');
+        if (uid !== null) return json(identity.users.filter((user) => user.teamspeak_uid === uid));
         const discordId = url.searchParams.get('discord_id');
         return json(identity.users.filter((user) => user.discord_id === discordId));
       }
