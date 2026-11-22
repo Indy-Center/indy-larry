@@ -1,8 +1,8 @@
-import { findByTeamspeakUid, getUser, IdentityConflict, writeTeamspeakUid } from '../identity';
+import { findByTeamspeakUid, getUser, IdentityConflict, writeTeamspeakUid, type IdentityUser } from '../identity';
 import { syncOnConnect, type RoleSyncEnv } from '../role-sync';
 import { jobsStore } from '../teamspeak-jobs';
 import type { TsResult } from '../teamspeak-shape';
-import { checkMode } from './platform';
+import { checkMode, type Mode } from './platform';
 import { removeManagedGroups, teamspeakPlatform } from './teamspeak';
 
 /**
@@ -67,23 +67,38 @@ export async function confirmTsLink(env: RoleSyncEnv, cid: number, token: string
   const mode = checkMode(env);
   const uid = typeof token === 'string' && TOKEN.test(token) ? await env.KV.get(tokenKey(token)) : null;
   if (!uid) throw new Error(EXPIRED);
-  const holder = await findByTeamspeakUid(env, uid);
-  if (holder && holder.cid !== cid) throw new Error(TAKEN);
+  if (await heldByAnother(env, cid, uid)) throw new Error(TAKEN);
   const user = await getUser(env, cid);
   if (!user) throw new Error(SIGN_IN);
 
   // Used: it can't link twice, and the next connect of an identity still unlinked gets a fresh one.
   await env.KV.delete(tokenKey(token));
   await env.KV.delete(sentKey(uid));
+  const written = await writeTsLink(env, mode, cid, user, uid);
+  if (written !== 'written') throw new Error(written === 'taken' ? TAKEN : SIGN_IN);
+}
+
+/** Whether a member other than this CID already holds the UID (identity's `teamspeak_uid` lookup). */
+export async function heldByAnother(env: RoleSyncEnv, cid: number, uid: string): Promise<boolean> {
+  const holder = await findByTeamspeakUid(env, uid);
+  return !!holder && holder.cid !== cid;
+}
+
+/**
+ * The write every TeamSpeak link ends in, after the caller's checks: a different UID the member had loses
+ * its managed groups first, the UID is written to identity, and the member's sync is queued. `taken` when
+ * someone linked the UID between the check and the write, `sign-in` when identity has no user for the CID.
+ */
+export async function writeTsLink(env: RoleSyncEnv, mode: Mode, cid: number, user: IdentityUser, uid: string): Promise<'written' | 'taken' | 'sign-in'> {
   if (user.teamspeakUid && user.teamspeakUid !== uid) await removeManagedGroups(env, mode, user.teamspeakUid);
   try {
-    if (!(await writeTeamspeakUid(env, cid, uid))) throw new Error(SIGN_IN);
+    if (!(await writeTeamspeakUid(env, cid, uid))) return 'sign-in';
   } catch (error) {
-    // Someone linked it between the check and the write.
-    if (error instanceof IdentityConflict) throw new Error(TAKEN);
+    if (error instanceof IdentityConflict) return 'taken';
     throw error;
   }
   await env.ROLE_SYNC_QUEUE.send(teamspeakPlatform.messageFor(cid, { uid }));
+  return 'written';
 }
 
 function newToken(): string {
