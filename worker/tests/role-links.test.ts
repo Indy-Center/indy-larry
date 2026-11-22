@@ -141,7 +141,8 @@ describe('linkDiscord with the member\'s access token adds them to the server', 
   let pending: Promise<unknown>[];
 
   beforeEach(() => {
-    Object.assign(env, { DISCORD_JOIN_BOT_TOKEN: JOIN_BOT, ERROR_CHANNEL_ID: ERRORS });
+    // The join is a Discord write, so it happens only in live.
+    Object.assign(env, { DISCORD_JOIN_BOT_TOKEN: JOIN_BOT, ERROR_CHANNEL_ID: ERRORS, ROLE_SYNC_MODE: 'live' });
     // Each failure test expects its own error report, which the isolate would otherwise send once.
     resetErrorMemory();
     pending = [];
@@ -200,6 +201,18 @@ describe('linkDiscord with the member\'s access token adds them to the server', 
     expect(kept).toContain(`Discord refused: ${joinRefused.status}`);
     expect(kept).toContain('linkDiscord() failed');
     expect(kept).not.toContain(ACCESS);
+  });
+
+  it('makes no join call in dry-run, logging that it would, and still links and queues the sync', async () => {
+    env.ROLE_SYNC_MODE = 'dry-run';
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.linkDiscord(1000001, JOINER, ACCESS)).toEqual({ joined: false });
+
+    expect(joinCalls()).toEqual([]);
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: JOINER } }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
+    expect(logs).toContain(`Link Discord (dry run): would add ${JOINER} to the server`);
+    expect(await everythingButTheJoin()).not.toContain(ACCESS);
   });
 
   it('makes no join call without a token', async () => {

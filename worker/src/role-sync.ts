@@ -501,7 +501,7 @@ export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<Syn
  * and never kept or logged. A failed join keeps the link and the sync, then throws.
  */
 export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: string, accessToken?: string): Promise<{ joined: boolean }> {
-  checkMode(env);
+  const mode = checkMode(env);
   if (!SNOWFLAKE.test(discordId)) throw new Error('discordId must be a Discord user ID.');
   const holder = await findByDiscordId(env, discordId);
   if (holder && holder.cid !== cid) throw new Error('That Discord account is linked to another member.');
@@ -514,16 +514,23 @@ export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: stri
     if (error instanceof IdentityConflict) throw new Error('That Discord account is linked to another member.');
     throw error;
   }
-  const join = accessToken ? await joinServer(env, discordId, accessToken) : { joined: false };
+  const join = accessToken ? await joinServer(env, mode, discordId, accessToken) : { joined: false };
   await env.ROLE_SYNC_QUEUE.send({ type: 'sync-cid', cid, discordId });
   if (join.failed) throw new Error("Your Discord account is linked, but we couldn't add you to the Indy Center Discord. Ask a staff member for an invite.");
   return { joined: join.joined };
 }
 
-/** Add a member to the server with their access token, as the join bot. Logs a failure, never the token. */
-async function joinServer(env: RoleSyncEnv, discordId: string, accessToken: string): Promise<{ joined: boolean; failed?: true }> {
+/**
+ * Add a member to the server with their access token, as the join bot. Only in `live`: it's a Discord write,
+ * so `dry-run` logs it instead. Logs a failure, never the token.
+ */
+async function joinServer(env: RoleSyncEnv, mode: Mode, discordId: string, accessToken: string): Promise<{ joined: boolean; failed?: true }> {
   if (!env.DISCORD_JOIN_BOT_TOKEN) {
     console.warn(`Link Discord: DISCORD_JOIN_BOT_TOKEN isn't set, so ${discordId} was linked without being added to the server`);
+    return { joined: false };
+  }
+  if (mode !== 'live') {
+    console.log(`Link Discord (dry run): would add ${discordId} to the server`);
     return { joined: false };
   }
   try {
