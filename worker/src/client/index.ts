@@ -1,4 +1,4 @@
-// Public types of @indy-center/indy-larry-worker 1.3.0.
+// Public types of @indy-center/indy-larry-worker 1.4.0.
 export type {
   AllowedMentions,
   ChannelEdit,
