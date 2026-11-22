@@ -286,8 +286,8 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
    * `guilds.join`, larry also adds them to the Indy Center server if they aren't in it: `joined` is true
    * when it did. The token is used for that one call and kept nowhere. If the join fails, the link and
    * the sync still happen, and it throws "Your Discord account is linked, but we couldn't add you to the
-   * Indy Center Discord. Ask a staff member for an invite." Without a token, while larry's join bot
-   * isn't set up, or while larry's role sync is in `dry-run`, nobody is added and `joined` is false.
+   * Indy Center Discord. Ask a staff member for an invite." Without a token, or while larry's join bot
+   * isn't set up, nobody is added and `joined` is false. The join happens in `dry-run` too.
    */
   linkDiscord(cid: number, discordId: string, accessToken?: string): Promise<{ joined: boolean }>;
   /**

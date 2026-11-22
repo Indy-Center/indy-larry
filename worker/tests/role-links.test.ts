@@ -203,15 +203,14 @@ describe('linkDiscord with the member\'s access token adds them to the server', 
     expect(kept).not.toContain(ACCESS);
   });
 
-  it('makes no join call in dry-run, logging that it would, and still links and queues the sync', async () => {
+  it('joins in dry-run too, and still links and queues the sync', async () => {
     env.ROLE_SYNC_MODE = 'dry-run';
     fakeVatusaAndDiscord(vatusaLists(), server());
-    expect(await larry.linkDiscord(1000001, JOINER, ACCESS)).toEqual({ joined: false });
+    expect(await larry.linkDiscord(1000001, JOINER, ACCESS)).toEqual({ joined: true });
 
-    expect(joinCalls()).toEqual([]);
+    expect(joinCalls()).toHaveLength(1);
     expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: JOINER } }]);
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
-    expect(logs).toContain(`Link Discord (dry run): would add ${JOINER} to the server`);
     expect(await everythingButTheJoin()).not.toContain(ACCESS);
   });
 

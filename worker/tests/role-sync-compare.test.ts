@@ -209,7 +209,9 @@ async function transcript(mode: string, api: (env: Env) => Api) {
   await attempt(() => sync.syncMembers([1100001]));
   await drain();
   for (const cid of [1100001, 1100002, 1100005, 1100009, 1100099]) await attempt(() => sync.getLinks(cid));
-  await attempt(() => sync.linkDiscord(1100002, VATUSA_ONLY, 'member-access-token'));
+  // No access token: Link Discord's join now happens in dry-run too, where the frozen copy skipped it. The
+  // join is tested in role-links.test.ts.
+  await attempt(() => sync.linkDiscord(1100002, VATUSA_ONLY));
   await attempt(() => sync.linkDiscord(1100009, LINKED));
   await attempt(() => sync.unlink(1100001, 'discord'));
   // Not unlink(…, 'teamspeak'): the frozen copy refused it before TeamSpeak links existed, and it is TeamSpeak's, not Discord's.
