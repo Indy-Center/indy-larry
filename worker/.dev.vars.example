@@ -16,5 +16,7 @@ TEAMSPEAK_BOT_SECRET=
 # The role sync's client at identity, registered with the users:read and users:write scopes
 IDENTITY_CLIENT_ID=
 IDENTITY_CLIENT_SECRET=
+# The "Indy Center" app's bot token, for adding members who link Discord to the server; blank links without adding
+DISCORD_JOIN_BOT_TOKEN=
 # The training app's group sync: off (or blank), dry-run or live
 GROUP_SYNC_TRAINING=

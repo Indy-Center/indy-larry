@@ -1,5 +1,5 @@
 /** A user as identity's `/api/users` sends it (its `Claims`), with made-up names. */
-export type FakeUser = { sub: string; discord_id: string | null; preferred_name: string | null; given_name: string | null; family_name: string | null };
+export type FakeUser = { sub: string; discord_id: string | null; name: string | null; preferred_name: string | null; given_name: string | null; family_name: string | null };
 
 export const CLIENT_ID = 'larry';
 export const CLIENT_SECRET = 'larry-secret';
@@ -9,6 +9,8 @@ export const TOKEN_LIFETIME_SECONDS = 3600;
 export const idUser = (cid: number, discordId: string | null = null): FakeUser => ({
   sub: String(cid),
   discord_id: discordId,
+  // Null unless a test gives one, so a nickname falls back to VATUSA's name by default.
+  name: null,
   preferred_name: null,
   given_name: `Test${cid}`,
   family_name: 'Person',

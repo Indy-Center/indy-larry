@@ -281,8 +281,15 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
    * Link a member's own Discord account, which the caller has already proven they hold, and queue
    * their role sync. Throws "That Discord account is linked to another member." when someone else has
    * it, and "Sign in to flyindycenter.com once before linking." when identity has no user for the CID.
+   *
+   * With `accessToken`, the member's one-time Discord access token from a sign-in that asked for
+   * `guilds.join`, larry also adds them to the Indy Center server if they aren't in it: `joined` is true
+   * when it did. The token is used for that one call and kept nowhere. If the join fails, the link and
+   * the sync still happen, and it throws "Your Discord account is linked, but we couldn't add you to the
+   * Indy Center Discord. Ask a staff member for an invite." Without a token, while larry's join bot
+   * isn't set up, or while larry's role sync is in `dry-run`, nobody is added and `joined` is false.
    */
-  linkDiscord(cid: number, discordId: string): Promise<void>;
+  linkDiscord(cid: number, discordId: string, accessToken?: string): Promise<{ joined: boolean }>;
   /**
    * Clear a member's link and queue their role sync, which falls back to the Discord ID VATUSA holds.
    * `'teamspeak'` throws "TeamSpeak links aren't available yet." for now.

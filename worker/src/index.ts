@@ -5,7 +5,8 @@ import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-ch
 import { handleFetch, type BotEventsEnv } from './bot-events';
 import { postToGroup } from './group-rpc';
 import { getGroupStatus } from './groups';
-import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
+import { linkDiscord } from './platforms/discord';
+import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
 import { consumeTsResults } from './teamspeak-routes';
@@ -120,8 +121,8 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     });
   }
 
-  linkDiscord(cid: number, discordId: string) {
-    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId));
+  linkDiscord(cid: number, discordId: string, accessToken?: string) {
+    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId, accessToken));
   }
 
   unlink(cid: number, service: 'discord' | 'teamspeak') {
