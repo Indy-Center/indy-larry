@@ -134,6 +134,15 @@ describe('the cron asks teamspeak-bot for its accounts', () => {
     expect(logs).toContain(`Role sync: TeamSpeak's part of run ${first} skipped: teamspeak-bot didn't answer report-accounts before the next run`);
   });
 
+  it('holds one report-accounts job when two runs go unanswered', async () => {
+    start('live', [tsUser(1000001, JO_UID)]);
+    fakeVatusaAndDiscord(listsWith(s3(1000001)), emptyServer());
+    await cron();
+    await cron();
+
+    expect((await tsJobs()).filter((job) => job.type === 'report-accounts')).toHaveLength(1);
+  });
+
   it("takes the bot's accounts on its results route, and refuses a malformed one", async () => {
     start('live', []);
     const post = (body: unknown) =>

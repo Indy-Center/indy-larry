@@ -70,7 +70,8 @@ export const teamspeakPlatform: Platform<TeamSpeakRef, TeamSpeakAccount, never, 
     const unanswered = await env.KV.get(ASKED_KEY);
     if (unanswered) console.warn(`Role sync: TeamSpeak's part of run ${unanswered} skipped: teamspeak-bot didn't answer report-accounts before the next run`);
     try {
-      await jobsStore(env).enqueue({ type: 'report-accounts', groups: managedGroups() });
+      // An older one nobody pulled is dropped, so the newest (with the current groups) is the only one waiting.
+      await jobsStore(env).enqueueReplacing({ type: 'report-accounts', groups: managedGroups() });
       await env.KV.put(ASKED_KEY, runId, { expirationTtl: KEEP_SECONDS });
     } catch (error) {
       // TeamSpeak's trouble doesn't hold up the rest of the run.
