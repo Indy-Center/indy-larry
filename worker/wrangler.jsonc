@@ -6,8 +6,8 @@
   "name": "indy-larry",
   "account_id": "afd63515948c9b2188ce14ef1504b2c1",
   "main": "src/index.ts",
-  // The public address larry's bot posts to: https://indy-larry.indy-center.workers.dev. Every route
-  // behind it needs a bot's secret (BOT_EVENTS_SECRET, a Worker secret set by build-and-deploy.yml).
+  // The public address the bots post to: https://indy-larry.indy-center.workers.dev. Every route behind it
+  // needs its own bot's secret (BOT_EVENTS_SECRET or TEAMSPEAK_BOT_SECRET, Worker secrets set by build-and-deploy.yml).
   "workers_dev": true,
   // workers_dev would also turn on preview URLs; nothing uses them.
   "preview_urls": false,
@@ -39,10 +39,18 @@
     { "binding": "IDENTITY", "service": "id" }
   ],
   "kv_namespaces": [{ "binding": "KV", "id": "8d0096c00d624d73aa8da3bc06f149de" }],
+  // The TeamSpeak jobs store (src/teamspeak-jobs.ts): one instance, by a fixed name, with SQLite storage.
+  // teamspeak-bot pulls from it over the fetch handler's /teamspeak/ routes (README, Role sync).
+  "durable_objects": {
+    "bindings": [{ "name": "TEAMSPEAK_JOBS", "class_name": "TeamSpeakJobs" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TeamSpeakJobs"] }],
   "queues": {
     "producers": [
       { "binding": "LARRY_QUEUE", "queue": "larry-messages" },
-      { "binding": "ROLE_SYNC_QUEUE", "queue": "role-sync" }
+      { "binding": "ROLE_SYNC_QUEUE", "queue": "role-sync" },
+      // What teamspeak-bot posts to POST /teamspeak/results.
+      { "binding": "TEAMSPEAK_RESULTS", "queue": "teamspeak-results" }
     ],
     "consumers": [
       {
@@ -63,6 +71,12 @@
         // One batch at a time keeps the queue inside Discord's rate limits.
         "max_concurrency": 1,
         "dead_letter_queue": "larry-messages-dlq"
+      },
+      {
+        // teamspeak-bot's results; the consumer logs each.
+        "queue": "teamspeak-results",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5
       }
     ]
   }

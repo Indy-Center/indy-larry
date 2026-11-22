@@ -5,3 +5,11 @@ export class WorkerEntrypoint<Env = unknown> {
     protected env: Env,
   ) {}
 }
+
+/** The Durable Object base class, which only keeps its state and env, as Cloudflare's does. */
+export class DurableObject<Env = unknown> {
+  constructor(
+    protected ctx: unknown,
+    protected env: Env,
+  ) {}
+}
