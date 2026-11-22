@@ -91,7 +91,8 @@ export const MAPPING: MappingEntry[] = checkMapping([
       { conditions: [{ type: 'home', value: 'ZID' }, { type: 'rating', value: 'I3' }] },
     ],
   },
-  { name: 'Ace Team', discordRoleId: '700873587388711012', criteria: [{ conditions: [{ type: 'role', value: 'ACE' }] }] },
+  // TeamSpeak's ACE ATC Override group, which the legacy bot left to staff.
+  { name: 'Ace Team', discordRoleId: '700873587388711012', teamspeakGroupId: 26, criteria: [{ conditions: [{ type: 'role', value: 'ACE' }] }] },
   { name: 'Air Traffic Controller', discordRoleId: '477495351838900254', teamspeakGroupId: 10, criteria: [{ conditions: [{ type: 'home_or_visit', value: 'ZID' }] }] },
   {
     name: 'Neighboring Controllers',

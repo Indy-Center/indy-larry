@@ -7,7 +7,7 @@ import { lists, record, role } from './vatusa-records';
 describe("the mapping's TeamSpeak groups", () => {
   it("gives each legacy bot's group to the entry of the same meaning", () => {
     const groups = Object.fromEntries(MAPPING.filter((entry) => entry.teamspeakGroupId !== undefined).map((entry) => [entry.name, entry.teamspeakGroupId]));
-    // The legacy bot's roles table, matched to the server's group IDs (sgid).
+    // The legacy bot's roles table, matched to the server's group IDs (sgid), plus Ace Team's group.
     expect(groups).toEqual({
       'Student 1': 17,
       'Student 2': 16,
@@ -23,6 +23,7 @@ describe("the mapping's TeamSpeak groups", () => {
       'Events Team': 24,
       'Facility Working Group': 25,
       'Tech Team': 23,
+      'Ace Team': 26,
       'Air Traffic Controller': 10,
       Member: 7,
     });

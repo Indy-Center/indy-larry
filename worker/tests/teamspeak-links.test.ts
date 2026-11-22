@@ -17,7 +17,7 @@ import { fakeSource } from './fake-source';
 const JO_UID = 'joMadeUpUid00000000000000000=';
 const JO_OLD_UID = 'joOldMadeUpUid000000000000000=';
 const JO_DISCORD = '830000000000000001';
-const MANAGED = [17, 16, 15, 14, 13, 12, 11, 20, 21, 19, 18, 24, 25, 23, 10, 7];
+const MANAGED = [17, 16, 15, 14, 13, 12, 11, 20, 21, 19, 18, 24, 25, 23, 26, 10, 7];
 const MINUTE = 60_000;
 const START = new Date('2026-11-22T12:00:00Z');
 

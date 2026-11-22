@@ -24,7 +24,7 @@ const JO_DISCORD = '830000000000000001';
 
 const GROUP = { member: 7, atc: 10, s3: 15, s1: 17, mentor: 19, handGiven: 99 };
 const ROLE = { member: '1125403438545641564', atc: '477495351838900254', student3: '896858107051909159' };
-const MANAGED = [17, 16, 15, 14, 13, 12, 11, 20, 21, 19, 18, 24, 25, 23, 10, 7];
+const MANAGED = [17, 16, 15, 14, 13, 12, 11, 20, 21, 19, 18, 24, 25, 23, 26, 10, 7];
 
 /** A user in identity with their TeamSpeak link (and Discord link, if any). */
 const tsUser = (cid: number, uid: string, discordId: string | null = null): FakeUser => ({ ...idUser(cid, discordId), teamspeak_uid: uid });
