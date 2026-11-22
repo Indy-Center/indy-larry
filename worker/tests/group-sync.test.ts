@@ -584,6 +584,28 @@ describe('postToGroup', () => {
     expect(env.LARRY_QUEUE.sent).toEqual([]);
   });
 
+  describe('keeps URLs as they are', () => {
+    const posted = () => (env.LARRY_QUEUE.sent as { message: { embeds: { description: string; fields?: { name: string; value: string }[] }[] } }[])[0]!.message.embeds[0]!;
+
+    it('in the body, while escaping the text around them', async () => {
+      await made();
+      await larry.postToGroup({ source: 'training', key: 'JR', notice: { title: 'Guide', body: 'Read https://example.org/a-b_c(d) **bold** @everyone' } });
+      expect(posted().description).toBe('Read https://example.org/a-b_c(d) \\*\\*bold\\*\\* \\@everyone');
+    });
+
+    it('for two URLs in one field value', async () => {
+      await made();
+      await larry.postToGroup({ source: 'training', key: 'JR', notice: { title: 'Guide', body: 'Links', fields: [{ name: 'Read', value: 'https://a.org/x_y and https://b.org/~p-q' }] } });
+      expect(posted().fields).toEqual([{ name: 'Read', value: 'https://a.org/x_y and https://b.org/~p-q' }]);
+    });
+
+    it('for http:// too, but escapes ftp:// as text', async () => {
+      await made();
+      await larry.postToGroup({ source: 'training', key: 'JR', notice: { title: 'Guide', body: 'http://a.org/x-y ftp://x-y' } });
+      expect(posted().description).toBe('http://a.org/x-y ftp://x\\-y');
+    });
+  });
+
   it('refuses an unknown source, and a notice with no title', async () => {
     await made();
     await expect(larry.postToGroup({ source: 'pilots', key: 'JR', notice })).rejects.toThrow('Unknown group source "pilots"');

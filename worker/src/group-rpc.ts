@@ -12,9 +12,16 @@ const MAX_FIELDS = 25;
 const MAX_FIELD_NAME = 256;
 const MAX_FIELD_VALUE = 1024;
 
-/** Plain text as Discord shows it literally: its formatting characters, mentions and links escaped. */
+/**
+ * Plain text as Discord shows it literally: its formatting characters and mentions escaped. Each
+ * http(s):// URL, up to the next whitespace, is kept as it is so its link works.
+ */
 export function escapeText(text: string): string {
-  return text.replace(/[\\`*_~|>#[\]()<@-]/g, '\\$&');
+  // Splitting on a capturing group leaves the URLs at the odd indices.
+  return text
+    .split(/(https?:\/\/\S+)/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/[\\`*_~|>#[\]()<@-]/g, '\\$&')))
+    .join('');
 }
 
 function checkText(label: string, value: unknown, max: number): string {
