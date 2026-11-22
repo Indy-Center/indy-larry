@@ -15,6 +15,7 @@ const { StatusBoard } = require('./status');
 const { Notifications, parseRoles, parseAreas } = require('./notify');
 const { IronMic } = require('./ironmicCommand');
 const { saveStateFile } = require('./stateFile');
+const { memberJoinHandler } = require('./botEvents');
 
 const config = {
   token: process.env.DISCORD_TOKEN,
@@ -122,7 +123,15 @@ const ironMicConfig = {
 };
 let ironMic = null;
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Join sync: tell larry's Worker when someone joins, so the role sync gives them their roles now.
+// Off unless WORKER_URL and BOT_EVENTS_SECRET are both set. It needs the Server Members intent.
+const joinSync = process.env.WORKER_URL && process.env.BOT_EVENTS_SECRET ? { workerUrl: process.env.WORKER_URL, secret: process.env.BOT_EVENTS_SECRET } : null;
+if (!joinSync && (process.env.WORKER_URL || process.env.BOT_EVENTS_SECRET)) {
+  console.error('Join sync needs both WORKER_URL and BOT_EVENTS_SECRET; turning it off.');
+}
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds, ...(joinSync ? [GatewayIntentBits.GuildMembers] : [])] });
+if (joinSync) client.on(Events.GuildMemberAdd, memberJoinHandler(joinSync));
 // discord.js reconnects on its own; these are reported (console.error) rather than left to crash the bot.
 client.on(Events.Error, (err) => console.error('Discord client error:', err));
 client.on(Events.ShardError, (err, shardId) => console.error(`Discord connection error (shard ${shardId}):`, err));

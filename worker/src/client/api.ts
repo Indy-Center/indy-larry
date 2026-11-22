@@ -88,6 +88,11 @@ export type RoleSync = {
    * Larry never renames a role.
    */
   rename?: boolean;
+  /**
+   * The colour of a role Larry **creates**, as hex (`'#e67e22'` or `'e67e22'`). Not applied to a role
+   * that already exists, so a colour chosen in Discord is never overwritten. Leave it out for no colour.
+   */
+  color?: string;
   /** Discord user IDs who should hold the role. Someone not in the server is reported and can be tried again later. */
   members: string[];
   /**
@@ -210,7 +215,7 @@ export type DeleteResult = { dryRun: boolean; deleted: Deletion[] };
 export type Sent = { channelId: string; messageId: string };
 
 /**
- * Larry's RPC surface, version 1.2.0. Every method checks the message first and throws for an unknown
+ * Larry's RPC surface, version 1.3.0. Every method checks the message first and throws for an unknown
  * channel, a bad user ID, an empty message or one over Discord's limits.
  */
 export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
@@ -272,7 +277,101 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
   sendToChannel(request: ChannelIdSend): Promise<Sent>;
   /** Queue a post to a channel by ID, like enqueue(). The channel is checked before it is queued. */
   enqueueToChannel(request: ChannelIdSend): Promise<void>;
+  /**
+   * Link a member's own Discord account, which the caller has already proven they hold, and queue
+   * their role sync. Throws "That Discord account is linked to another member." when someone else has
+   * it, and "Sign in to flyindycenter.com once before linking." when identity has no user for the CID.
+   */
+  linkDiscord(cid: number, discordId: string): Promise<void>;
+  /**
+   * Clear a member's link and queue their role sync, which falls back to the Discord ID VATUSA holds.
+   * `'teamspeak'` throws "TeamSpeak links aren't available yet." for now.
+   */
+  unlink(cid: number, service: 'discord' | 'teamspeak'): Promise<void>;
+  /** Which Discord account the role sync uses for a member, and whether it is their link or VATUSA's. */
+  getLinks(cid: number): Promise<Links>;
+  /**
+   * Sync these members now, instead of waiting for the next run: for an app that has just changed
+   * something about them (a credential granted, a student assigned). larry reads every group source
+   * again, then queues each CID's role sync. Each CID is declined, with a reason to show, when nothing is
+   * known to sync or it was synced in the last 2 minutes. At most 100 CIDs a call.
+   */
+  syncMembers(cids: number[]): Promise<SyncMembersResult>;
+  /**
+   * Post a notice in a group's room, mentioning `mention` (CIDs). Each mentioned member's roles are
+   * synced first, so someone just added to the group can see the room. `'no-room'` when the group has
+   * no room (yet), `'not-live'` when the source's group sync isn't `live`.
+   */
+  postToGroup(request: GroupPost): Promise<GroupPostResult>;
+  /** What the last cron run did with a source's groups. */
+  getGroupStatus(source: string): Promise<GroupStatus>;
 }
+
+/** One group an app serves: who is in it, and whether it has a private room. */
+export type Group = {
+  /** Stable within the source; renaming a key makes a new group. */
+  key: string;
+  /** The group's name, as people should see it: the Discord role's name. */
+  name: string;
+  /** VATSIM CIDs, digit strings, no duplicates. The whole truth: anyone else loses the role. */
+  members: string[];
+  room?: {
+    /** The room's name, as people should see it. */
+    name: string;
+    /** Used instead when two rooms' names collide in Discord. */
+    fallbackName: string;
+  };
+  /** Keep this group exactly as it is: don't manage its members, rename or delete it. */
+  hold?: true;
+};
+
+/** What a group source's `getGroups()` answers. */
+export type GroupsAnswer = { groups: Group[] };
+
+/** What an app implements, on the entrypoint larry's binding names, to serve groups. */
+export type GroupSource = { getGroups(): Promise<GroupsAnswer> };
+
+/** A notice for a group's room. Plain text: larry escapes Discord's formatting, leaving each http(s):// URL as it is. */
+export type GroupNotice = { title: string; body: string; fields?: { name: string; value: string }[] };
+
+export type GroupPost = {
+  /** The source's name in larry's config, e.g. `'training'`. */
+  source: string;
+  /** The group's key in that source. */
+  key: string;
+  notice: GroupNotice;
+  /** CIDs to mention. One with no Discord account is left unmentioned. */
+  mention?: string[];
+};
+
+/** `'posted'` means queued. */
+export type GroupPostResult = 'posted' | 'no-room' | 'not-live';
+
+/** What happened to a role or room in the last run (or would, in `dry-run`). */
+export type GroupState = 'found' | 'created' | 'renamed' | 'held' | 'missing' | 'deleted' | 'failed';
+
+export type GroupStatus = {
+  mode: 'off' | 'dry-run' | 'live';
+  /** When the last run read the source; null before the first. */
+  at: string | null;
+  /** Why the source's answer was refused that run. */
+  refused?: string;
+  groups: { key: string; name: string; role: GroupState; room?: GroupState; error?: string }[];
+};
+
+/** What `syncMembers` answers, one entry per CID asked for. */
+export type SyncMembersResult = ({ cid: number } & SyncMemberResult)[];
+
+/** What `getLinks` reports for a member. */
+export type Links = {
+  /** The account the sync uses: `linked` when they linked it, `vatusa` when it is the one VATUSA holds. */
+  discord: { id: string; source: 'linked' | 'vatusa' } | null;
+  /** Always null until TeamSpeak links arrive. */
+  teamspeak: { uid: string } | null;
+};
+
+/** What `syncMembers` answers for one CID. */
+export type SyncMemberResult = { queued: true } | { queued: false; reason: string };
 
 /** The binding's type in a caller's `Env`: `LARRY: LarryBinding`. */
 export type LarryBinding = Service<LarryRpc>;

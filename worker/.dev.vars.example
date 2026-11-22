@@ -9,3 +9,10 @@ GUILD_ID=
 CHANNEL_CATEGORIES=
 # Channel errors are reported in (#larry-errors); blank sends nothing
 ERROR_CHANNEL_ID=
+# The secret larry's bot sends to POST /bot/events (BOT_EVENTS_SECRET in the bot's .env); any made-up value locally
+BOT_EVENTS_SECRET=
+# The role sync's client at identity, registered with the users:read and users:write scopes
+IDENTITY_CLIENT_ID=
+IDENTITY_CLIENT_SECRET=
+# The training app's group sync: off (or blank), dry-run or live
+GROUP_SYNC_TRAINING=

@@ -1,7 +1,11 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, LarryRpc, MemberRole, RolesSync } from './client/api';
+import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, GroupPost, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { describeError, ErrorReport } from './errors';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
+import { handleFetch, type BotEventsEnv } from './bot-events';
+import { postToGroup } from './group-rpc';
+import { getGroupStatus } from './groups';
+import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
 
@@ -18,12 +22,19 @@ async function reported<T>(env: SendEnv, ctx: ExecutionContext, method: string, 
     if (!(error instanceof SetupFaultError)) report.add(`${method} failed: ${describeError(error)}`);
     throw error;
   } finally {
-    ctx.waitUntil(report.flush());
+    // Without waitUntil (a test's stand-in context), the report still goes out, just not held open for.
+    const sending = report.flush();
+    if (typeof ctx?.waitUntil === 'function') ctx.waitUntil(sending);
   }
 }
 
-/** Larry's send Worker. Other Workers reach these methods over a service binding; there's no fetch handler. */
-export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc {
+type Env = SendEnv & RoleSyncEnv & BotEventsEnv;
+
+/**
+ * Larry's Worker. Other Workers reach these methods over a service binding. The fetch handler is
+ * only for the bots on the VPS (bot-events.ts). The cron runs the role sync (role-sync.ts).
+ */
+export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   send(request: ChannelSend) {
     return reported(this.env, this.ctx, 'send()', () => sendNow(this.env, 'channel', request));
   }
@@ -104,7 +115,44 @@ export default class Larry extends WorkerEntrypoint<SendEnv> implements LarryRpc
     });
   }
 
-  queue(batch: MessageBatch<QueueJob>) {
-    return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch, this.env, (text) => report.add(text)));
+  linkDiscord(cid: number, discordId: string) {
+    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId));
+  }
+
+  unlink(cid: number, service: 'discord' | 'teamspeak') {
+    return reported(this.env, this.ctx, 'unlink()', () => unlink(this.env, cid, service));
+  }
+
+  getLinks(cid: number) {
+    return reported(this.env, this.ctx, 'getLinks()', () => getLinks(this.env, cid));
+  }
+
+  syncMembers(cids: number[]) {
+    return reported(this.env, this.ctx, 'syncMembers()', () => syncMembers(this.env, cids));
+  }
+
+  postToGroup(request: GroupPost) {
+    return reported(this.env, this.ctx, 'postToGroup()', () => postToGroup(this.env, request));
+  }
+
+  getGroupStatus(source: string) {
+    return reported(this.env, this.ctx, 'getGroupStatus()', () => getGroupStatus(this.env, source));
+  }
+
+  /** Both queues come here: `role-sync` to the role sync, `larry-messages` to the sender. */
+  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage>) {
+    if (batch.queue === 'role-sync') {
+      return reported(this.env, this.ctx, 'Role sync queue consumer', () => consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env));
+    }
+    return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
+  }
+
+  /** The bots' routes: `POST /bot/events` from larry's bot. */
+  fetch(request: Request) {
+    return reported(this.env, this.ctx, 'Bot events route', () => handleFetch(request, this.env));
+  }
+
+  scheduled(_controller: ScheduledController) {
+    return reported(this.env, this.ctx, 'Role sync cron', () => startRoleSync(this.env));
   }
 }

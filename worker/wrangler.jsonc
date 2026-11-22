@@ -1,11 +1,16 @@
 // Larry's send Worker. Other Workers bind to it as a service and call send(), sendDirect(),
 // enqueue() and enqueueDirect(); see the README's "Sending messages from other apps".
-// It has no fetch handler, so it isn't reachable from the internet.
+// Its cron runs the role sync. Its fetch handler takes the bots' events (README, Role sync).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "indy-larry",
   "account_id": "afd63515948c9b2188ce14ef1504b2c1",
   "main": "src/index.ts",
+  // The public address larry's bot posts to: https://indy-larry.indy-center.workers.dev. Every route
+  // behind it needs a bot's secret (BOT_EVENTS_SECRET, a Worker secret set by build-and-deploy.yml).
+  "workers_dev": true,
+  // workers_dev would also turn on preview URLs; nothing uses them.
+  "preview_urls": false,
   "compatibility_date": "2026-09-01",
   "observability": {
     "enabled": true
@@ -15,9 +20,40 @@
   // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables, as are
   // ERROR_CHANNEL_ID (where errors are reported) and RELEASE (the commit, set by the deploy).
   // For wrangler dev, put them all in .dev.vars (see .dev.vars.example).
+  "vars": {
+    // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing;
+    // live changes members' mapped roles and nicknames.
+    "ROLE_SYNC_MODE": "live"
+  },
+  // The role sync: fetch VATUSA's lists and queue one job per Discord member on role-sync.
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+  // indy-larry-worker: each role sync run's lists, and whether an outage has been alerted.
+  // The training app's RPC: a group source (src/group-sources.ts), its getGroups() read once per run and on
+  // syncMembers() and postToGroup(). Its mode is GROUP_SYNC_TRAINING, passed by the deploy (README, Group sync).
+  // identity (the Worker named `id`), reached through its fetch handler: Discord links are read per member and written by
+  // linkDiscord() and unlink(). IDENTITY_CLIENT_ID and IDENTITY_CLIENT_SECRET are set by the deploy (README, Role sync).
+  "services": [
+    { "binding": "TRAINING", "service": "training-tools", "entrypoint": "TrainingRpc" },
+    { "binding": "IDENTITY", "service": "id" }
+  ],
+  "kv_namespaces": [{ "binding": "KV", "id": "8d0096c00d624d73aa8da3bc06f149de" }],
   "queues": {
-    "producers": [{ "binding": "LARRY_QUEUE", "queue": "larry-messages" }],
+    "producers": [
+      { "binding": "LARRY_QUEUE", "queue": "larry-messages" },
+      { "binding": "ROLE_SYNC_QUEUE", "queue": "role-sync" }
+    ],
     "consumers": [
+      {
+        "queue": "role-sync",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        // One batch at a time, so the live sync to come stays inside Discord's rate limits.
+        "max_concurrency": 1,
+        "dead_letter_queue": "role-sync-dlq"
+      },
       {
         "queue": "larry-messages",
         "max_batch_size": 10,
