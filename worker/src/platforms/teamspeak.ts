@@ -1,11 +1,11 @@
-import { findByTeamspeakUid } from '../identity';
+import { findByTeamspeakUid, getUser, writeTeamspeakUid } from '../identity';
 import { lookupVatsimRating, lookupVatusa } from '../lookups';
 import { MAPPING } from '../mapping';
 import type { RoleSyncEnv, RunLists } from '../role-sync';
 import { enqueueTsGroups, jobsStore, type TeamSpeakJobsEnv } from '../teamspeak-jobs';
 import type { TsResult } from '../teamspeak-shape';
 import type { VatusaPerson } from '../vatusa';
-import type { Change, Platform } from './platform';
+import { checkMode, type Change, type Mode, type Platform } from './platform';
 
 /**
  * The role sync's TeamSpeak adapter: TeamSpeak identities (their unique IDs, UIDs) are its accounts, and
@@ -20,6 +20,9 @@ import type { Change, Platform } from './platform';
  * `set-groups` job, in `live` only and only when something differs. A UID no member has linked, or whose
  * member VATUSA and VATSIM don't know, loses every managed group. Admin groups are never in the mapping
  * (mapping.ts refuses them), so never in a change.
+ *
+ * A link is made only from the bot's private message (platforms/teamspeak-links.ts). unlink() takes every
+ * managed group from the UID before clearing it.
  */
 
 /** The role-sync queue's TeamSpeak messages. */
@@ -99,8 +102,11 @@ export const teamspeakPlatform: Platform<TeamSpeakRef, TeamSpeakAccount, never, 
   messageFor: (cid, ref) => ({ type: 'ts-sync-cid', cid, uid: ref.uid }),
   linkOf: (ref) => ({ uid: ref.uid }),
 
-  async unlink() {
-    throw new Error("TeamSpeak links aren't available yet.");
+  async unlink(env, cid) {
+    // The identity loses its groups first: once the link is cleared, nothing points the sync at it.
+    const uid = (await getUser(env, cid))?.teamspeakUid;
+    if (uid) await removeManagedGroups(env, checkMode(env), uid);
+    await writeTeamspeakUid(env, cid, null);
   },
 
   async resolve(env, run, account) {
@@ -135,6 +141,19 @@ async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakAccount,
   }
   const who = resolution.kind === 'person' ? `CID ${resolution.person.cid}: add ${names(add)};` : 'unresolved:';
   console.log(`Role sync (${label}): TeamSpeak ${account.uid} ${who} remove ${names(remove)}`);
+}
+
+/**
+ * Take every group the mapping names from a TeamSpeak identity that is losing its link (an unlink, or a
+ * relink to another UID): one `set-groups` job in `live`, logged in `dry-run`, as the sync's own changes are.
+ */
+export async function removeManagedGroups(env: TeamSpeakJobsEnv, mode: Mode, uid: string): Promise<void> {
+  if (mode !== 'live') {
+    console.log(`Link TeamSpeak (dry run): would remove every managed group from TeamSpeak ${uid}`);
+    return;
+  }
+  await enqueueTsGroups(env, uid, [], managedGroups());
+  console.log(`Link TeamSpeak (live): removing every managed group from TeamSpeak ${uid}`);
 }
 
 /**

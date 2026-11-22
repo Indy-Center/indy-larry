@@ -308,7 +308,7 @@ export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<Syn
 export async function unlink(env: RoleSyncEnv, cid: number, service: keyof Links): Promise<void> {
   checkMode(env);
   const platform = PLATFORMS.find((candidate) => candidate.name === service);
-  if (!platform) throw new Error("TeamSpeak links aren't available yet.");
+  if (!platform) throw new Error(`"${service}" isn't a platform larry links`);
   await platform.unlink(env, cid);
   await queueMemberSync(env, cid);
 }

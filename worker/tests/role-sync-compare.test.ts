@@ -212,7 +212,7 @@ async function transcript(mode: string, api: (env: Env) => Api) {
   await attempt(() => sync.linkDiscord(1100002, VATUSA_ONLY, 'member-access-token'));
   await attempt(() => sync.linkDiscord(1100009, LINKED));
   await attempt(() => sync.unlink(1100001, 'discord'));
-  await attempt(() => sync.unlink(1100001, 'teamspeak'));
+  // Not unlink(…, 'teamspeak'): the frozen copy refused it before TeamSpeak links existed, and it is TeamSpeak's, not Discord's.
   await drain();
   // A second run, once the links have changed.
   await attempt(() => sync.cron());

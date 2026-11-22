@@ -23,6 +23,14 @@ export type TsJob =
        */
       type: 'report-accounts';
       groups: number[];
+    }
+  | {
+      jobId: string;
+      /** Send `text` to one connected client as a private text message. */
+      type: 'send-text';
+      /** The client's ID on the server now (TeamSpeak's `clid`), from its `client-connected` result. */
+      clientId: number;
+      text: string;
     };
 
 /** A job as it is queued, before larry gives it its ID. */
@@ -35,11 +43,13 @@ type WithoutId<J> = J extends unknown ? Omit<J, 'jobId'> : never;
  * `heartbeat` comes every 5 minutes, `reconnected` after a lost ServerQuery connection is back.
  * `at` is when the bot sent it, as an ISO 8601 time. `accounts` answers `report-accounts`: `holders` are the
  * identities holding a group the job named, each with all its server groups; `connected` the UIDs connected
- * now, query clients excluded.
+ * now, query clients excluded. `client-connected` is sent for each client that enters the server (query
+ * clients excluded): its UID, its client ID for this connection (`clid`) and its nickname.
  */
 export type TsResult =
   | { type: 'applied'; jobId: string }
   | { type: 'failed'; jobId: string; error?: string }
   | { type: 'heartbeat'; at: string }
   | { type: 'reconnected'; at: string }
-  | { type: 'accounts'; holders: { uid: string; groups: number[] }[]; connected: string[] };
+  | { type: 'accounts'; holders: { uid: string; groups: number[] }[]; connected: string[] }
+  | { type: 'client-connected'; uid: string; clientId: number; nickname: string };

@@ -6,6 +6,7 @@ import { handleFetch, type BotEventsEnv } from './bot-events';
 import { postToGroup } from './group-rpc';
 import { getGroupStatus } from './groups';
 import { linkDiscord } from './platforms/discord';
+import { confirmTsLink } from './platforms/teamspeak-links';
 import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
@@ -123,6 +124,10 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
 
   linkDiscord(cid: number, discordId: string, accessToken?: string) {
     return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId, accessToken));
+  }
+
+  confirmTsLink(cid: number, token: string) {
+    return reported(this.env, this.ctx, 'confirmTsLink()', () => confirmTsLink(this.env, cid, token));
   }
 
   unlink(cid: number, service: 'discord' | 'teamspeak') {

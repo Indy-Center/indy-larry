@@ -268,8 +268,8 @@ describe('unlink', () => {
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 
-  it("refuses 'teamspeak' until TeamSpeak links exist", async () => {
-    await expect(larry.unlink(1000001, 'teamspeak')).rejects.toThrow("TeamSpeak links aren't available yet.");
+  it('refuses a service that is no platform', async () => {
+    await expect(larry.unlink(1000001, 'mumble' as never)).rejects.toThrow(`"mumble" isn't a platform larry links`);
     expect(env.IDENTITY.writes).toEqual([]);
   });
 });
