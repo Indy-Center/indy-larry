@@ -17,7 +17,8 @@
   },
   // SEND_CHANNELS (name:channelId,...) isn't set here: build-and-deploy.yml passes it from the
   // ENV_SEND_CHANNELS repo variable with --var. DISCORD_TOKEN is a Worker secret set by the same deploy.
-  // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables.
+  // GUILD_ID and CHANNEL_CATEGORIES (roles and channels) are passed the same way, from repo variables, as are
+  // ERROR_CHANNEL_ID (where errors are reported) and RELEASE (the commit, set by the deploy).
   // For wrangler dev, put them all in .dev.vars (see .dev.vars.example).
   "vars": {
     // The role sync's mode (README, Role sync). dry-run logs what it would change and changes nothing;
@@ -57,6 +58,7 @@
         "queue": "larry-messages",
         "max_batch_size": 10,
         "max_batch_timeout": 2,
+        // QUEUE_MAX_RETRIES in src/send.ts must match, so the last try is reported before the dead letter queue.
         "max_retries": 5,
         // One batch at a time keeps the queue inside Discord's rate limits.
         "max_concurrency": 1,

@@ -33,6 +33,9 @@ jobs:
       # Roles and channels (README, Roles and channels). Left unset, those methods refuse every call.
       GUILD_ID: ${{ vars.ENV_GUILD_ID }}
       CHANNEL_CATEGORIES: ${{ vars.ENV_CHANNEL_CATEGORIES }}
+      # Where the Worker reports its errors: #larry-errors, the channel the VPS bot reports to. Blank sends nothing.
+      ERROR_CHANNEL_ID: ${{ secrets.ENV_ERROR_CHANNEL_ID || vars.ENV_ERROR_CHANNEL_ID }}
+      RELEASE: ${{ github.sha }}
       # The role sync's client at identity (README, Role sync): the ID is a var, the secret a Worker secret.
       IDENTITY_CLIENT_ID: ${{ vars.ENV_IDENTITY_CLIENT_ID }}
       # The training app's group sync (README, Group sync): off, dry-run or live. Unset is off.
@@ -59,6 +62,8 @@ jobs:
           --var "SEND_CHANNELS:$SEND_CHANNELS"
           --var "GUILD_ID:$GUILD_ID"
           --var "CHANNEL_CATEGORIES:$CHANNEL_CATEGORIES"
+          --var "ERROR_CHANNEL_ID:$ERROR_CHANNEL_ID"
+          --var "RELEASE:$RELEASE"
           --var "IDENTITY_CLIENT_ID:$IDENTITY_CLIENT_ID"
           --var "GROUP_SYNC_TRAINING:$GROUP_SYNC_TRAINING"
 
@@ -228,6 +233,8 @@ jobs:
           ENV_WORKER_URL: ${{ secrets.ENV_WORKER_URL || vars.ENV_WORKER_URL }}
           ENV_BOT_EVENTS_SECRET: ${{ secrets.ENV_BOT_EVENTS_SECRET }}
           ENV_SEND_CHANNELS: ${{ secrets.ENV_SEND_CHANNELS || vars.ENV_SEND_CHANNELS }}
+          ENV_ERROR_CHANNEL_ID: ${{ secrets.ENV_ERROR_CHANNEL_ID || vars.ENV_ERROR_CHANNEL_ID }}
+          ENV_RELEASE: ${{ github.sha }}
         run: |
           # Values are single-quoted so Compose takes them literally, $ and # included. So a value can't
           # contain a single quote or a newline; if one does, this fails before anything reaches the box.
