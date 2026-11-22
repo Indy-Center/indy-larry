@@ -79,7 +79,7 @@ export const MAPPING: MappingEntry[] = checkMapping([
   { name: 'VATUSA Staff', discordRoleId: '991370038340759593', criteria: [{ conditions: [{ type: 'division_staff' }] }] },
   { name: 'Senior Staff', discordRoleId: '1300575634296410164', teamspeakGroupId: 18, criteria: facilityRoles('ZID:TA', 'ZID:ATM', 'ZID:DATM') },
   { name: 'Events Team', discordRoleId: '1296503795429150835', teamspeakGroupId: 24, criteria: facilityRoles('ZID:EC') },
-  // TeamSpeak's Facilities Team.
+  // Facility Working Group is the Facilities Team's new name; TeamSpeak's group 25 is the same group.
   { name: 'Facility Working Group', discordRoleId: '1148442325689835540', teamspeakGroupId: 25, criteria: facilityRoles('ZID:FE') },
   { name: 'Tech Team', discordRoleId: '1296502514656481382', teamspeakGroupId: 23, criteria: facilityRoles('ZID:WM') },
   {
