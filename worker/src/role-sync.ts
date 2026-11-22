@@ -72,6 +72,12 @@ export type RoleSyncEnv = GuildEnv &
     ROLE_SYNC_QUEUE: Queue<RoleSyncMessage>;
     /** `dry-run` (the default): log what would change, change nothing. `live`: change it. */
     ROLE_SYNC_MODE?: string;
+    /**
+     * The "Indy Center" app's bot token, for adding a member who links Discord to the server. Discord takes
+     * that call only from the app that issued the member's access token, so larry's own token can't make it.
+     * Unset, linkDiscord() links without adding anyone.
+     */
+    DISCORD_JOIN_BOT_TOKEN?: string;
   };
 
 /** What a run read from the server once: the mapped roles it skips, and who it won't rename. */
@@ -489,8 +495,12 @@ export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<Syn
   return unique.map((cid) => ({ cid, ...results.get(cid)! }));
 }
 
-/** RPC: link a Discord account to a member in identity, and queue their sync. */
-export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: string): Promise<void> {
+/**
+ * RPC: link a Discord account to a member in identity, add them to the server when the caller passes
+ * their one-time access token (`guilds.join`), and queue their sync. The token is sent to Discord once
+ * and never kept or logged. A failed join keeps the link and the sync, then throws.
+ */
+export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: string, accessToken?: string): Promise<{ joined: boolean }> {
   checkMode(env);
   if (!SNOWFLAKE.test(discordId)) throw new Error('discordId must be a Discord user ID.');
   const holder = await findByDiscordId(env, discordId);
@@ -504,7 +514,26 @@ export async function linkDiscord(env: RoleSyncEnv, cid: number, discordId: stri
     if (error instanceof IdentityConflict) throw new Error('That Discord account is linked to another member.');
     throw error;
   }
+  const join = accessToken ? await joinServer(env, discordId, accessToken) : { joined: false };
   await env.ROLE_SYNC_QUEUE.send({ type: 'sync-cid', cid, discordId });
+  if (join.failed) throw new Error("Your Discord account is linked, but we couldn't add you to the Indy Center Discord. Ask a staff member for an invite.");
+  return { joined: join.joined };
+}
+
+/** Add a member to the server with their access token, as the join bot. Logs a failure, never the token. */
+async function joinServer(env: RoleSyncEnv, discordId: string, accessToken: string): Promise<{ joined: boolean; failed?: true }> {
+  if (!env.DISCORD_JOIN_BOT_TOKEN) {
+    console.warn(`Link Discord: DISCORD_JOIN_BOT_TOKEN isn't set, so ${discordId} was linked without being added to the server`);
+    return { joined: false };
+  }
+  try {
+    // Discord answers 201 with the new member, or 204 (no body) for someone already in the server.
+    const member = await discord<DiscordMember | undefined>(env.DISCORD_JOIN_BOT_TOKEN, 'PUT', `/guilds/${guildId(env)}/members/${discordId}`, { access_token: accessToken });
+    return { joined: member !== undefined };
+  } catch (error) {
+    console.error(`Link Discord: couldn't add ${discordId} to the server: ${error instanceof Error ? error.message : String(error)}`);
+    return { joined: false, failed: true };
+  }
 }
 
 /** RPC: clear a link, then queue the sync of the account the member falls back to, if any. */

@@ -115,8 +115,8 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     });
   }
 
-  linkDiscord(cid: number, discordId: string) {
-    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId));
+  linkDiscord(cid: number, discordId: string, accessToken?: string) {
+    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId, accessToken));
   }
 
   unlink(cid: number, service: 'discord' | 'teamspeak') {
