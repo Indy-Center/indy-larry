@@ -13,6 +13,8 @@ ERROR_CHANNEL_ID=
 BOT_EVENTS_SECRET=
 # The secret teamspeak-bot sends to its /teamspeak/ routes (LARRY_SECRET in teamspeak-bot's .env); any made-up value locally
 TEAMSPEAK_BOT_SECRET=
+# The secret the cutover's seed script sends to POST /teamspeak/seed (README, Role sync); blank refuses the route. Any made-up value locally
+TEAMSPEAK_SEED_SECRET=
 # The role sync's client at identity, registered with the users:read and users:write scopes
 IDENTITY_CLIENT_ID=
 IDENTITY_CLIENT_SECRET=

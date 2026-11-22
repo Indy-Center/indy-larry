@@ -7,7 +7,8 @@
   "account_id": "afd63515948c9b2188ce14ef1504b2c1",
   "main": "src/index.ts",
   // The public address the bots post to: https://indy-larry.indy-center.workers.dev. Every route behind it
-  // needs its own bot's secret (BOT_EVENTS_SECRET or TEAMSPEAK_BOT_SECRET, Worker secrets set by build-and-deploy.yml).
+  // needs its own bot's secret (BOT_EVENTS_SECRET or TEAMSPEAK_BOT_SECRET, Worker secrets set by build-and-deploy.yml),
+  // or the cutover's TEAMSPEAK_SEED_SECRET for /teamspeak/seed, which is set only for the cutover.
   "workers_dev": true,
   // workers_dev would also turn on preview URLs; nothing uses them.
   "preview_urls": false,
