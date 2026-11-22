@@ -79,6 +79,12 @@ jobs:
           BOT_EVENTS_SECRET: ${{ secrets.ENV_BOT_EVENTS_SECRET }}
         run: printf '%s' "$BOT_EVENTS_SECRET" | npx wrangler secret put BOT_EVENTS_SECRET
 
+      # The secret teamspeak-bot sends to its /teamspeak/ routes (README, Role sync); teamspeak-server's settings hold the same one.
+      - name: Set TEAMSPEAK_BOT_SECRET
+        env:
+          TEAMSPEAK_BOT_SECRET: ${{ secrets.ENV_TEAMSPEAK_BOT_SECRET }}
+        run: printf '%s' "$TEAMSPEAK_BOT_SECRET" | npx wrangler secret put TEAMSPEAK_BOT_SECRET
+
       - name: Set IDENTITY_CLIENT_SECRET
         env:
           IDENTITY_CLIENT_SECRET: ${{ secrets.ENV_IDENTITY_CLIENT_SECRET }}

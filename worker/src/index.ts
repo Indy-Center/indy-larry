@@ -8,6 +8,11 @@ import { getGroupStatus } from './groups';
 import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
+import { consumeTsResults } from './teamspeak-routes';
+import type { TsResult } from './teamspeak-shape';
+
+// The TeamSpeak jobs store, a Durable Object (wrangler.jsonc's durable_objects), exported for the runtime.
+export { TeamSpeakJobs } from './teamspeak-jobs';
 
 /**
  * Run one call, report what it throws (a refused request included: the caller may not check) to ERROR_CHANNEL_ID,
@@ -139,17 +144,20 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     return reported(this.env, this.ctx, 'getGroupStatus()', () => getGroupStatus(this.env, source));
   }
 
-  /** Both queues come here: `role-sync` to the role sync, `larry-messages` to the sender. */
-  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage>) {
+  /** Every queue comes here: `role-sync` to the role sync, `teamspeak-results` to its consumer, `larry-messages` to the sender. */
+  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage> | MessageBatch<TsResult>) {
     if (batch.queue === 'role-sync') {
       return reported(this.env, this.ctx, 'Role sync queue consumer', () => consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env));
+    }
+    if (batch.queue === 'teamspeak-results') {
+      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTsResults(batch as MessageBatch<TsResult>));
     }
     return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
   }
 
-  /** The bots' routes: `POST /bot/events` from larry's bot. */
+  /** The bots' routes: `POST /bot/events` from larry's bot, and teamspeak-bot's `/teamspeak/...` (bot-events.ts). */
   fetch(request: Request) {
-    return reported(this.env, this.ctx, 'Bot events route', () => handleFetch(request, this.env));
+    return reported(this.env, this.ctx, "Bots' routes", () => handleFetch(request, this.env));
   }
 
   scheduled(_controller: ScheduledController) {

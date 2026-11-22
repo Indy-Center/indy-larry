@@ -1,16 +1,29 @@
 import { hasBearer } from './auth';
 import { SNOWFLAKE } from './discord';
 import type { RoleSyncEnv, RoleSyncMessage } from './role-sync';
+import { ackJobs, postResults, pullJobs, type TeamSpeakEnv } from './teamspeak-routes';
 
 /**
- * The Worker's HTTP side, on its workers.dev address (wrangler.jsonc). Its only caller so far is
- * larry's bot on the VPS, which sends Discord gateway events to `POST /bot/events`, with its own secret (auth.ts).
- * A new gateway event becomes a new type there, not a new route.
+ * The Worker's HTTP side, on its workers.dev address (wrangler.jsonc): the bots on the VPS, each with its
+ * own secret (auth.ts). larry's bot sends Discord gateway events to `POST /bot/events`; a new gateway event
+ * becomes a new type there, not a new route. teamspeak-bot has three routes of its own (teamspeak-routes.ts).
  */
 
-export type BotEventsEnv = Pick<RoleSyncEnv, 'ROLE_SYNC_QUEUE'> & {
-  /** larry's bot's shared secret, from the ENV_BOT_EVENTS_SECRET setting. Unset refuses every call. */
-  BOT_EVENTS_SECRET?: string;
+export type BotEventsEnv = Pick<RoleSyncEnv, 'ROLE_SYNC_QUEUE'> &
+  TeamSpeakEnv & {
+    /** larry's bot's shared secret, from the ENV_BOT_EVENTS_SECRET setting. Unset refuses every call. */
+    BOT_EVENTS_SECRET?: string;
+  };
+
+/** A route: the one secret it takes, and what it does once that secret is checked. */
+type Route = { secret: (env: BotEventsEnv) => string | undefined; handle: (request: Request, env: BotEventsEnv) => Promise<Response> };
+
+/** Every route, all `POST`. A route takes only its own bot's secret; anything else gets 404. */
+const ROUTES: Record<string, Route> = {
+  '/bot/events': { secret: (env) => env.BOT_EVENTS_SECRET, handle: botEvent },
+  '/teamspeak/jobs/pull': { secret: (env) => env.TEAMSPEAK_BOT_SECRET, handle: pullJobs },
+  '/teamspeak/jobs/ack': { secret: (env) => env.TEAMSPEAK_BOT_SECRET, handle: ackJobs },
+  '/teamspeak/results': { secret: (env) => env.TEAMSPEAK_BOT_SECRET, handle: postResults },
 };
 
 /** What larry's bot may send: a member joined the server, so sync them now. */
@@ -20,9 +33,14 @@ const status = (code: number) => new Response(null, { status: code });
 
 export async function handleFetch(request: Request, env: BotEventsEnv): Promise<Response> {
   const { pathname } = new URL(request.url);
-  if (request.method !== 'POST' || pathname !== '/bot/events') return status(404);
-  if (!(await hasBearer(request, env.BOT_EVENTS_SECRET))) return status(401);
+  const route = Object.hasOwn(ROUTES, pathname) ? ROUTES[pathname] : undefined;
+  if (request.method !== 'POST' || !route) return status(404);
+  if (!(await hasBearer(request, route.secret(env)))) return status(401);
+  return route.handle(request, env);
+}
 
+/** `POST /bot/events`: queues a known event's job on `role-sync` → `202`. */
+async function botEvent(request: Request, env: BotEventsEnv): Promise<Response> {
   const event = readEvent(await request.text());
   if (!event) return status(400);
   const job: RoleSyncMessage = { type: 'sync-member', discordId: event.discordId };
