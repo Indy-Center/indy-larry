@@ -1,6 +1,10 @@
 require('dotenv').config();
-const fs = require('fs');
 const path = require('path');
+// First, so anything that goes wrong from here on is reported in ERROR_CHANNEL_ID (src/errorReport.js).
+const { fatal, announceUp } = require('./errorReport').installErrorReporting(process.env, {
+  uptimeFile: path.join(__dirname, '..', 'uptime.json'),
+});
+const fs = require('fs');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { fetchFeed, groupByFacility, fetchFacilityIndex, fetchBookings, trackActivations } = require('./feed');
 const { statusEmbed, noneOnlineEmbed, trafficEmbed, congestionEmbed, congestionAlert } = require('./embeds');
@@ -25,8 +29,8 @@ const config = {
 };
 
 if (!config.token || !config.channelId) {
-  console.error('DISCORD_TOKEN and CHANNEL_ID must be set (see .env.example).');
-  process.exit(1);
+  fatal('DISCORD_TOKEN and CHANNEL_ID must be set (see .env.example).'); // reported only if DISCORD_TOKEN is set
+  return;
 }
 
 // Notification panels (relief/staffing roles and Iron Mic). Off unless PANEL_CHANNEL_ID is set.
@@ -43,8 +47,8 @@ const notifyConfig = {
 
 // The status loop deletes every other message the bot has in CHANNEL_ID, so panels and alerts need their own channel.
 if ([notifyConfig.panelChannelId, notifyConfig.alertChannelId].includes(config.channelId)) {
-  console.error('PANEL_CHANNEL_ID and ALERT_CHANNEL_ID must be different from CHANNEL_ID.');
-  process.exit(1);
+  fatal('PANEL_CHANNEL_ID and ALERT_CHANNEL_ID must be different from CHANNEL_ID.');
+  return;
 }
 
 // Aircraft-on-frequency embed in CHANNEL_ID. Off unless TRAFFIC_ENABLED=true. The busy-frequency alert
@@ -119,6 +123,9 @@ const ironMicConfig = {
 let ironMic = null;
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// discord.js reconnects on its own; these are reported (console.error) rather than left to crash the bot.
+client.on(Events.Error, (err) => console.error('Discord client error:', err));
+client.on(Events.ShardError, (err, shardId) => console.error(`Discord connection error (shard ${shardId}):`, err));
 
 // facility key -> { message, signature }
 const posted = new Map();
@@ -440,6 +447,7 @@ client.once(Events.ClientReady, async () => {
   await refresh();
   setInterval(refresh, config.pollSeconds * 1000);
   console.log(`Polling every ${config.pollSeconds}s${config.artccIds.length ? ` for ${config.artccIds.join(', ')}` : ''}.`);
+  announceUp();
 
   if (notifyConfig.panelChannelId) {
     notifications = new Notifications(client, notifyConfig);

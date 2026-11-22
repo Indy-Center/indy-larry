@@ -33,6 +33,9 @@ jobs:
       # Roles and channels (README, Roles and channels). Left unset, those methods refuse every call.
       GUILD_ID: ${{ vars.ENV_GUILD_ID }}
       CHANNEL_CATEGORIES: ${{ vars.ENV_CHANNEL_CATEGORIES }}
+      # Where the Worker reports its errors: #larry-errors, the channel the VPS bot reports to. Blank sends nothing.
+      ERROR_CHANNEL_ID: ${{ secrets.ENV_ERROR_CHANNEL_ID || vars.ENV_ERROR_CHANNEL_ID }}
+      RELEASE: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +58,8 @@ jobs:
           --var "SEND_CHANNELS:$SEND_CHANNELS"
           --var "GUILD_ID:$GUILD_ID"
           --var "CHANNEL_CATEGORIES:$CHANNEL_CATEGORIES"
+          --var "ERROR_CHANNEL_ID:$ERROR_CHANNEL_ID"
+          --var "RELEASE:$RELEASE"
 
       # Same token as the VPS bot, so messages come from Larry. Re-set on every deploy to stay in step with it.
       - name: Set DISCORD_TOKEN
@@ -209,6 +214,8 @@ jobs:
           ENV_CONGESTION_COOLDOWN_MIN: ${{ secrets.ENV_CONGESTION_COOLDOWN_MIN || vars.ENV_CONGESTION_COOLDOWN_MIN }}
           ENV_CONGESTION_HYSTERESIS: ${{ secrets.ENV_CONGESTION_HYSTERESIS || vars.ENV_CONGESTION_HYSTERESIS }}
           ENV_SEND_CHANNELS: ${{ secrets.ENV_SEND_CHANNELS || vars.ENV_SEND_CHANNELS }}
+          ENV_ERROR_CHANNEL_ID: ${{ secrets.ENV_ERROR_CHANNEL_ID || vars.ENV_ERROR_CHANNEL_ID }}
+          ENV_RELEASE: ${{ github.sha }}
         run: |
           # Values are single-quoted so Compose takes them literally, $ and # included. So a value can't
           # contain a single quote or a newline; if one does, this fails before anything reaches the box.

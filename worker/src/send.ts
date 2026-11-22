@@ -17,6 +17,26 @@ const MAX_RPC_WAIT_SECONDS = 5;
 const CANNOT_DM = 50007;
 // Discord error code for "Unknown Message": the one an edit was for has been deleted.
 const UNKNOWN_MESSAGE = 10008;
+// Matches max_retries in wrangler.jsonc: past this many retries a message goes to the dead letter queue.
+const QUEUE_MAX_RETRIES = 5;
+
+/** Where the queue consumer notes what it dropped or gave up on (errors.ts). */
+export type Report = (text: string) => void;
+const ignore: Report = () => {};
+
+/**
+ * consume()'s failure when Discord refused something because of Larry's own setup. Each refusal has already been
+ * reported on its own, so index.ts doesn't report this one again.
+ */
+export class SetupFaultError extends Error {}
+
+/** Retry a queue message later, reporting it when this was its last try and it's off to the dead letter queue. */
+function retryLater(message: Message<unknown>,delaySeconds: number, what: string, report: Report): void {
+  if (message.attempts > QUEUE_MAX_RETRIES) {
+    report(`${what} still failing after ${message.attempts} attempts; it goes to the dead letter queue (larry-messages-dlq)`);
+  }
+  message.retry({ delaySeconds });
+}
 
 export type SendEnv = {
   DISCORD_TOKEN: string;
@@ -26,6 +46,10 @@ export type SendEnv = {
   GUILD_ID?: string;
   /** Categories callers may create channels under and post into by ID, as name:categoryId like SEND_CHANNELS. */
   CHANNEL_CATEGORIES?: string;
+  /** Where the Worker reports its errors (errors.ts), the same #larry-errors channel the VPS bot uses. Unset sends nothing. */
+  ERROR_CHANNEL_ID?: string;
+  /** The deployed commit, shown on error reports. */
+  RELEASE?: string;
 };
 
 /** Where a message goes, once its channel name is resolved. */
@@ -273,18 +297,18 @@ export async function enqueue(env: SendEnv, kind: Kind, request: ChannelSend | D
  * invocation instead of a log line nobody reads. Every message is acked or retried by then, and Queues
  * honours those whether or not the handler throws, so nothing is redelivered because of it.
  */
-export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 'DISCORD_TOKEN'>): Promise<void> {
+export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 'DISCORD_TOKEN'>, report: Report = ignore): Promise<void> {
   const setupFaults: string[] = [];
 
   for (const message of batch.messages) {
     if ('memberRole' in message.body) {
-      const fault = await consumeRoleJob(message as Message<RoleJob>, env.DISCORD_TOKEN);
+      const fault = await consumeRoleJob(message as Message<RoleJob>, env.DISCORD_TOKEN, report);
       if (fault) setupFaults.push(fault);
       continue;
     }
 
     if ('deleteMessage' in message.body) {
-      const fault = await consumeDeleteJob(message as Message<DeleteJob>, env.DISCORD_TOKEN);
+      const fault = await consumeDeleteJob(message as Message<DeleteJob>, env.DISCORD_TOKEN, report);
       if (fault) setupFaults.push(fault);
       continue;
     }
@@ -298,27 +322,28 @@ export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 
       outcome = await deliver(env.DISCORD_TOKEN, job, nonce);
     } catch (error) {
       console.warn(`Send to ${JSON.stringify(job.target)} failed, retrying: ${String(error)}`);
-      message.retry({ delaySeconds: 10 * message.attempts });
+      retryLater(message, 10 * message.attempts, `Send to ${JSON.stringify(job.target)} (${String(error)})`, report);
       continue;
     }
 
     if (outcome.ok) {
       message.ack();
     } else if (outcome.status === 429) {
-      message.retry({ delaySeconds: Math.max(1, Math.ceil(outcome.retryAfter ?? 5)) });
+      retryLater(message, Math.max(1, Math.ceil(outcome.retryAfter ?? 5)), `Send to ${JSON.stringify(job.target)} (rate limited)`, report);
     } else if (outcome.status >= 500) {
-      message.retry({ delaySeconds: 10 * message.attempts });
+      retryLater(message, 10 * message.attempts, `Send to ${JSON.stringify(job.target)} (Discord ${outcome.status})`, report);
     } else {
       // A 4xx is about the message itself (missing permissions, closed DMs, bad embed), so retrying won't help.
       const reason = `${describe(job, outcome)}; dropping message to ${JSON.stringify(job.target)}`;
       console.error(reason);
+      report(reason);
       message.ack();
       if (isSetupFault(job, outcome)) setupFaults.push(reason);
     }
   }
 
   if (setupFaults.length > 0) {
-    throw new Error(`Larry can't do what it was asked to. Check the bot's permissions, its role's position and SEND_CHANNELS. ${setupFaults.join(' | ')}`);
+    throw new SetupFaultError(`Larry can't do what it was asked to. Check the bot's permissions, its role's position and SEND_CHANNELS. ${setupFaults.join(' | ')}`);
   }
 }
 
@@ -326,7 +351,7 @@ export async function consume(batch: MessageBatch<QueueJob>, env: Pick<SendEnv, 
  * One queued deletion, by the same rules as a message: retry what might pass, drop what won't.
  * Returns the reason when the refusal is Larry's own setup, for consume() to fail the run with.
  */
-async function consumeDeleteJob(message: Message<DeleteJob>, token: string): Promise<string | null> {
+async function consumeDeleteJob(message: Message<DeleteJob>, token: string, report: Report): Promise<string | null> {
   const { deleteMessage } = message.body;
   const what = `Deleting message ${deleteMessage.messageId} in channel ${deleteMessage.channelId}`;
 
@@ -335,7 +360,7 @@ async function consumeDeleteJob(message: Message<DeleteJob>, token: string): Pro
     outcome = await applyDelete(token, deleteMessage);
   } catch (error) {
     console.warn(`${what} failed, retrying: ${String(error)}`);
-    message.retry({ delaySeconds: 10 * message.attempts });
+    retryLater(message, 10 * message.attempts, `${what} (${String(error)})`, report);
     return null;
   }
 
@@ -344,16 +369,17 @@ async function consumeDeleteJob(message: Message<DeleteJob>, token: string): Pro
     return null;
   }
   if (outcome.status === 429) {
-    message.retry({ delaySeconds: Math.max(1, Math.ceil(outcome.retryAfter ?? 5)) });
+    retryLater(message, Math.max(1, Math.ceil(outcome.retryAfter ?? 5)), `${what} (rate limited)`, report);
     return null;
   }
   if (outcome.status >= 500) {
-    message.retry({ delaySeconds: 10 * message.attempts });
+    retryLater(message, 10 * message.attempts, `${what} (Discord ${outcome.status})`, report);
     return null;
   }
 
   const reason = `${what} was refused: ${outcome.status}${outcome.code ? ` (${outcome.code})` : ''} ${outcome.error}; dropping it`;
   console.error(reason);
+  report(reason);
   message.ack();
   // A channel Larry cannot see or act in, or a bad token, is Larry's setup.
   return outcome.status === 401 || outcome.status === 403 || outcome.status === 404 ? reason : null;
@@ -363,7 +389,7 @@ async function consumeDeleteJob(message: Message<DeleteJob>, token: string): Pro
  * One queued role change, by the same rules as a message: retry what might pass, drop what won't.
  * Returns the reason when the refusal is Larry's own setup, for consume() to fail the run with.
  */
-async function consumeRoleJob(message: Message<RoleJob>, token: string): Promise<string | null> {
+async function consumeRoleJob(message: Message<RoleJob>, token: string, report: Report): Promise<string | null> {
   const { memberRole } = message.body;
   const what = `${memberRole.has ? 'Giving' : 'Taking'} role ${memberRole.roleId} ${memberRole.has ? 'to' : 'from'} user ${memberRole.userId}`;
 
@@ -372,7 +398,7 @@ async function consumeRoleJob(message: Message<RoleJob>, token: string): Promise
     outcome = await applyMemberRole(token, memberRole);
   } catch (error) {
     console.warn(`${what} failed, retrying: ${String(error)}`);
-    message.retry({ delaySeconds: 10 * message.attempts });
+    retryLater(message, 10 * message.attempts, `${what} (${String(error)})`, report);
     return null;
   }
 
@@ -381,12 +407,14 @@ async function consumeRoleJob(message: Message<RoleJob>, token: string): Promise
     return null;
   }
   if (outcome.status === 429 || outcome.status >= 500) {
-    message.retry({ delaySeconds: 10 * message.attempts });
+    retryLater(message, 10 * message.attempts, `${what} (Discord ${outcome.status})`, report);
     return null;
   }
 
   const reason = `${what} was refused: ${outcome.error}; dropping it`;
   console.error(reason);
+  // Someone who left the server isn't worth a report; anything else here is.
+  if (!outcome.notInServer) report(reason);
   message.ack();
   // Someone who isn't in the server is nobody's fault. Anything else here is permissions, the
   // role's position or a role that has gone: Larry's setup, or the caller's stale ID.

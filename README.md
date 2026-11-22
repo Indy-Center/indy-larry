@@ -119,9 +119,22 @@ await env.LARRY.enqueueDelete({ channel: 'events', messageId }); // once it has 
 - **Edits**: `editMessage()` changes a message Larry posted in a `SEND_CHANNELS` channel now; `enqueueEdit()` queues the change. What is given replaces what the message had, and `content` or `embeds` left out stays as it was. `buttons` left out keeps the buttons; `[]` removes them. An edit never pings. An edit to a message that has been deleted throws from `editMessage()` and is dropped from the queue.
 - **Deleting**: `deleteMessage()` removes a message Larry posted in a `SEND_CHANNELS` channel now; `enqueueDelete()` queues it. It cannot be undone. A message that is already gone counts as deleted.
 - **Checks**: every method throws straight away for an unknown channel, a bad user ID, an empty message, more than 2000 characters or more than 10 embeds; the queue methods queue nothing then.
+- **Errors**: whatever a method throws, a refused request included, is also posted to `#larry-errors` (see [Error reports](#error-reports)), so a caller that doesn't check its errors still gets noticed.
 - **Delivery**: `send()` waits out a rate limit of 5 seconds or less once, then throws. The queue (`larry-messages`) waits for Discord's `retry_after` on a rate limit, backs off on 5xx and network errors, and drops a message Discord refuses (4xx), logging why. When the refusal is Larry's own setup, the queue run also **fails**, so it shows as an error on the Worker's dashboard: a channel Larry can't see or post in (403), one that no longer exists (404), or a bad token (401). The message is still dropped, not retried. A bad embed or a user who won't take DMs is logged only. After 5 attempts a message moves to `larry-messages-dlq`. Each queued message carries a nonce, so a retry can't post twice.
 
 The bot needs **View Channel**, **Send Messages** and **Embed Links** in each channel in `SEND_CHANNELS`.
+
+## Error reports
+
+Larry reports on himself in `ERROR_CHANNEL_ID` (`#larry-errors`). Both halves post there, as Larry: the bot on the VPS (`src/errorReport.js`) and the send Worker (`worker/src/errors.ts`). Leave it unset and nothing is sent.
+
+- **Up and down**, like a status monitor. The bot posts `🔴 Larry bot is down: stopped for a deploy or restart` when it's stopped, `🔴 Larry bot is down: crashed` with the error when it crashes, and `🟢 Larry bot is back up after 2 min` once it has logged in again. When Larry is killed without warning (out of memory, the VPS losing power) there's no 🔴. The next 🟢 says so, and times the outage from a heartbeat the bot writes to `uptime.json` every minute.
+- **Bot errors**: every `console.error`, plus uncaught exceptions and unhandled rejections. Those two still stop the bot, as Node would, and Docker restarts it. Errors from one burst go out as one message, tagged `Larry bot` and the commit.
+- **Worker errors**: whatever an RPC method throws, including a caller's refused request; a queued message dropped because Discord refused it; and a queued message on its last try before it goes to `larry-messages-dlq`. Each call's errors go out as one message after the call returns, so callers never wait on a report.
+- **Noise limits**: the same error (numbers and timestamps ignored) is posted once per 15 minutes on the bot and 10 on the Worker; repeats are counted on its next report. A crash that happens on every start is posted once, not on every restart. The bot posts at most 30 error messages an hour; past that, reports are counted and the count goes out once there's room. Reports never ping anyone, even if the error's text contains `@everyone`.
+- **Never in the way**: a report goes straight to Discord's REST API, so it works before login and while the gateway is down. It waits out rate limits and retries outages. If Discord still won't take it (wrong channel ID, missing permissions), the reason goes to the container log or the Worker's logs, and the report is dropped. Reporting never throws into the code it watches.
+
+Make the channel private to staff, and give the bot **View Channel** and **Send Messages** there. It must not be `CHANNEL_ID`: the status loop deletes every other message the bot has in that channel, so the bot turns reporting off and logs why if they're the same.
 
 ### Roles and channels
 
@@ -195,11 +208,12 @@ To try it locally: `cd worker && npm install`, copy `.dev.vars.example` to `.dev
 - `src/traffic.js`: counts aircraft on each position's frequency from the transceivers feed, and decides when a position is busy enough to alert.
 - `src/congestion.js`: airspace congestion: boundaries, airborne and entering counts, who's working each area, and the alert.
 - `src/names.js`: CMS position lookup following Centerline's rules, and the airport for a position.
+- `src/errorReport.js`: reports errors, crashes and up/down to `#larry-errors` (see [Error reports](#error-reports)).
 - `src/stateFile.js`: saves the JSON state files so a crash never leaves one half-written.
 - `src/notify.js`: the notification panels: button and menu handling, role timers and `notify.json`.
 - `src/panels.js`: the panel, form and request alert layouts.
 - `test/`: unit tests. `test/backup/` is the backup round trip (see [Backups](#backups)).
-- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint and queue consumer, `src/send.ts` checks and sends messages, `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
+- `worker/`: the send Worker (TypeScript, its own `package.json`). `src/index.ts` is the RPC entrypoint and queue consumer, `src/send.ts` checks and sends messages, `src/errors.ts` reports errors to `#larry-errors`, `src/channels.ts` reads `SEND_CHANNELS`, `src/client/` holds the types callers import, `scripts/check-channels.ts` is the deploy's `SEND_CHANNELS` check, and `tests/` its unit tests (`npm test` in `worker/`).
 - `Dockerfile`: the image, published as `ghcr.io/indy-center/vnas-discord-bot`.
 - `deploy/docker-compose.yml`: what's deployed to `/home/deploy/apps/indy-larry/` on the VPS. Keeps `state.json` in the `bot-state` volume.
 - `deploy/.env.example`: every setting the bot reads, with its default. Names only, no values.
@@ -226,7 +240,7 @@ Create the bot at https://discord.com/developers/applications and give it the Vi
 
 Use a test channel, or stop the production bot first. Two copies with the same token keep deleting each other's embeds.
 
-`state.json` is created on first run. It records which message belongs to which facility, and when each controller went active, so restarts edit the same messages. It isn't committed, and neither are `notify.json`, `ironmic.json` and `congestion.json`.
+`state.json` is created on first run. It records which message belongs to which facility, and when each controller went active, so restarts edit the same messages. It isn't committed, and neither are `notify.json`, `ironmic.json`, `congestion.json` and `uptime.json`.
 
 ## Tests
 
@@ -260,6 +274,7 @@ Secrets:
 | `ENV_IRON_MIC_CHANNEL_ID` | Variable | Optional; posts the Iron Mic leaderboard outside `CHANNEL_ID`, e.g. while testing |
 | `ENV_POLL_SECONDS`, `ENV_SHOW_NAMES`, … | Variable | Optional; leave unset for the defaults in `deploy/.env.example` |
 | `ENV_SEND_CHANNELS` | Variable | Channels other apps may send to, e.g. `events:111,training:222`; the Worker deploy reads it (the VPS bot ignores its `.env` copy) |
+| `ENV_ERROR_CHANNEL_ID` | Variable | Optional; `#larry-errors`, where the bot and the Worker report errors and the bot says when it goes down and comes back (see [Error reports](#error-reports)). The deploy also sets `RELEASE` to the commit; don't add it |
 | `CLOUDFLARE_WORKERS_API_KEY` | Secret | Cloudflare API token for the Worker deploy (Workers Scripts:Edit, Queues:Edit) |
 
 To change a setting, update it under **Settings → Secrets and variables → Actions**, then run **Build and Deploy**. The deploy owns `.env` and rewrites it every time, so an edit made on the VPS lasts only until the next deploy.
@@ -279,7 +294,7 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 
 ## Backups
 
-The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json`, `ironmic.json` and `congestion.json`. After a restore the bot edits the same status messages and panels, keeps its role timers, request alerts and congestion alert memory, and carries on any running Iron Mic.
+The VPS's backup runner backs the bot up nightly, as it does every app (see [Backups in docker-infrastructure](https://github.com/Indy-Center/docker-infrastructure#backups)). A backup holds everything in the `bot-state` volume: `state.json`, `notify.json`, `ironmic.json`, `congestion.json` and `uptime.json`. After a restore the bot edits the same status messages and panels, keeps its role timers, request alerts and congestion alert memory, and carries on any running Iron Mic.
 
 - `deploy/backup.sh` writes the volume's files into one archive, `indy-larry-state.tar.gz`, while the bot keeps running. The bot rewrites its files in place, so a copy can catch one half-written; each JSON file that doesn't parse is copied again, up to 10 times, and the backup fails if it never reads whole.
 - `deploy/restore.sh <file>` takes a decrypted archive. It checks the archive first and changes nothing if it is damaged. Then it stops the bot, unpacks the archive inside the volume, swaps its files in for the old ones by renaming, and starts the bot again. If the swap fails part-way, the old files are put back before the bot starts. A restore killed part-way leaves `.restore-new` or `.restore-old` in the volume, and the next restore refuses to run until they have been checked and removed by hand.
