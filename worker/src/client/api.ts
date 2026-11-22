@@ -331,7 +331,7 @@ export type GroupsAnswer = { groups: Group[] };
 /** What an app implements, on the entrypoint larry's binding names, to serve groups. */
 export type GroupSource = { getGroups(): Promise<GroupsAnswer> };
 
-/** A notice for a group's room. Plain text: larry escapes Discord's formatting. */
+/** A notice for a group's room. Plain text: larry escapes Discord's formatting, leaving each http(s):// URL as it is. */
 export type GroupNotice = { title: string; body: string; fields?: { name: string; value: string }[] };
 
 export type GroupPost = {
