@@ -4,19 +4,34 @@ import { DatabaseSync } from 'node:sqlite';
 
 export type FakeKv = KVNamespace & { store: Map<string, string>; ttls: Map<string, number | undefined> };
 
-export function fakeKv(): FakeKv {
+/**
+ * A KV namespace in memory. `ttls` records each put's `expirationTtl`. With `expire`, a key is also gone once
+ * its TTL has passed by `Date.now()` (for a test that moves the clock); without it keys never expire.
+ */
+export function fakeKv({ expire = false }: { expire?: boolean } = {}): FakeKv {
   const store = new Map<string, string>();
   const ttls = new Map<string, number | undefined>();
+  const expiresAt = new Map<string, number>();
+  const live = (key: string) => {
+    const at = expiresAt.get(key);
+    if (expire && at !== undefined && Date.now() >= at) {
+      store.delete(key);
+      expiresAt.delete(key);
+    }
+    return store.get(key) ?? null;
+  };
   return {
     store,
     ttls,
     async get(key: string, type?: unknown) {
-      const value = store.get(key) ?? null;
+      const value = live(key);
       return value !== null && (type === 'json' || (type as { type?: string })?.type === 'json') ? JSON.parse(value) : value;
     },
     async put(key: string, value: string, options?: { expirationTtl?: number }) {
       store.set(key, value);
       ttls.set(key, options?.expirationTtl);
+      if (options?.expirationTtl === undefined) expiresAt.delete(key);
+      else expiresAt.set(key, Date.now() + options.expirationTtl * 1000);
     },
     async delete(key: string) {
       store.delete(key);

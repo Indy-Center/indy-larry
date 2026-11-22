@@ -9,7 +9,7 @@ import { applyNickname, nicknameGuard, type NicknameGuard, type NicknameOutcome 
 import { getMember, listMembers, syncRefusal, type DiscordMember, type DiscordRole } from '../roles';
 import type { RoleSyncEnv, RunLists } from '../role-sync';
 import type { VatusaPerson } from '../vatusa';
-import { checkMode, type Change, type Mode, type Platform, type Resolution } from './platform';
+import { checkMode, type Change, type MemberLookups, type Mode, type Platform, type Resolution } from './platform';
 
 /**
  * The role sync's Discord adapter: the server's members are its accounts, and their mapped roles and
@@ -86,7 +86,7 @@ async function memberNow(env: GuildEnv, discordId: string): Promise<DiscordAccou
   return memberFrom(discordId, held);
 }
 
-export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound> = {
+export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound, DiscordMessage> = {
   name: 'discord',
 
   async listAccounts(env, people) {
@@ -137,7 +137,7 @@ export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound>
     if (account.bot) return { kind: 'left-alone', found: { kind: 'bot' } };
     const found = await resolvePerson(env, run, { discordId: account.discordId, cid });
     if (found.kind === 'shared-id') await reportSharedId(env, account.discordId, found.sharedCids);
-    if (found.kind === 'person') return { kind: 'person', person: found.person, found };
+    if (found.kind === 'person') return { kind: 'person', person: found.person, identity: found.identity, found };
     // An account another member has linked isn't no one: its own job syncs it.
     if (found.kind === 'account-taken') return { kind: 'left-alone', found };
     return { kind: 'unresolved', found };
@@ -180,7 +180,7 @@ async function applyDiscord(env: RoleSyncEnv, change: Change<DiscordAccount, Dis
 
   if (person) {
     const known = resolution.found?.kind === 'person' ? resolution.found.identity : undefined;
-    const to = nicknameFor(person, person.rating < 1 ? null : await identityForNickname(env, person.cid, account.discordId, known));
+    const to = nicknameFor(person, person.rating < 1 ? null : await identityForNickname(change.identity, account.discordId, known));
     if (to) result.nickname = await applyNickname(env, run.server.guard, account, to, mode === 'dry-run');
   }
 
@@ -233,13 +233,14 @@ async function reportSharedId(env: AlertEnv, discordId: string, cids: number[]):
 
 /**
  * The identity user whose names the nickname reads. resolvePerson has already asked identity when it
- * looked for the member's link (`known`, undefined when it didn't); otherwise this asks by CID. Identity
- * failing here doesn't fail the job: the nickname falls back to VATUSA's name, and it is logged.
+ * looked for the member's link (`known`, undefined when it didn't); otherwise this asks by CID, through the
+ * member's shared lookup (`identity`), which the other adapters then reuse. Identity failing here doesn't
+ * fail the job: the nickname falls back to VATUSA's name, and it is logged.
  */
-async function identityForNickname(env: IdentityEnv, cid: number, discordId: string, known: IdentityUser | null | undefined): Promise<IdentityUser | null> {
+async function identityForNickname(identity: MemberLookups['identity'], discordId: string, known: IdentityUser | null | undefined): Promise<IdentityUser | null> {
   if (known !== undefined) return known;
   try {
-    return await getUser(env, cid);
+    return await identity();
   } catch (error) {
     console.warn(`Role sync: couldn't reach identity for ${discordId}'s name; using VATUSA's name: ${String(error)}`);
     return null;
@@ -355,10 +356,10 @@ async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: Ru
  * Discord ID (from the newest run's lists, else VATUSA's per-user lookup), unless another member has
  * linked that account or the lists give it to more than one CID.
  */
-export async function discordIdFor(env: RoleSyncEnv, cid: number, latestRun: () => Promise<RunLists | null>): Promise<DiscordRef | null> {
-  const linked = (await getUser(env, cid))?.discordId;
+export async function discordIdFor(env: RoleSyncEnv, cid: number, member: MemberLookups): Promise<DiscordRef | null> {
+  const linked = (await member.identity())?.discordId;
   if (linked) return { id: linked, source: 'linked' };
-  const latest = await latestRun();
+  const latest = await member.latest();
   const person = latest?.people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
   if (!person?.discordId) return null;
   if (latest && sharedDiscordIds(latest.people).has(person.discordId)) return null;

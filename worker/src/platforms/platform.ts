@@ -1,4 +1,5 @@
 import type { Links } from '../client/api';
+import type { IdentityUser } from '../identity';
 import type { MappingEntry } from '../mapping';
 import type { RoleSyncEnv, RoleSyncMessage, RunLists } from '../role-sync';
 import type { VatusaPerson } from '../vatusa';
@@ -6,7 +7,8 @@ import type { VatusaPerson } from '../vatusa';
 /**
  * The platform seam. The role sync (role-sync.ts) works out once who a member is and which mapping entries
  * they match; a platform adapter finds, reads and writes that member's account on one platform. Each
- * adapter is registered in role-sync.ts's PLATFORMS. Discord's is platforms/discord.ts.
+ * adapter is registered in role-sync.ts's PLATFORMS: Discord's is platforms/discord.ts, TeamSpeak's
+ * platforms/teamspeak.ts.
  */
 
 /** `dry-run` (the default): log what would change, change nothing. `live`: change it. */
@@ -23,12 +25,23 @@ export function checkMode(env: Pick<RoleSyncEnv, 'ROLE_SYNC_MODE'>): Mode {
  * log line and its extras); it is absent when the account was reached from a member another adapter found.
  */
 export type Resolution<Found> =
-  /** A member: their account gets the mapping's entries they match. */
-  | { kind: 'person'; person: VatusaPerson; found?: Found }
+  /**
+   * A member: their account gets the mapping's entries they match. `identity` is their identity record when
+   * the adapter read it (null: they have none), so no other adapter reads it again.
+   */
+  | { kind: 'person'; person: VatusaPerson; identity?: IdentityUser | null; found?: Found }
   /** A confirmed "no one": the account loses every managed role or group it holds on this platform. */
   | { kind: 'unresolved'; found?: Found }
   /** Left as it is: nothing added or removed. */
   | { kind: 'left-alone'; found?: Found };
+
+/** What every adapter shares about one CID while it is synced or looked up: read once, on first use. */
+export type MemberLookups = {
+  /** The newest run's record, while it is kept. */
+  latest(): Promise<RunLists | null>;
+  /** Their identity record, or null when they have none. Throws when identity can't be reached. */
+  identity(): Promise<IdentityUser | null>;
+};
 
 /** What the job asks an adapter to make true of one account. */
 export type Change<Account, Found> = {
@@ -39,6 +52,8 @@ export type Change<Account, Found> = {
   /** Mapping entries to give and take, in the mapping's order: never one the adapter's guard skips. */
   add: MappingEntry[];
   remove: MappingEntry[];
+  /** The member's identity record, shared with the other adapters (null for an account that resolved to no one). */
+  identity: MemberLookups['identity'];
 };
 
 /** The parts of a run's KV record an adapter keeps, beside the shared `people`. */
@@ -46,30 +61,34 @@ export type PlatformRun = Partial<Omit<RunLists, 'people'>>;
 
 /**
  * One platform. `Ref` is how a CID's account is named (for queueing and getLinks); `Account` is that account
- * as it stands now (what it holds); `Found` is the adapter's note on how it resolved one.
+ * as it stands now (what it holds); `Found` is the adapter's note on how it resolved one; `Message` its
+ * messages on the `role-sync` queue.
  */
-export interface Platform<Ref, Account, Found> {
+export interface Platform<Ref, Account, Found, Message extends RoleSyncMessage = RoleSyncMessage> {
   /** Its key in getLinks() and unlink(). */
   name: keyof Links;
 
-  /** The cron: list the accounts to sync, and read what this run needs once. Throws to fail the run. */
-  listAccounts(env: RoleSyncEnv, people: VatusaPerson[]): Promise<{ run: PlatformRun; jobs(runId: string): RoleSyncMessage[] }>;
+  /**
+   * The cron: list the accounts to sync, and read what this run needs once. Throws to fail the run. An
+   * adapter whose accounts arrive later (TeamSpeak's) asks for them here and queues their jobs when they come.
+   */
+  listAccounts(env: RoleSyncEnv, people: VatusaPerson[], runId: string): Promise<{ run: PlatformRun; jobs(runId: string): Message[] }>;
   /** What a job with no run of its own reads in place of a run's record. */
   freshRun(env: RoleSyncEnv): Promise<PlatformRun>;
 
   /** Whether a queue message is one of this adapter's. */
   owns(message: RoleSyncMessage): boolean;
-  /** A message's account ID (for log lines), the CID it already names, and the run it belongs to. */
-  jobOf(message: RoleSyncMessage): { accountId: string; cid?: number; runId?: string };
+  /** A message's account ID (for log lines), the CID it already names, and the run it belongs to. Only given messages it owns. */
+  jobOf(message: Message): { accountId: string; cid?: number; runId?: string };
   /** The account a message names, as it stands now; null (logged) when it has gone. */
-  accountOf(env: RoleSyncEnv, mode: Mode, message: RoleSyncMessage): Promise<Account | null>;
+  accountOf(env: RoleSyncEnv, mode: Mode, message: Message): Promise<Account | null>;
 
-  /** The account a CID syncs on, by this platform's rule; null when none. `latest` reads the newest run's record. */
-  accountFor(env: RoleSyncEnv, cid: number, latest: () => Promise<RunLists | null>): Promise<Ref | null>;
+  /** The account a CID syncs on, by this platform's rule; null when none. */
+  accountFor(env: RoleSyncEnv, cid: number, member: MemberLookups): Promise<Ref | null>;
   /** That account as it stands now; null (logged) when it has gone. */
   current(env: RoleSyncEnv, ref: Ref): Promise<Account | null>;
   /** The queue message that syncs a CID on that account. */
-  messageFor(cid: number, ref: Ref): RoleSyncMessage;
+  messageFor(cid: number, ref: Ref): Message;
   /** What getLinks() reports for that account. */
   linkOf(ref: Ref): Links[keyof Links];
   /** Clear the member's link on this platform (unlink()). */
@@ -88,4 +107,4 @@ export interface Platform<Ref, Account, Found> {
 }
 
 /** An adapter of any platform, as the registry holds them: each adapter's own types stay inside it. */
-export type AnyPlatform = Platform<any, any, any>;
+export type AnyPlatform = Platform<any, any, any, any>;

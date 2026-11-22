@@ -3,7 +3,7 @@ import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { enqueueTsGroups, TeamSpeakJobs } from '../src/teamspeak-jobs';
 import type { TsResult } from '../src/teamspeak-shape';
-import { batchOf, fakeDurableObjects, fakeQueue } from './fake-cloudflare';
+import { batchOf, fakeDurableObjects, fakeKv, fakeQueue } from './fake-cloudflare';
 
 const TS_SECRET = 'made-up-teamspeak-bot-secret';
 const URL = 'https://indy-larry.example.workers.dev';
@@ -16,6 +16,7 @@ function makeEnv() {
   return {
     TEAMSPEAK_BOT_SECRET: TS_SECRET,
     BOT_EVENTS_SECRET: 'made-up-bot-events-secret',
+    KV: fakeKv(),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
@@ -223,8 +224,8 @@ describe('the teamspeak-results consumer', () => {
       { type: 'failed', jobId: 'job-2', error: 'unknown uid' },
       { type: 'failed', jobId: 'job-3' },
       { type: 'heartbeat', at: '2026-11-22T12:05:00Z' },
-      { type: 'reconnected', at: '2026-11-22T12:06:00Z' },
     ];
+    // `reconnected` starts a full sync: teamspeak-connect.test.ts.
     // Through the route, then as Queues delivers what the route put on the queue.
     expect((await post('/teamspeak/results', results)).status).toBe(202);
     const { batch, messages } = batchOf('teamspeak-results', env.TEAMSPEAK_RESULTS.sent);
@@ -232,7 +233,6 @@ describe('the teamspeak-results consumer', () => {
     expect(log.mock.calls.map(([line]) => line)).toEqual([
       'TeamSpeak job job-1 applied',
       'teamspeak-bot heartbeat at 2026-11-22T12:05:00Z',
-      'teamspeak-bot reconnected to ServerQuery at 2026-11-22T12:06:00Z',
     ]);
     expect(warn.mock.calls.map(([line]) => line)).toEqual(['TeamSpeak job job-2 failed: unknown uid', 'TeamSpeak job job-3 failed']);
     expect(messages.every((message) => !message.retried)).toBe(true);

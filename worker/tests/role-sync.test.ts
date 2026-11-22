@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
+import type { DiscordMessage } from '../src/platforms/discord';
 import type { RoleSyncMessage } from '../src/role-sync';
 import type { VatusaLists } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
@@ -105,7 +106,7 @@ describe('a good run', () => {
     expect(vatusaCalls.sort()).toEqual(
       ['ZID', 'ZME', 'ZDC', 'ZAU', 'ZOB', 'ZTL', 'ZKC'].map((id) => `/facility/${id}/roster/both`).concat('/integration/staff', '/user/roles/ZHQ/ACE').sort(),
     );
-    expect(env.ROLE_SYNC_QUEUE.sent.map((job) => job.discordId)).toEqual([STUDENT, MENTOR, STRANGER, LARRY]);
+    expect(env.ROLE_SYNC_QUEUE.sent.map((job) => (job as DiscordMessage).discordId)).toEqual([STUDENT, MENTOR, STRANGER, LARRY]);
   });
 
   it("logs one line per member: their CID, or unresolved, and the mapped roles to add and remove", async () => {

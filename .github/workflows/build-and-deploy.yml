@@ -85,6 +85,14 @@ jobs:
           TEAMSPEAK_BOT_SECRET: ${{ secrets.ENV_TEAMSPEAK_BOT_SECRET }}
         run: printf '%s' "$TEAMSPEAK_BOT_SECRET" | npx wrangler secret put TEAMSPEAK_BOT_SECRET
 
+      # The seed script's secret, set for the cutover only (README, Role sync). Skipped while the repo secret is unset.
+      - name: Set TEAMSPEAK_SEED_SECRET
+        env:
+          TEAMSPEAK_SEED_SECRET: ${{ secrets.ENV_TEAMSPEAK_SEED_SECRET }}
+        run: |
+          if [ -z "$TEAMSPEAK_SEED_SECRET" ]; then echo "ENV_TEAMSPEAK_SEED_SECRET isn't set; skipping"; exit 0; fi
+          printf '%s' "$TEAMSPEAK_SEED_SECRET" | npx wrangler secret put TEAMSPEAK_SEED_SECRET
+
       - name: Set IDENTITY_CLIENT_SECRET
         env:
           IDENTITY_CLIENT_SECRET: ${{ secrets.ENV_IDENTITY_CLIENT_SECRET }}

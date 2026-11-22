@@ -2,6 +2,7 @@ import { hasBearer } from './auth';
 import { SNOWFLAKE } from './discord';
 import type { RoleSyncEnv, RoleSyncMessage } from './role-sync';
 import { ackJobs, postResults, pullJobs, type TeamSpeakEnv } from './teamspeak-routes';
+import { seedLinks, type TeamSpeakSeedEnv } from './teamspeak-seed';
 
 /**
  * The Worker's HTTP side, on its workers.dev address (wrangler.jsonc): the bots on the VPS, each with its
@@ -9,7 +10,8 @@ import { ackJobs, postResults, pullJobs, type TeamSpeakEnv } from './teamspeak-r
  * becomes a new type there, not a new route. teamspeak-bot has three routes of its own (teamspeak-routes.ts).
  */
 
-export type BotEventsEnv = Pick<RoleSyncEnv, 'ROLE_SYNC_QUEUE'> &
+export type BotEventsEnv = RoleSyncEnv &
+  TeamSpeakSeedEnv &
   TeamSpeakEnv & {
     /** larry's bot's shared secret, from the ENV_BOT_EVENTS_SECRET setting. Unset refuses every call. */
     BOT_EVENTS_SECRET?: string;
@@ -24,6 +26,8 @@ const ROUTES: Record<string, Route> = {
   '/teamspeak/jobs/pull': { secret: (env) => env.TEAMSPEAK_BOT_SECRET, handle: pullJobs },
   '/teamspeak/jobs/ack': { secret: (env) => env.TEAMSPEAK_BOT_SECRET, handle: ackJobs },
   '/teamspeak/results': { secret: (env) => env.TEAMSPEAK_BOT_SECRET, handle: postResults },
+  // The cutover's seed script, with a secret of its own, set for the cutover and removed after (teamspeak-seed.ts).
+  '/teamspeak/seed': { secret: (env) => env.TEAMSPEAK_SEED_SECRET, handle: seedLinks },
 };
 
 /** What larry's bot may send: a member joined the server, so sync them now. */

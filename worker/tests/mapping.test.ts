@@ -1,8 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import { rolesFor } from '../src/criteria';
-import { MAPPING } from '../src/mapping';
+import { checkMapping, MAPPING } from '../src/mapping';
 import { peopleFrom } from '../src/vatusa';
 import { lists, record, role } from './vatusa-records';
+
+describe("the mapping's TeamSpeak groups", () => {
+  it("gives each legacy bot's group to the entry of the same meaning", () => {
+    const groups = Object.fromEntries(MAPPING.filter((entry) => entry.teamspeakGroupId !== undefined).map((entry) => [entry.name, entry.teamspeakGroupId]));
+    // The legacy bot's roles table, matched to the server's group IDs (sgid).
+    expect(groups).toEqual({
+      'Student 1': 17,
+      'Student 2': 16,
+      'Student 3': 15,
+      'Controller 1': 14,
+      'Controller 3': 13,
+      'Instructor 1': 12,
+      'Instructor 3': 11,
+      Supervisor: 20,
+      Administrator: 21,
+      Mentor: 19,
+      'Senior Staff': 18,
+      'Events Team': 24,
+      'Facility Working Group': 25,
+      'Tech Team': 23,
+      'Air Traffic Controller': 10,
+      Member: 7,
+    });
+  });
+
+  it('refuses an entry naming an admin group when the mapping loads', () => {
+    for (const id of [1, 2, 6, 8, 27]) {
+      expect(() => checkMapping([{ name: 'Made up', teamspeakGroupId: id, criteria: [{ conditions: [{ type: 'all' }] }] }])).toThrow(`Mapping entry Made up: TeamSpeak group ${id} is an admin group`);
+    }
+    expect(checkMapping([{ name: 'Made up', teamspeakGroupId: 7, criteria: [] }])).toHaveLength(1);
+  });
+
+  it('has unique TeamSpeak group IDs', () => {
+    const ids = MAPPING.flatMap((entry) => (entry.teamspeakGroupId === undefined ? [] : [entry.teamspeakGroupId]));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
 
 /** The mapping names VATUSA's bot would give the person with this CID, worked out by hand from zid.yaml. */
 function namesFor(cid: number, from: ReturnType<typeof lists>): string[] {

@@ -23,6 +23,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "seed-ts-links": "node scripts/seed-ts-links.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build:lib": "tsc -p tsconfig.lib.json",

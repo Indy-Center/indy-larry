@@ -6,10 +6,12 @@ import { handleFetch, type BotEventsEnv } from './bot-events';
 import { postToGroup } from './group-rpc';
 import { getGroupStatus } from './groups';
 import { linkDiscord } from './platforms/discord';
+import { confirmTsLink } from './platforms/teamspeak-links';
 import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
 import { consumeTsResults } from './teamspeak-routes';
+import { checkQuiet } from './teamspeak-quiet';
 import type { TsResult } from './teamspeak-shape';
 
 // The TeamSpeak jobs store, a Durable Object (wrangler.jsonc's durable_objects), exported for the runtime.
@@ -125,6 +127,10 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId, accessToken));
   }
 
+  confirmTsLink(cid: number, token: string) {
+    return reported(this.env, this.ctx, 'confirmTsLink()', () => confirmTsLink(this.env, cid, token));
+  }
+
   unlink(cid: number, service: 'discord' | 'teamspeak') {
     return reported(this.env, this.ctx, 'unlink()', () => unlink(this.env, cid, service));
   }
@@ -151,7 +157,7 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
       return reported(this.env, this.ctx, 'Role sync queue consumer', () => consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env));
     }
     if (batch.queue === 'teamspeak-results') {
-      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTsResults(batch as MessageBatch<TsResult>));
+      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTsResults(batch as MessageBatch<TsResult>, this.env));
     }
     return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
   }
@@ -162,6 +168,10 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   }
 
   scheduled(_controller: ScheduledController) {
-    return reported(this.env, this.ctx, 'Role sync cron', () => startRoleSync(this.env));
+    return reported(this.env, this.ctx, 'Role sync cron', async () => {
+      // The quiet check first, so a failed VATUSA fetch doesn't skip it.
+      await checkQuiet(this.env);
+      await startRoleSync(this.env);
+    });
   }
 }

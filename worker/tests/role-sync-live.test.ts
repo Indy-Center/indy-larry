@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
+import type { DiscordMessage } from '../src/platforms/discord';
 import type { RoleSyncMessage } from '../src/role-sync';
 import type { VatusaRecord } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
@@ -387,7 +388,7 @@ describe('a Discord failure', () => {
     const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO), s3(1000002, SAM)), server);
     const { messages } = await cronAndConsume();
 
-    expect(messages.map((message) => [message.body.discordId, message.acked, message.retried])).toEqual([
+    expect(messages.map((message) => [(message.body as DiscordMessage).discordId, message.acked, message.retried])).toEqual([
       [JO, false, true],
       [SAM, true, false],
     ]);
