@@ -49,7 +49,7 @@ const SCOPE = 'users:read users:write';
 // Ask for a new token this long before the old one expires.
 const EXPIRY_MARGIN_MS = 60_000;
 
-/** Raised for a write identity refuses because the Discord ID is already someone's (409). */
+/** Raised for a link write identity refuses because the Discord ID or TeamSpeak UID is already someone's (409). */
 export class IdentityConflict extends Error {}
 
 const tokens = new WeakMap<Fetcher, { token: string; expiresAt: number }>();
@@ -122,10 +122,22 @@ export async function findByTeamspeakUid(env: IdentityEnv, uid: string): Promise
  * Link a Discord account to a CID, or (null) clear the link. Returns false when identity has no user
  * for the CID; throws IdentityConflict when the Discord ID is already someone else's.
  */
-export async function writeDiscordId(env: IdentityEnv, cid: number, discordId: string | null): Promise<boolean> {
-  const res = await call(env, 'PATCH', `/api/users/${cid}`, { discord_id: discordId });
+export function writeDiscordId(env: IdentityEnv, cid: number, discordId: string | null): Promise<boolean> {
+  return writeLink(env, cid, 'discord_id', discordId);
+}
+
+/**
+ * Link a TeamSpeak identity (unique ID) to a CID, or (null) clear the link. Returns false when identity has
+ * no user for the CID; throws IdentityConflict when the UID is already someone else's.
+ */
+export function writeTeamspeakUid(env: IdentityEnv, cid: number, uid: string | null): Promise<boolean> {
+  return writeLink(env, cid, 'teamspeak_uid', uid);
+}
+
+async function writeLink(env: IdentityEnv, cid: number, field: 'discord_id' | 'teamspeak_uid', value: string | null): Promise<boolean> {
+  const res = await call(env, 'PATCH', `/api/users/${cid}`, { [field]: value });
   if (res.status === 404) return false;
-  if (res.status === 409) throw new IdentityConflict('discord_id already in use');
+  if (res.status === 409) throw new IdentityConflict(`${field} already in use`);
   if (!res.ok) throw new Error(`identity's PATCH /api/users/${cid} answered ${res.status}`);
   return true;
 }

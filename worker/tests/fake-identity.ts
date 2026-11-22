@@ -27,8 +27,8 @@ export const identityEnv = (users: FakeUser[] = []) => ({
  * A stand-in for the `IDENTITY` service binding, answering as identity's fetch handler does:
  * `/oauth/token` (client credentials, Basic auth), `GET /api/users?discord_id=|teamspeak_uid=` (exact), `GET /api/users/{cid}`
  * and `PATCH /api/users/{cid}`, all but the first behind the bearer token it issued. `writes` records the
- * PATCH bodies; a PATCH giving one user another's Discord ID answers 409, like identity's unique column.
- * `down` makes every call answer 503.
+ * PATCH bodies; a PATCH giving one user another's Discord ID or TeamSpeak UID answers 409, like identity's
+ * unique columns. `down` makes every call answer 503.
  */
 export function fakeIdentity(users: FakeUser[] = []) {
   const identity = {
@@ -37,6 +37,8 @@ export function fakeIdentity(users: FakeUser[] = []) {
     tokenRequests: [] as { authorization: string | null; body: string }[],
     apiCalls: [] as string[],
     down: false,
+    /** Run as a PATCH arrives, before it is checked: a test's stand-in for another write landing first. */
+    beforePatch: undefined as (() => void) | undefined,
     fetch: async (input: string, init: RequestInit = {}) => {
       const url = new URL(input);
       const headers = new Headers(init.headers);
@@ -64,10 +66,13 @@ export function fakeIdentity(users: FakeUser[] = []) {
       const user = identity.users.find((candidate) => candidate.sub === cid);
       if (!cid || !user) return json({ error: 'not_found' }, 404);
       if (init.method === 'PATCH') {
-        const body = JSON.parse(String(init.body)) as { discord_id: string | null };
+        identity.beforePatch?.();
+        const body = JSON.parse(String(init.body)) as { discord_id?: string | null; teamspeak_uid?: string | null };
         if (body.discord_id && identity.users.some((other) => other !== user && other.discord_id === body.discord_id)) return json({ error: 'conflict' }, 409);
+        if (body.teamspeak_uid && identity.users.some((other) => other !== user && other.teamspeak_uid === body.teamspeak_uid)) return json({ error: 'conflict' }, 409);
         identity.writes.push({ cid, body });
-        user.discord_id = body.discord_id;
+        if ('discord_id' in body) user.discord_id = body.discord_id ?? null;
+        if ('teamspeak_uid' in body) user.teamspeak_uid = body.teamspeak_uid ?? null;
       }
       return json(user);
     },
