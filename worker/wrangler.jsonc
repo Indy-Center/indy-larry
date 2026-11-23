@@ -58,7 +58,8 @@
       {
         "queue": "role-sync",
         "max_batch_size": 10,
-        "max_batch_timeout": 5,
+        // Short, so a linked member's sync starts within seconds; a run's batches fill to 10 at once anyway.
+        "max_batch_timeout": 2,
         "max_retries": 5,
         // One batch at a time, so the live sync to come stays inside Discord's rate limits.
         "max_concurrency": 1,
@@ -75,10 +76,10 @@
         "dead_letter_queue": "larry-messages-dlq"
       },
       {
-        // teamspeak-bot's results; the consumer logs each.
+        // teamspeak-bot's results; the consumer logs each. Short, so a link message goes out within seconds of a connect.
         "queue": "teamspeak-results",
         "max_batch_size": 10,
-        "max_batch_timeout": 5
+        "max_batch_timeout": 1
       }
     ]
   }

@@ -89,7 +89,7 @@ const tsJobs = async (): Promise<TeamSpeakJob[]> => {
 const texts = async () => (await tsJobs()).filter((job) => job.type === 'send-text');
 
 /** The token in a link message. */
-const tokenIn = (job: TeamSpeakJob) => (job.type === 'send-text' ? /\?ts=([A-Za-z0-9_-]+) /.exec(job.text)?.[1] : undefined);
+const tokenIn = (job: TeamSpeakJob) => (job.type === 'send-text' ? /\?ts=([A-Za-z0-9_-]+)$/.exec(job.text)?.[1] : undefined);
 
 /** Connect `uid` unlinked and return the token its message carries. */
 async function linkMessage(uid: string): Promise<string> {
@@ -130,7 +130,7 @@ describe('an unlinked identity connecting', () => {
     const token = tokenIn(job)!;
     // 32 random bytes, URL-safe base64.
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(job.type === 'send-text' && job.text).toBe(`Link this TeamSpeak identity to your Indy Center account: https://flyindycenter.com/profile?ts=${token} (works once, for 15 minutes)`);
+    expect(job.type === 'send-text' && job.text).toBe(`Link this TeamSpeak identity to your Indy Center account: https://flyindycenter.com/profile?ts=${token}`);
     expect(messages[0]!.acked).toBe(true);
     // The token is never logged.
     expect(logs.join('\n')).not.toContain(token);
