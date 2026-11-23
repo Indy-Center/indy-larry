@@ -281,14 +281,31 @@ export interface LarryRpc extends Rpc.WorkerEntrypointBranded {
    * Link a member's own Discord account, which the caller has already proven they hold, and queue
    * their role sync. Throws "That Discord account is linked to another member." when someone else has
    * it, and "Sign in to flyindycenter.com once before linking." when identity has no user for the CID.
+   *
+   * With `accessToken`, the member's one-time Discord access token from a sign-in that asked for
+   * `guilds.join`, larry also adds them to the Indy Center server if they aren't in it: `joined` is true
+   * when it did. The token is used for that one call and kept nowhere. If the join fails, the link and
+   * the sync still happen, and it throws "Your Discord account is linked, but we couldn't add you to the
+   * Indy Center Discord. Ask a staff member for an invite." Without a token, or while larry's join bot
+   * isn't set up, nobody is added and `joined` is false. The join happens in `dry-run` too.
    */
-  linkDiscord(cid: number, discordId: string): Promise<void>;
+  linkDiscord(cid: number, discordId: string, accessToken?: string): Promise<{ joined: boolean }>;
   /**
-   * Clear a member's link and queue their role sync, which falls back to the Discord ID VATUSA holds.
-   * `'teamspeak'` throws "TeamSpeak links aren't available yet." for now.
+   * Link the TeamSpeak identity named by a link larry's TeamSpeak bot sent (the `ts` in
+   * `https://flyindycenter.com/profile?ts=<token>`) to the signed-in member's CID, and queue their role
+   * sync. A link works once, for 15 minutes. If the member had linked a different identity, that one loses
+   * its synced groups. Throws, with a message to show the member:
+   * - "This link has expired or was already used. Reconnect to TeamSpeak and we'll send you a new one."
+   * - "That TeamSpeak identity is linked to another member."
+   * - "Sign in to flyindycenter.com once before linking." when identity has no user for the CID.
+   */
+  confirmTsLink(cid: number, token: string): Promise<void>;
+  /**
+   * Clear a member's link and queue their role sync. Discord falls back to the Discord ID VATUSA holds;
+   * a TeamSpeak identity loses its synced groups before its link is cleared.
    */
   unlink(cid: number, service: 'discord' | 'teamspeak'): Promise<void>;
-  /** Which Discord account the role sync uses for a member, and whether it is their link or VATUSA's. */
+  /** Which Discord account and TeamSpeak identity the role sync uses for a member, and whether the Discord one is their link or VATUSA's. */
   getLinks(cid: number): Promise<Links>;
   /**
    * Sync these members now, instead of waiting for the next run: for an app that has just changed
@@ -366,7 +383,7 @@ export type SyncMembersResult = ({ cid: number } & SyncMemberResult)[];
 export type Links = {
   /** The account the sync uses: `linked` when they linked it, `vatusa` when it is the one VATUSA holds. */
   discord: { id: string; source: 'linked' | 'vatusa' } | null;
-  /** Always null until TeamSpeak links arrive. */
+  /** The TeamSpeak identity (unique ID) linked to them in identity, or null. */
   teamspeak: { uid: string } | null;
 };
 

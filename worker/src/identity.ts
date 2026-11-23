@@ -1,12 +1,13 @@
 /**
- * Identity's users, the role sync's source for Discord links. The only file that talks to identity, so
+ * Identity's users, the role sync's source for Discord and TeamSpeak links. The only file that talks to identity, so
  * a later swap to a different lookup is a change here.
  *
  * Identity is a plain fetch handler (no RPC): its `/api/users` routes take a bearer token from the
  * client-credentials grant at `/oauth/token`. larry calls them through the `IDENTITY` service binding's
  * `fetch`, which reaches the same routes with no trip over the public internet. The client needs the
  * `users:read` and `users:write` scopes. There is no "list every user" route: a user is found by CID
- * (`GET /api/users/{cid}`) or by Discord ID (`GET /api/users?discord_id=`).
+ * (`GET /api/users/{cid}`), by Discord ID (`GET /api/users?discord_id=`) or by TeamSpeak UID
+ * (`GET /api/users?teamspeak_uid=`), each an exact match.
  */
 
 export type IdentityEnv = {
@@ -22,6 +23,10 @@ export type IdentityUser = {
   cid: number;
   /** The Discord account they linked, or null. */
   discordId: string | null;
+  /** The TeamSpeak identity (unique ID) linked to them, or null. */
+  teamspeakUid: string | null;
+  /** identity's `name` claim: the preferred name, else their VATSIM first and last name. */
+  name: string | null;
   preferredName: string | null;
   givenName: string | null;
   familyName: string | null;
@@ -31,6 +36,8 @@ export type IdentityUser = {
 type Claims = {
   sub: string;
   discord_id: string | null;
+  teamspeak_uid?: string | null;
+  name: string | null;
   preferred_name: string | null;
   given_name: string | null;
   family_name: string | null;
@@ -42,7 +49,7 @@ const SCOPE = 'users:read users:write';
 // Ask for a new token this long before the old one expires.
 const EXPIRY_MARGIN_MS = 60_000;
 
-/** Raised for a write identity refuses because the Discord ID is already someone's (409). */
+/** Raised for a link write identity refuses because the Discord ID or TeamSpeak UID is already someone's (409). */
 export class IdentityConflict extends Error {}
 
 const tokens = new WeakMap<Fetcher, { token: string; expiresAt: number }>();
@@ -80,6 +87,8 @@ async function call(env: IdentityEnv, method: string, path: string, body?: unkno
 const userFrom = (claims: Claims): IdentityUser => ({
   cid: Number(claims.sub),
   discordId: claims.discord_id || null,
+  teamspeakUid: claims.teamspeak_uid || null,
+  name: claims.name ?? null,
   preferredName: claims.preferred_name ?? null,
   givenName: claims.given_name ?? null,
   familyName: claims.family_name ?? null,
@@ -101,14 +110,34 @@ export async function findByDiscordId(env: IdentityEnv, discordId: string): Prom
   return found[0] ? userFrom(found[0]) : null;
 }
 
+/** The identity user whose link is this TeamSpeak identity (unique ID), or null. */
+export async function findByTeamspeakUid(env: IdentityEnv, uid: string): Promise<IdentityUser | null> {
+  const res = await call(env, 'GET', `/api/users?teamspeak_uid=${encodeURIComponent(uid)}`);
+  if (!res.ok) throw new Error(`identity's GET /api/users?teamspeak_uid answered ${res.status}`);
+  const found = (await res.json()) as Claims[];
+  return found[0] ? userFrom(found[0]) : null;
+}
+
 /**
  * Link a Discord account to a CID, or (null) clear the link. Returns false when identity has no user
  * for the CID; throws IdentityConflict when the Discord ID is already someone else's.
  */
-export async function writeDiscordId(env: IdentityEnv, cid: number, discordId: string | null): Promise<boolean> {
-  const res = await call(env, 'PATCH', `/api/users/${cid}`, { discord_id: discordId });
+export function writeDiscordId(env: IdentityEnv, cid: number, discordId: string | null): Promise<boolean> {
+  return writeLink(env, cid, 'discord_id', discordId);
+}
+
+/**
+ * Link a TeamSpeak identity (unique ID) to a CID, or (null) clear the link. Returns false when identity has
+ * no user for the CID; throws IdentityConflict when the UID is already someone else's.
+ */
+export function writeTeamspeakUid(env: IdentityEnv, cid: number, uid: string | null): Promise<boolean> {
+  return writeLink(env, cid, 'teamspeak_uid', uid);
+}
+
+async function writeLink(env: IdentityEnv, cid: number, field: 'discord_id' | 'teamspeak_uid', value: string | null): Promise<boolean> {
+  const res = await call(env, 'PATCH', `/api/users/${cid}`, { [field]: value });
   if (res.status === 404) return false;
-  if (res.status === 409) throw new IdentityConflict('discord_id already in use');
+  if (res.status === 409) throw new IdentityConflict(`${field} already in use`);
   if (!res.ok) throw new Error(`identity's PATCH /api/users/${cid} answered ${res.status}`);
   return true;
 }

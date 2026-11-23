@@ -1,5 +1,5 @@
 /** A user as identity's `/api/users` sends it (its `Claims`), with made-up names. */
-export type FakeUser = { sub: string; discord_id: string | null; preferred_name: string | null; given_name: string | null; family_name: string | null };
+export type FakeUser = { sub: string; discord_id: string | null; teamspeak_uid?: string | null; name: string | null; preferred_name: string | null; given_name: string | null; family_name: string | null };
 
 export const CLIENT_ID = 'larry';
 export const CLIENT_SECRET = 'larry-secret';
@@ -9,6 +9,8 @@ export const TOKEN_LIFETIME_SECONDS = 3600;
 export const idUser = (cid: number, discordId: string | null = null): FakeUser => ({
   sub: String(cid),
   discord_id: discordId,
+  // Null unless a test gives one, so a nickname falls back to VATUSA's name by default.
+  name: null,
   preferred_name: null,
   given_name: `Test${cid}`,
   family_name: 'Person',
@@ -23,10 +25,10 @@ export const identityEnv = (users: FakeUser[] = []) => ({
 
 /**
  * A stand-in for the `IDENTITY` service binding, answering as identity's fetch handler does:
- * `/oauth/token` (client credentials, Basic auth), `GET /api/users?discord_id=`, `GET /api/users/{cid}`
+ * `/oauth/token` (client credentials, Basic auth), `GET /api/users?discord_id=|teamspeak_uid=` (exact), `GET /api/users/{cid}`
  * and `PATCH /api/users/{cid}`, all but the first behind the bearer token it issued. `writes` records the
- * PATCH bodies; a PATCH giving one user another's Discord ID answers 409, like identity's unique column.
- * `down` makes every call answer 503.
+ * PATCH bodies; a PATCH giving one user another's Discord ID or TeamSpeak UID answers 409, like identity's
+ * unique columns. `down` makes every call answer 503.
  */
 export function fakeIdentity(users: FakeUser[] = []) {
   const identity = {
@@ -35,6 +37,8 @@ export function fakeIdentity(users: FakeUser[] = []) {
     tokenRequests: [] as { authorization: string | null; body: string }[],
     apiCalls: [] as string[],
     down: false,
+    /** Run as a PATCH arrives, before it is checked: a test's stand-in for another write landing first. */
+    beforePatch: undefined as (() => void) | undefined,
     fetch: async (input: string, init: RequestInit = {}) => {
       const url = new URL(input);
       const headers = new Headers(init.headers);
@@ -53,6 +57,8 @@ export function fakeIdentity(users: FakeUser[] = []) {
       identity.apiCalls.push(`${init.method ?? 'GET'} ${url.pathname}${url.search}`);
 
       if (url.pathname === '/api/users') {
+        const uid = url.searchParams.get('teamspeak_uid');
+        if (uid !== null) return json(identity.users.filter((user) => user.teamspeak_uid === uid));
         const discordId = url.searchParams.get('discord_id');
         return json(identity.users.filter((user) => user.discord_id === discordId));
       }
@@ -60,10 +66,13 @@ export function fakeIdentity(users: FakeUser[] = []) {
       const user = identity.users.find((candidate) => candidate.sub === cid);
       if (!cid || !user) return json({ error: 'not_found' }, 404);
       if (init.method === 'PATCH') {
-        const body = JSON.parse(String(init.body)) as { discord_id: string | null };
+        identity.beforePatch?.();
+        const body = JSON.parse(String(init.body)) as { discord_id?: string | null; teamspeak_uid?: string | null };
         if (body.discord_id && identity.users.some((other) => other !== user && other.discord_id === body.discord_id)) return json({ error: 'conflict' }, 409);
+        if (body.teamspeak_uid && identity.users.some((other) => other !== user && other.teamspeak_uid === body.teamspeak_uid)) return json({ error: 'conflict' }, 409);
         identity.writes.push({ cid, body });
-        user.discord_id = body.discord_id;
+        if ('discord_id' in body) user.discord_id = body.discord_id ?? null;
+        if ('teamspeak_uid' in body) user.teamspeak_uid = body.teamspeak_uid ?? null;
       }
       return json(user);
     },

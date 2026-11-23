@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
+import type { DiscordMessage } from '../src/platforms/discord';
 import type { RoleSyncMessage } from '../src/role-sync';
 import type { VatusaRecord } from '../src/vatusa';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
@@ -161,6 +162,40 @@ describe('roles', () => {
     const { messages } = await consume();
 
     expect(writes).toEqual([]);
+    expect(messages[0]!.acked).toBe(true);
+  });
+});
+
+describe('a run record written before platforms had their own parts', () => {
+  const joServer = () => serverWith([member(JO, 'Test Person1000001', ROLE.observer, ROLE.member, ROLE.atc, ROLE.handGiven)]);
+
+  /** Rewrite the newest run's record in KV in the older `{ people, server }` shape, with no `platforms`. */
+  function toOldShape() {
+    const runId = env.KV.store.get('role-sync:latest-run')!;
+    const { people, platforms } = JSON.parse(env.KV.store.get(`role-sync:run:${runId}`)!) as { people: unknown; platforms: { discord: unknown } };
+    env.KV.store.set(`role-sync:run:${runId}`, JSON.stringify({ people, server: platforms.discord }));
+  }
+
+  it("runs a run-member job against that run's people, reading the server now", async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), joServer());
+    await cron();
+    toOldShape();
+    const { lines, messages } = await consume();
+
+    expect(roleWrites(writes)).toEqual([`PUT /guilds/${GUILD}/members/${JO}/roles/${ROLE.student3}`, `DELETE /guilds/${GUILD}/members/${JO}/roles/${ROLE.observer}`]);
+    expect(lines).toContain(`Role sync (live): ${JO} CID 1000001: add Student 3; remove Observer`);
+    expect(messages.every((message) => message.acked)).toBe(true);
+  });
+
+  it("runs a sync-member job against the newest run's people", async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), joServer());
+    await cron();
+    env.ROLE_SYNC_QUEUE.sent.splice(0);
+    toOldShape();
+    const { lines, messages } = await consume([{ type: 'sync-member', discordId: JO }]);
+
+    expect(roleWrites(writes)).toEqual([`PUT /guilds/${GUILD}/members/${JO}/roles/${ROLE.student3}`, `DELETE /guilds/${GUILD}/members/${JO}/roles/${ROLE.observer}`]);
+    expect(lines).toContain(`Role sync (live): ${JO} CID 1000001: add Student 3; remove Observer`);
     expect(messages[0]!.acked).toBe(true);
   });
 });
@@ -387,7 +422,7 @@ describe('a Discord failure', () => {
     const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO), s3(1000002, SAM)), server);
     const { messages } = await cronAndConsume();
 
-    expect(messages.map((message) => [message.body.discordId, message.acked, message.retried])).toEqual([
+    expect(messages.map((message) => [(message.body as DiscordMessage).discordId, message.acked, message.retried])).toEqual([
       [JO, false, true],
       [SAM, true, false],
     ]);
@@ -405,18 +440,45 @@ describe('nicknames', () => {
     expect(messages.every((message) => message.acked)).toBe(true);
     return nicknameWrites(writes).find(([id]) => id === JO)?.[1];
   }
-  const preferring = (preferred_name: string, discordId: string | null = null): FakeUser => ({ ...idUser(1000001, discordId), preferred_name });
+  const named = (name: string, discordId: string | null = null): FakeUser => ({ ...idUser(1000001, discordId), name });
 
-  it("uses identity's preferred name as typed, with nothing added", async () => {
-    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [preferring('jo r. (she/her)', JO)])).toBe('jo r. (she/her)');
+  it("uses identity's name as it is, with nothing added", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('jo r. (she/her)', JO)])).toBe('jo r. (she/her)');
   });
 
-  it('reads the preferred name of a member found through VATUSA, not only of a linked one', async () => {
-    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [preferring('Jo')])).toBe('Jo');
+  it("uses a preferred name that looks like a name or a CID exactly", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('Jordan S.', JO)])).toBe('Jordan S.');
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('1000001', JO)])).toBe('1000001');
   });
 
-  it('cuts a preferred name to 32 characters', async () => {
-    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [preferring('Joanna Maria Rivera-Delacroix of Indianapolis', JO)])).toBe('Joanna Maria Rivera-Delacroix of');
+  it("reads identity's name for a member found through VATUSA, not only a linked one", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('Jo')])).toBe('Jo');
+  });
+
+  describe("with VATUSA's name-privacy flag on", () => {
+    const flagged = { fname: 'Joanna', lname: 'Rivera', flag_nameprivacy: true };
+
+    it('uses First CID when they have no preferred name in identity, not the VATSIM name identity falls back to', async () => {
+      expect(await nicknameOf(flagged, [named('Joanna Rivera', JO)])).toBe('Joanna 1000001');
+    });
+
+    it("uses identity's name when they have set a preferred name", async () => {
+      expect(await nicknameOf(flagged, [{ ...named('Jordan S.', JO), preferred_name: 'Jordan S.' }])).toBe('Jordan S.');
+    });
+
+    it('shortens a long First CID as before', async () => {
+      expect(await nicknameOf({ fname: 'Wolfeschlegelsteinhausenbergerdorff', lname: 'Smith', flag_nameprivacy: true }, [named('Wolfeschlegelsteinhausenbergerdorff Smith', JO)])).toBe(
+        'Wolfeschlegelsteinhausenbergerdo',
+      );
+    });
+  });
+
+  it("uses identity's name when the flag is off and they have no preferred name", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('Joanna Rivera', JO)])).toBe('Joanna Rivera');
+  });
+
+  it("shortens identity's name over 32 characters like a VATUSA name", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('Joanna Maria Rivera-Delacroix of Indianapolis', JO)])).toBe('Joanna Indianapolis');
   });
 
   it("uses VATUSA's First Last", async () => {
@@ -445,9 +507,12 @@ describe('nicknames', () => {
     });
   });
 
-  it("uses identity's given name and the CID for a linked member VATUSA doesn't know", async () => {
-    const linked = { ...idUser(1000001, JO), given_name: 'Joanna' };
-    expect(await nicknameOf(null, [linked], { vatsimRatings: { 1000001: 4 } })).toBe('Joanna 1000001');
+  it("uses identity's name for a linked member VATUSA doesn't know", async () => {
+    expect(await nicknameOf(null, [named('Joanna Rivera', JO)], { vatsimRatings: { 1000001: 4 } })).toBe('Joanna Rivera');
+  });
+
+  it("falls back to VATUSA's name when identity has no name for the member", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [idUser(1000001, JO)])).toBe('Joanna Rivera');
   });
 
   it('leaves the nickname of a member with no known CID', async () => {
@@ -455,8 +520,7 @@ describe('nicknames', () => {
   });
 
   it('leaves the nickname of a member rated below 1', async () => {
-    const linked = { ...idUser(1000001, JO), preferred_name: 'Jo' };
-    expect(await nicknameOf(null, [linked], { vatsimRatings: { 1000001: 0 } })).toBeUndefined();
+    expect(await nicknameOf(null, [named('Jo', JO)], { vatsimRatings: { 1000001: 0 } })).toBeUndefined();
   });
 
   it("skips the server's owner without an error", async () => {
@@ -468,15 +532,6 @@ describe('nicknames', () => {
     expect(roleWrites(writes)).toContain(`PUT /guilds/${GUILD}/members/${OWNER}/roles/${ROLE.student3}`);
     expect(lines[0]).toMatch(/nickname left alone \(the server's owner can't be renamed by a bot\)$/);
     expect(messages[0]!.acked).toBe(true);
-  });
-
-  it("keeps the CID whole when given name and CID are over 32 characters", async () => {
-    const given = (given_name: string) => [{ ...idUser(1000001, JO), given_name }];
-    const nick = await nicknameOf(null, given('A'.repeat(30)), { vatsimRatings: { 1000001: 4 } });
-    expect(nick).toBe(`${'A'.repeat(24)} 1000001`);
-    expect(nick).toHaveLength(32);
-    // The cut lands on a space: it is trimmed, not left before the CID.
-    expect(await nicknameOf(null, given(`${'A'.repeat(23)} Bee`), { vatsimRatings: { 1000001: 4 } })).toBe(`${'A'.repeat(23)} 1000001`);
   });
 
   describe('administrators', () => {
@@ -527,21 +582,21 @@ describe('nicknames', () => {
     // A job by CID needs identity only for the nickname: its link was settled when it was queued.
     const byCid: RoleSyncMessage = { type: 'sync-cid', cid: 1000001, discordId: JO };
 
-    it("uses the preferred name when identity answers", async () => {
-      start('live', [preferring('Jo', JO)]);
+    it("uses identity's name when identity answers", async () => {
+      start('live', [named('Jo', JO)]);
       const { writes } = fakeVatusaAndDiscord(listsWith(), serverWith([member(JO, null)]), [], { users: [s3(1000001, JO, { fname: 'Joanna', lname: 'Rivera' })] });
       await consume([byCid]);
       expect(nicknameWrites(writes)).toEqual([[JO, 'Jo']]);
     });
 
     it("falls back to VATUSA's name when identity can't be reached, logs it, and doesn't fail the job", async () => {
-      start('live', [preferring('Jo', JO)]);
+      start('live', [named('Jo', JO)]);
       env.IDENTITY.down = true;
       const { writes } = fakeVatusaAndDiscord(listsWith(), serverWith([member(JO, null)]), [], { users: [s3(1000001, JO, { fname: 'Joanna', lname: 'Rivera' })] });
       const { messages } = await consume([byCid]);
 
       expect(nicknameWrites(writes)).toEqual([[JO, 'Joanna Rivera']]);
-      expect(warnings.some((line) => line.startsWith(`Role sync: couldn't reach identity for ${JO}'s preferred name; using VATUSA's name`))).toBe(true);
+      expect(warnings.some((line) => line.startsWith(`Role sync: couldn't reach identity for ${JO}'s name; using VATUSA's name`))).toBe(true);
       expect(messages[0]!.acked).toBe(true);
     });
   });

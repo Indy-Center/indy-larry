@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetErrorMemory } from '../src/errors';
 import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { batchOf, fakeKv, fakeQueue } from './fake-cloudflare';
@@ -84,7 +85,7 @@ describe('linkDiscord', () => {
   it("writes the Discord ID to identity and queues that member's sync, which reads their roles", async () => {
     // No run's lists are kept, so VATUSA's per-user lookup by CID answers.
     fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [record({ cid: 1000001, rating_short: 'S3', discord_id: OLD })] });
-    await larry.linkDiscord(1000001, NEW);
+    expect(await larry.linkDiscord(1000001, NEW)).toEqual({ joined: false });
 
     expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: NEW } }]);
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: NEW }]);
@@ -130,6 +131,118 @@ describe('linkDiscord', () => {
   });
 });
 
+describe('linkDiscord with the member\'s access token adds them to the server', () => {
+  // JOINER isn't in the server; NEW already is.
+  const JOINER = '800000000000000012';
+  const ACCESS = 'members-one-time-access-token';
+  const JOIN_BOT = 'join-bot-token';
+  const ERRORS = '300000000000000002';
+  const couldNotJoin = "Your Discord account is linked, but we couldn't add you to the Indy Center Discord. Ask a staff member for an invite.";
+  let pending: Promise<unknown>[];
+
+  beforeEach(() => {
+    // The join is a Discord write, so it happens only in live.
+    Object.assign(env, { DISCORD_JOIN_BOT_TOKEN: JOIN_BOT, ERROR_CHANNEL_ID: ERRORS, ROLE_SYNC_MODE: 'live' });
+    // Each failure test expects its own error report, which the isolate would otherwise send once.
+    resetErrorMemory();
+    pending = [];
+    larry = new Larry({ waitUntil: (promise: Promise<unknown>) => void pending.push(promise) } as never, env as never);
+  });
+
+  const isJoin = (url: string, init?: RequestInit) => init?.method === 'PUT' && /\/guilds\/\d+\/members\/\d+$/.test(url);
+  const fetchCalls = () => vi.mocked(globalThis.fetch).mock.calls as unknown as [string, RequestInit | undefined][];
+  const joinCalls = () => fetchCalls().filter(([url, init]) => isJoin(url, init));
+
+  /** Everything larry logged, sent anywhere but the join call, or kept, as one string to search. */
+  async function everythingButTheJoin(): Promise<string> {
+    await Promise.all(pending);
+    const text = (value: unknown) => (value instanceof Error ? `${value.message} ${value.stack}` : typeof value === 'string' ? value : JSON.stringify(value));
+    const logged = [console.log, console.warn, console.error].flatMap((fn) => vi.mocked(fn).mock.calls.flat().map(text));
+    const sent = fetchCalls()
+      .filter(([url, init]) => !isJoin(url, init))
+      .map(([url, init]) => text([url, init?.headers, init?.body]));
+    return [...logged, ...sent, text([...env.KV.store]), text(env.ROLE_SYNC_QUEUE.sent), text(env.LARRY_QUEUE.sent), text(env.IDENTITY.writes)].join('\n');
+  }
+
+  it("joins a member who isn't in the server with the join bot's token and theirs, links them and queues their sync", async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.linkDiscord(1000001, JOINER, ACCESS)).toEqual({ joined: true });
+
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: JOINER } }]);
+    expect(joinCalls()).toHaveLength(1);
+    const [url, init] = joinCalls()[0]!;
+    expect(url).toBe(`https://discord.com/api/v10/guilds/${GUILD}/members/${JOINER}`);
+    expect((init!.headers as Record<string, string>).Authorization).toBe(`Bot ${JOIN_BOT}`);
+    expect(JSON.parse(init!.body as string)).toEqual({ access_token: ACCESS });
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
+    expect(await everythingButTheJoin()).not.toContain(ACCESS);
+  });
+
+  it('answers joined: false for a member already in the server (Discord answers 204)', async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.linkDiscord(1000001, NEW, ACCESS)).toEqual({ joined: false });
+    expect(joinCalls()).toHaveLength(1);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: NEW }]);
+  });
+
+  it.each([
+    ['refuses it (403)', { status: 403, message: 'Missing Permissions', code: 50013 }],
+    ['is down (503)', { status: 503, message: 'Service Unavailable' }],
+  ])('keeps the link and the sync when Discord %s, and says so without the token anywhere', async (_, joinRefused) => {
+    fakeVatusaAndDiscord(vatusaLists(), { ...server(), joinRefused });
+    const error = await larry.linkDiscord(1000001, JOINER, ACCESS).catch((thrown: Error) => thrown);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(couldNotJoin);
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: JOINER } }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
+    const kept = await everythingButTheJoin();
+    // Discord's answer is logged, and the failure reported to the error channel.
+    expect(kept).toContain(`Discord refused: ${joinRefused.status}`);
+    expect(kept).toContain('linkDiscord() failed');
+    expect(kept).not.toContain(ACCESS);
+  });
+
+  it('joins in dry-run too, and still links and queues the sync', async () => {
+    env.ROLE_SYNC_MODE = 'dry-run';
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.linkDiscord(1000001, JOINER, ACCESS)).toEqual({ joined: true });
+
+    expect(joinCalls()).toHaveLength(1);
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: JOINER } }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
+    expect(await everythingButTheJoin()).not.toContain(ACCESS);
+  });
+
+  it('makes no join call without a token', async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.linkDiscord(1000001, JOINER)).toEqual({ joined: false });
+    expect(joinCalls()).toEqual([]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
+  });
+
+  it('ignores the token, with a warning, while DISCORD_JOIN_BOT_TOKEN is unset, and still links', async () => {
+    delete (env as { DISCORD_JOIN_BOT_TOKEN?: string }).DISCORD_JOIN_BOT_TOKEN;
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    expect(await larry.linkDiscord(1000001, JOINER, ACCESS)).toEqual({ joined: false });
+
+    expect(joinCalls()).toEqual([]);
+    expect(env.IDENTITY.writes).toEqual([{ cid: '1000001', body: { discord_id: JOINER } }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JOINER }]);
+    expect(vi.mocked(console.warn).mock.calls.flat().join('\n')).toContain('DISCORD_JOIN_BOT_TOKEN');
+    expect(await everythingButTheJoin()).not.toContain(ACCESS);
+  });
+
+  it('refuses another member\'s account, or a CID that never signed in, before any join call', async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    await expect(larry.linkDiscord(1000001, OTHER_MEMBER_ACCOUNT, ACCESS)).rejects.toThrow('That Discord account is linked to another member.');
+    await expect(larry.linkDiscord(1999999, JOINER, ACCESS)).rejects.toThrow('Sign in to flyindycenter.com once before linking.');
+    expect(joinCalls()).toEqual([]);
+    expect(env.IDENTITY.writes).toEqual([]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
+  });
+});
+
 describe('unlink', () => {
   it("clears the link and queues the sync of the account VATUSA holds", async () => {
     env.IDENTITY.users[0]!.discord_id = NEW;
@@ -154,8 +267,8 @@ describe('unlink', () => {
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 
-  it("refuses 'teamspeak' until TeamSpeak links exist", async () => {
-    await expect(larry.unlink(1000001, 'teamspeak')).rejects.toThrow("TeamSpeak links aren't available yet.");
+  it('refuses a service that is no platform', async () => {
+    await expect(larry.unlink(1000001, 'mumble' as never)).rejects.toThrow(`"mumble" isn't a platform larry links`);
     expect(env.IDENTITY.writes).toEqual([]);
   });
 });

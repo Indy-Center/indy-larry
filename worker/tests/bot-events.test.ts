@@ -56,7 +56,7 @@ describe('POST /bot/events', () => {
 describe('every other request', () => {
   it('answers 404 to another path or method, secret or not', async () => {
     const body = { type: 'sync-member', discordId: JOINER };
-    for (const res of [await post('/', body), await post('/bot/events/', body), await post('/bot', body), await post('/teamspeak/jobs/pull', body), await post('/bot/events', body, `Bearer ${SECRET}`, 'GET'), await post('/bot/events', body, `Bearer ${SECRET}`, 'PUT'), await post('/anything', body, null)]) {
+    for (const res of [await post('/', body), await post('/bot/events/', body), await post('/bot', body), await post('/teamspeak/jobs', body), await post('/bot/events', body, `Bearer ${SECRET}`, 'GET'), await post('/bot/events', body, `Bearer ${SECRET}`, 'PUT'), await post('/anything', body, null)]) {
       expect(res.status).toBe(404);
     }
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);

@@ -79,10 +79,33 @@ jobs:
           BOT_EVENTS_SECRET: ${{ secrets.ENV_BOT_EVENTS_SECRET }}
         run: printf '%s' "$BOT_EVENTS_SECRET" | npx wrangler secret put BOT_EVENTS_SECRET
 
+      # The secret teamspeak-bot sends to its /teamspeak/ routes (README, Role sync); teamspeak-server's settings hold the same one.
+      - name: Set TEAMSPEAK_BOT_SECRET
+        env:
+          TEAMSPEAK_BOT_SECRET: ${{ secrets.ENV_TEAMSPEAK_BOT_SECRET }}
+        run: printf '%s' "$TEAMSPEAK_BOT_SECRET" | npx wrangler secret put TEAMSPEAK_BOT_SECRET
+
+      # The seed script's secret, set for the cutover only (README, Role sync). Skipped while the repo secret is unset.
+      - name: Set TEAMSPEAK_SEED_SECRET
+        env:
+          TEAMSPEAK_SEED_SECRET: ${{ secrets.ENV_TEAMSPEAK_SEED_SECRET }}
+        run: |
+          if [ -z "$TEAMSPEAK_SEED_SECRET" ]; then echo "ENV_TEAMSPEAK_SEED_SECRET isn't set; skipping"; exit 0; fi
+          printf '%s' "$TEAMSPEAK_SEED_SECRET" | npx wrangler secret put TEAMSPEAK_SEED_SECRET
+
       - name: Set IDENTITY_CLIENT_SECRET
         env:
           IDENTITY_CLIENT_SECRET: ${{ secrets.ENV_IDENTITY_CLIENT_SECRET }}
         run: printf '%s' "$IDENTITY_CLIENT_SECRET" | npx wrangler secret put IDENTITY_CLIENT_SECRET
+
+      # The "Indy Center" app's bot, which adds members who link Discord to the server (README, Role sync).
+      # Skipped until the repo secret exists; without it linking still works and adds nobody.
+      - name: Set DISCORD_JOIN_BOT_TOKEN
+        env:
+          DISCORD_JOIN_BOT_TOKEN: ${{ secrets.ENV_DISCORD_JOIN_BOT_TOKEN }}
+        run: |
+          if [ -z "$DISCORD_JOIN_BOT_TOKEN" ]; then echo "ENV_DISCORD_JOIN_BOT_TOKEN isn't set; skipping"; exit 0; fi
+          printf '%s' "$DISCORD_JOIN_BOT_TOKEN" | npx wrangler secret put DISCORD_JOIN_BOT_TOKEN
 
   # Publishes the callers' types (worker/src/client) to npm when worker/package.json names a version
   # npm doesn't have yet. Merging without a version bump publishes nothing.

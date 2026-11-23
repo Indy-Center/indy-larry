@@ -2,12 +2,20 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, GroupPost, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { describeError, ErrorReport } from './errors';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
-import { handleFetch, type BotEventsEnv } from './bot-events';
 import { postToGroup } from './group-rpc';
 import { getGroupStatus } from './groups';
-import { consumeRoleSync, getLinks, linkDiscord, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
+import { linkDiscord } from './platforms/discord';
+import { confirmTsLink } from './platforms/teamspeak-links';
+import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
+import { handleFetch, type RoutesEnv } from './routes';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
+import { consumeTeamSpeakResults } from './teamspeak-routes';
+import { checkQuiet } from './teamspeak-quiet';
+import type { TeamSpeakResult } from './teamspeak-shape';
+
+// The TeamSpeak jobs store, a Durable Object (wrangler.jsonc's durable_objects), exported for the runtime.
+export { TeamSpeakJobs } from './teamspeak-jobs';
 
 /**
  * Run one call, report what it throws (a refused request included: the caller may not check) to ERROR_CHANNEL_ID,
@@ -28,11 +36,11 @@ async function reported<T>(env: SendEnv, ctx: ExecutionContext, method: string, 
   }
 }
 
-type Env = SendEnv & RoleSyncEnv & BotEventsEnv;
+type Env = SendEnv & RoleSyncEnv & RoutesEnv;
 
 /**
  * Larry's Worker. Other Workers reach these methods over a service binding. The fetch handler is
- * only for the bots on the VPS (bot-events.ts). The cron runs the role sync (role-sync.ts).
+ * only for the bots on the VPS and the cutover's seed script (routes.ts). The cron runs the role sync (role-sync.ts).
  */
 export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   send(request: ChannelSend) {
@@ -115,8 +123,12 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     });
   }
 
-  linkDiscord(cid: number, discordId: string) {
-    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId));
+  linkDiscord(cid: number, discordId: string, accessToken?: string) {
+    return reported(this.env, this.ctx, 'linkDiscord()', () => linkDiscord(this.env, cid, discordId, accessToken));
+  }
+
+  confirmTsLink(cid: number, token: string) {
+    return reported(this.env, this.ctx, 'confirmTsLink()', () => confirmTsLink(this.env, cid, token));
   }
 
   unlink(cid: number, service: 'discord' | 'teamspeak') {
@@ -139,20 +151,27 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     return reported(this.env, this.ctx, 'getGroupStatus()', () => getGroupStatus(this.env, source));
   }
 
-  /** Both queues come here: `role-sync` to the role sync, `larry-messages` to the sender. */
-  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage>) {
+  /** Every queue comes here: `role-sync` to the role sync, `teamspeak-results` to its consumer, `larry-messages` to the sender. */
+  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage> | MessageBatch<TeamSpeakResult>) {
     if (batch.queue === 'role-sync') {
       return reported(this.env, this.ctx, 'Role sync queue consumer', () => consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env));
+    }
+    if (batch.queue === 'teamspeak-results') {
+      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTeamSpeakResults(batch as MessageBatch<TeamSpeakResult>, this.env));
     }
     return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
   }
 
-  /** The bots' routes: `POST /bot/events` from larry's bot. */
+  /** The HTTP routes: `POST /bot/events` from larry's bot, teamspeak-bot's `/teamspeak/...` and the seed (routes.ts). */
   fetch(request: Request) {
-    return reported(this.env, this.ctx, 'Bot events route', () => handleFetch(request, this.env));
+    return reported(this.env, this.ctx, "Bots' routes", () => handleFetch(request, this.env));
   }
 
   scheduled(_controller: ScheduledController) {
-    return reported(this.env, this.ctx, 'Role sync cron', () => startRoleSync(this.env));
+    return reported(this.env, this.ctx, 'Role sync cron', async () => {
+      // The quiet check first, so a failed VATUSA fetch doesn't skip it.
+      await checkQuiet(this.env);
+      await startRoleSync(this.env);
+    });
   }
 }

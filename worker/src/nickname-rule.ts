@@ -2,28 +2,30 @@ import { MAX_NICKNAME_LENGTH } from './nicknames';
 import type { VatusaName } from './vatusa';
 
 /**
- * The one rule for a member's Discord nickname, until member-profile moves nicknames to identity's
- * `name`. Null leaves their nickname as it is.
+ * The one rule for a member's Discord nickname. Null leaves their nickname as it is.
  *
- * 1. Their identity `preferred_name`, as typed, cut to 32 characters.
- * 2. Else VATUSA's "First Last", or "First CID" when VATUSA's name-privacy flag is on, shortened as
- *    VATUSA's bot does.
- * 3. Else (VATUSA doesn't know them) identity's `given_name` and their CID. Over 32 characters, the
- *    CID stays whole and the given name is cut to fit (trailing spaces trimmed).
+ * 1. Nobody rated below 1 gets one.
+ * 2. Else, when identity knows them and they have set a preferred name, identity's `name` (that
+ *    preferred name), shortened as VATUSA's bot does.
+ * 3. Else, when VATUSA's name-privacy flag is on, VATUSA's "First CID", shortened the same way, so
+ *    identity's fallback to their VATSIM first and last name never shows a private member's surname.
+ * 4. Else identity's `name` (their VATSIM first and last name) whenever identity knows them, shortened
+ *    the same way.
+ * 5. Else VATUSA's "First Last", shortened the same way.
+ * 6. Else null.
  *
- * Nobody rated below 1 gets one. `identity` is null when identity has no user for them or couldn't be
- * reached.
+ * `identity` is null when identity has no user for them or couldn't be reached.
  */
 export function nicknameFor(
   person: { cid: number; rating: number; name: VatusaName | null },
-  identity: { preferredName: string | null; givenName: string | null } | null,
+  identity: { name: string | null; preferredName: string | null } | null,
 ): string | null {
   if (person.rating < 1) return null;
-  const preferred = identity?.preferredName;
-  if (preferred?.trim()) return cut(preferred);
-  if (person.name) return shorten(person.name.privacy ? `${person.name.first} ${person.cid}` : `${person.name.first} ${person.name.last}`);
-  const given = identity?.givenName?.trim();
-  if (given) return `${cut(given, MAX_NICKNAME_LENGTH - 1 - String(person.cid).length).trimEnd()} ${person.cid}`;
+  const name = identity?.name?.trim();
+  if (name && identity?.preferredName?.trim()) return shorten(name);
+  if (person.name?.privacy) return shorten(`${person.name.first} ${person.cid}`);
+  if (name) return shorten(name);
+  if (person.name) return shorten(`${person.name.first} ${person.name.last}`);
   return null;
 }
 

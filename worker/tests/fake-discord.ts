@@ -19,6 +19,8 @@ export type Server = {
   forbidden?: string[];
   /** Mapped role IDs the server doesn't have. The guild read (`GET /guilds/<id>`) lists every other mapped role. */
   missingMapped?: string[];
+  /** Discord's answer to adding a member (`PUT /guilds/<id>/members/<user>`) instead of 201, or 204 for someone already in it. */
+  joinRefused?: { status: number; message: string; code?: number };
 };
 
 /** The guild's roles as a run reads them: the server's own, plus each mapped role the test hasn't placed or removed, below every other role (position -1) so Larry outranks it even with no roles of its own. */
@@ -79,6 +81,17 @@ export function fakeDiscord(server: Server): Write[] {
         return json(created);
       }
       if ((server.forbidden ?? []).some((id) => path.includes(id))) return json({ message: 'Missing Permissions', code: 50013 }, 403);
+      // Adding a member with their access token: 201 and the new member, or 204 for someone already in the server.
+      const joining = method === 'PUT' ? path.match(new RegExp(`^/guilds/${GUILD}/members/(\\d+)$`))?.[1] : undefined;
+      if (joining) {
+        const refused = server.joinRefused;
+        if (refused) return json({ message: refused.message, code: refused.code }, refused.status);
+        const members = (server.members ??= []);
+        if (members.some((candidate) => candidate.user.id === joining)) return new Response(null, { status: 204 });
+        const joined = { user: { id: joining }, roles: [] };
+        members.push(joined);
+        return json(joined, 201);
+      }
       const roleId = path.match(new RegExp(`^/guilds/${GUILD}/roles/(\\d+)$`))?.[1];
       const channelId = path.match(/^\/channels\/(\d+)$/)?.[1];
       const role = roleId ? server.roles?.find((candidate) => candidate.id === roleId) : undefined;
