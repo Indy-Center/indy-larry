@@ -160,6 +160,24 @@ export async function removeManagedGroups(env: TeamSpeakJobsEnv, mode: Mode, uid
 }
 
 /**
+ * Take the managed groups a TeamSpeak identity no member holds is in, when it connects: the ones the
+ * latest `accounts` result names for it, or every managed group when no result is kept. Nothing when it
+ * holds none. One `set-groups` job in `live`, logged in `dry-run`.
+ */
+export async function removeHeldManagedGroups(env: TeamSpeakJobsEnv & Pick<RoleSyncEnv, 'KV'>, mode: Mode, uid: string): Promise<void> {
+  const kept = await env.KV.get<KeptAccounts>(ACCOUNTS_KEY, 'json');
+  const managed = managedGroups();
+  const held = kept ? (kept.groups[uid] ?? []).filter((group) => managed.includes(group)) : managed;
+  if (held.length === 0) return;
+  if (mode !== 'live') {
+    console.log(`Link TeamSpeak (dry run): would remove groups ${held.join(', ')} from unlinked TeamSpeak ${uid}`);
+    return;
+  }
+  await enqueueTeamSpeakGroups(env, uid, [], held);
+  console.log(`Link TeamSpeak (live): removing groups ${held.join(', ')} from unlinked TeamSpeak ${uid}`);
+}
+
+/**
  * The identity's groups by the latest `accounts` result: a UID it doesn't name (just linked, never
  * connected) holds no managed group. Null (logged) when no result is kept, so TeamSpeak waits.
  */

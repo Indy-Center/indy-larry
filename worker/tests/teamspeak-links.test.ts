@@ -48,9 +48,14 @@ let env: ReturnType<typeof makeEnv>;
 let larry: Larry;
 let logs: string[];
 
+/** The bot's latest `accounts` result, as the role sync keeps it: each UID's server groups. */
+const keepAccounts = (groups: Record<string, number[]>) => env.KV.store.set('role-sync:teamspeak:accounts', JSON.stringify({ runId: 'r', groups }));
+
+/** Starts larry with a kept `accounts` result in which no one holds a group, unless a test changes it. */
 function start(mode: string, users: FakeUser[]) {
   env = makeEnv(mode, users);
   larry = new Larry({} as ExecutionContext, env as never);
+  keepAccounts({});
 }
 
 beforeEach(() => {
@@ -131,13 +136,24 @@ describe('an unlinked identity connecting', () => {
     expect(logs.join('\n')).not.toContain(token);
   });
 
-  it('is sent nothing on a reconnect while that link is unused and under 15 minutes old', async () => {
-    start('live', []);
-    await linkMessage(JO_UID);
+  it('is sent the same link again on every reconnect while it is unused and under 15 minutes old, and it still works', async () => {
+    start('live', [idUser(1000001)]);
+    const first = await linkMessage(JO_UID);
+    await connect(JO_UID);
     later(14);
     await connect(JO_UID);
 
-    expect(await texts()).toEqual([]);
+    expect((await texts()).map(tokenIn)).toEqual([first, first]);
+    expect(logs).toContain(`Link TeamSpeak (live): sent TeamSpeak ${JO_UID} its unused link again`);
+    await larry.confirmTsLink(1000001, first);
+  });
+
+  it('is sent a fresh link when the kept value predates tokens (a sent-at time)', async () => {
+    start('live', []);
+    env.KV.store.set(`teamspeak-link:sent:${JO_UID}`, '2026-11-22T11:55:00.000Z');
+    const token = await linkMessage(JO_UID);
+
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
   it('is sent a fresh link on a reconnect after the last one expired, and the old one no longer works', async () => {
@@ -183,6 +199,44 @@ describe('an unlinked identity connecting', () => {
 
     expect(await tsJobs()).toEqual([]);
     expect(logs).toContain(`Link TeamSpeak (dry run): would send TeamSpeak ${JO_UID} a link`);
+  });
+
+  it('loses the managed groups the latest accounts result says it holds, before its link, and keeps others', async () => {
+    start('live', []);
+    keepAccounts({ [JO_UID]: [16, 7, 6], [JO_OLD_UID]: [17] });
+    await connect(JO_UID);
+
+    const jobs = (await tsJobs()).map(({ jobId: _, ...job }) => job);
+    // 6 isn't in the mapping (an admin group, say), so it stays.
+    expect(jobs[0]).toEqual({ type: 'set-groups', uid: JO_UID, add: [], remove: [16, 7] });
+    expect(jobs[1]!.type).toBe('send-text');
+    expect(jobs).toHaveLength(2);
+  });
+
+  it('loses no group when the latest accounts result says it holds none', async () => {
+    start('live', []);
+    keepAccounts({ [JO_UID]: [6] });
+    await connect(JO_UID);
+
+    expect((await tsJobs()).map((job) => job.type)).toEqual(['send-text']);
+  });
+
+  it('loses every managed group when no accounts result is kept', async () => {
+    start('live', []);
+    env.KV.store.delete('role-sync:teamspeak:accounts');
+    await connect(JO_UID);
+
+    const [groups] = await tsJobs();
+    expect(groups).toEqual({ jobId: expect.any(String), type: 'set-groups', uid: JO_UID, add: [], remove: MANAGED });
+  });
+
+  it('only logs the groups it would lose in dry-run', async () => {
+    start('dry-run', []);
+    keepAccounts({ [JO_UID]: [16, 7] });
+    await connect(JO_UID);
+
+    expect(await tsJobs()).toEqual([]);
+    expect(logs).toContain(`Link TeamSpeak (dry run): would remove groups 16, 7 from unlinked TeamSpeak ${JO_UID}`);
   });
 
   it('is retried, sending nothing, when identity is down', async () => {
