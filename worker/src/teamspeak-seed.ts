@@ -2,7 +2,7 @@ import { SNOWFLAKE } from './discord';
 import { readJson } from './http';
 import { findByDiscordId, getUser } from './identity';
 import { checkMode } from './platforms/platform';
-import { heldByAnother, writeTsLink } from './platforms/teamspeak-links';
+import { heldByAnother, writeTeamSpeakLink } from './platforms/teamspeak-links';
 import type { RoleSyncEnv } from './role-sync';
 import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
 
@@ -83,7 +83,7 @@ export async function seedLinks(request: Request, env: TeamSpeakSeedEnv): Promis
         done('written', cid);
         continue;
       }
-      const written = await writeTsLink(env, mode, cid, user, uid);
+      const written = await writeTeamSpeakLink(env, mode, cid, user, uid);
       if (written === 'written') {
         claimedCids.add(cid);
         claimedUids.add(uid);

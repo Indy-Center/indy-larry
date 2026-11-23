@@ -5,7 +5,7 @@
  */
 
 /** A TeamSpeak job: one change teamspeak-bot applies over ServerQuery, or one report it makes. */
-export type TsJob =
+export type TeamSpeakJob =
   | {
       jobId: string;
       /** Give `uid` the server groups in `add` and take those in `remove`; any other group is left alone. */
@@ -34,7 +34,7 @@ export type TsJob =
     };
 
 /** A job as it is queued, before larry gives it its ID. */
-export type TsJobRequest = WithoutId<TsJob>;
+export type TeamSpeakJobRequest = WithoutId<TeamSpeakJob>;
 type WithoutId<J> = J extends unknown ? Omit<J, 'jobId'> : never;
 
 /**
@@ -46,7 +46,7 @@ type WithoutId<J> = J extends unknown ? Omit<J, 'jobId'> : never;
  * now, query clients excluded. `client-connected` is sent for each client that enters the server (query
  * clients excluded): its UID, its client ID for this connection (`clid`) and its nickname.
  */
-export type TsResult =
+export type TeamSpeakResult =
   | { type: 'applied'; jobId: string }
   | { type: 'failed'; jobId: string; error?: string }
   | { type: 'heartbeat'; at: string }

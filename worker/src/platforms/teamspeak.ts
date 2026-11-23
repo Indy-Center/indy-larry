@@ -3,8 +3,8 @@ import { lookupVatsimRating, lookupVatusa, vatsimOnlyPerson } from '../lookups';
 import { MAPPING } from '../mapping';
 import { sendInBatches } from '../queues';
 import type { RoleSyncEnv, RunLists } from '../role-sync';
-import { enqueueTsGroups, jobsStore, type TeamSpeakJobsEnv } from '../teamspeak-jobs';
-import type { TsResult } from '../teamspeak-shape';
+import { enqueueTeamSpeakGroups, jobsStore, type TeamSpeakJobsEnv } from '../teamspeak-jobs';
+import type { TeamSpeakResult } from '../teamspeak-shape';
 import type { VatusaPerson } from '../vatusa';
 import { checkMode, type Change, type Mode, type Platform } from './platform';
 
@@ -137,7 +137,7 @@ async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakAccount,
     return;
   }
   if (mode === 'live' && (add.length > 0 || remove.length > 0)) {
-    await enqueueTsGroups(env, account.uid, add.map((entry) => entry.teamspeakGroupId!), remove.map((entry) => entry.teamspeakGroupId!));
+    await enqueueTeamSpeakGroups(env, account.uid, add.map((entry) => entry.teamspeakGroupId!), remove.map((entry) => entry.teamspeakGroupId!));
   }
   const who = resolution.kind === 'person' ? `CID ${resolution.person.cid}: add ${names(add)};` : 'unresolved:';
   console.log(`Role sync (${label}): TeamSpeak ${account.uid} ${who} remove ${names(remove)}`);
@@ -152,7 +152,7 @@ export async function removeManagedGroups(env: TeamSpeakJobsEnv, mode: Mode, uid
     console.log(`Link TeamSpeak (dry run): would remove every managed group from TeamSpeak ${uid}`);
     return;
   }
-  await enqueueTsGroups(env, uid, [], managedGroups());
+  await enqueueTeamSpeakGroups(env, uid, [], managedGroups());
   console.log(`Link TeamSpeak (live): removing every managed group from TeamSpeak ${uid}`);
 }
 
@@ -182,7 +182,7 @@ async function personFor(env: Pick<RoleSyncEnv, 'KV'>, run: RunLists, cid: numbe
  * identity's groups for the run, and queue one job per UID it names. An answer no run is waiting for (a
  * second answer, or one after its run was skipped) is logged and dropped.
  */
-export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_QUEUE'>, result: Extract<TsResult, { type: 'accounts' }>): Promise<void> {
+export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_QUEUE'>, result: Extract<TeamSpeakResult, { type: 'accounts' }>): Promise<void> {
   const runId = await env.KV.get(ASKED_KEY);
   if (!runId) {
     console.warn('Role sync: teamspeak-bot sent its accounts, but no run is waiting for them; ignored');

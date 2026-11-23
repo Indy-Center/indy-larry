@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { TeamSpeakJobs } from '../src/teamspeak-jobs';
-import type { TsJob, TsResult } from '../src/teamspeak-shape';
+import type { TeamSpeakJob, TeamSpeakResult } from '../src/teamspeak-shape';
 import type { VatusaRecord } from '../src/vatusa';
 import { batchOf, fakeDurableObjects, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, type Server, type Write } from './fake-discord';
@@ -41,7 +41,7 @@ function makeEnv(mode: string, users: FakeUser[]) {
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
     TEAMSPEAK_BOT_SECRET: 'made-up-teamspeak-bot-secret',
-    TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
+    TEAMSPEAK_RESULTS: fakeQueue<TeamSpeakResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
   };
 }
@@ -89,7 +89,7 @@ const cron = () => larry.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.n
 
 /** What teamspeak-bot answers `report-accounts` with, through the results consumer. */
 async function report(holders: { uid: string; groups: number[] }[], connected: string[] = []) {
-  const { batch, messages } = batchOf<TsResult>('teamspeak-results', [{ type: 'accounts', holders, connected }]);
+  const { batch, messages } = batchOf<TeamSpeakResult>('teamspeak-results', [{ type: 'accounts', holders, connected }]);
   await larry.queue(batch as never);
   return messages;
 }
@@ -102,7 +102,7 @@ async function consume(bodies: RoleSyncMessage[] = env.ROLE_SYNC_QUEUE.sent.spli
 }
 
 /** Every job waiting in the TeamSpeak jobs store, oldest first. */
-const tsJobs = async (): Promise<TsJob[]> => {
+const tsJobs = async (): Promise<TeamSpeakJob[]> => {
   const store = env.TEAMSPEAK_JOBS.get(env.TEAMSPEAK_JOBS.idFromName('teamspeak-jobs'));
   return store.pull(10);
 };

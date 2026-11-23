@@ -5,7 +5,7 @@ import { receiveConnect } from './platforms/teamspeak-links';
 import { startRoleSync, type RoleSyncEnv } from './role-sync';
 import { jobsStore, MAX_PULL, type TeamSpeakJobsEnv } from './teamspeak-jobs';
 import { noteResult } from './teamspeak-quiet';
-import type { TsResult } from './teamspeak-shape';
+import type { TeamSpeakResult } from './teamspeak-shape';
 
 /**
  * teamspeak-bot's three routes, behind TEAMSPEAK_BOT_SECRET (bot-events.ts checks it). The bot pulls
@@ -17,7 +17,7 @@ import type { TsResult } from './teamspeak-shape';
 export type TeamSpeakEnv = TeamSpeakJobsEnv & {
   /** teamspeak-bot's shared secret, from the ENV_TEAMSPEAK_BOT_SECRET setting. Unset refuses every call. */
   TEAMSPEAK_BOT_SECRET?: string;
-  TEAMSPEAK_RESULTS: Queue<TsResult>;
+  TEAMSPEAK_RESULTS: Queue<TeamSpeakResult>;
 };
 
 /** `POST /teamspeak/jobs/pull`: `{ max }` (a whole number from 1; more than 10 gives 10) → `200 { jobs }`. */
@@ -53,7 +53,7 @@ export async function postResults(request: Request, env: TeamSpeakEnv): Promise<
  * and `reconnected` to a full sync, as the cron runs. Every result keeps its time for the quiet alert
  * (teamspeak-quiet.ts). A result that throws there is retried on its own.
  */
-export async function consumeTsResults(batch: MessageBatch<TsResult>, env: RoleSyncEnv): Promise<void> {
+export async function consumeTeamSpeakResults(batch: MessageBatch<TeamSpeakResult>, env: RoleSyncEnv): Promise<void> {
   await consumeEach(batch, 'TeamSpeak result', async (body) => {
     // Any result shows the bot is up: keep its time, and clear a standing quiet alert.
     await noteResult(env);
@@ -66,7 +66,7 @@ export async function consumeTsResults(batch: MessageBatch<TsResult>, env: RoleS
   });
 }
 
-function describeResult(result: TsResult): string {
+function describeResult(result: TeamSpeakResult): string {
   switch (result.type) {
     case 'applied':
       return `TeamSpeak job ${result.jobId} applied`;
@@ -85,7 +85,7 @@ function describeResult(result: TsResult): string {
   }
 }
 
-function isResult(value: unknown): value is TsResult {
+function isResult(value: unknown): value is TeamSpeakResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const { type, jobId, error, at, holders, connected, uid, clientId, nickname } = value as Record<string, unknown>;
   const isUid = (uid: unknown) => typeof uid === 'string' && uid !== '';

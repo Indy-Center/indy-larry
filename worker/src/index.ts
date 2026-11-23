@@ -10,9 +10,9 @@ import { confirmTsLink } from './platforms/teamspeak-links';
 import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
-import { consumeTsResults } from './teamspeak-routes';
+import { consumeTeamSpeakResults } from './teamspeak-routes';
 import { checkQuiet } from './teamspeak-quiet';
-import type { TsResult } from './teamspeak-shape';
+import type { TeamSpeakResult } from './teamspeak-shape';
 
 // The TeamSpeak jobs store, a Durable Object (wrangler.jsonc's durable_objects), exported for the runtime.
 export { TeamSpeakJobs } from './teamspeak-jobs';
@@ -152,12 +152,12 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   }
 
   /** Every queue comes here: `role-sync` to the role sync, `teamspeak-results` to its consumer, `larry-messages` to the sender. */
-  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage> | MessageBatch<TsResult>) {
+  queue(batch: MessageBatch<QueueJob> | MessageBatch<RoleSyncMessage> | MessageBatch<TeamSpeakResult>) {
     if (batch.queue === 'role-sync') {
       return reported(this.env, this.ctx, 'Role sync queue consumer', () => consumeRoleSync(batch as MessageBatch<RoleSyncMessage>, this.env));
     }
     if (batch.queue === 'teamspeak-results') {
-      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTsResults(batch as MessageBatch<TsResult>, this.env));
+      return reported(this.env, this.ctx, 'TeamSpeak results consumer', () => consumeTeamSpeakResults(batch as MessageBatch<TeamSpeakResult>, this.env));
     }
     return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
   }

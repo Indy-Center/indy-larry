@@ -12,7 +12,7 @@ import { identityEnv, idUser, type FakeUser } from './fake-identity';
 import { fakeSource } from './fake-source';
 import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { TeamSpeakJobs } from '../src/teamspeak-jobs';
-import type { TsResult } from '../src/teamspeak-shape';
+import type { TeamSpeakResult } from '../src/teamspeak-shape';
 import { lists, record } from './vatusa-records';
 
 /**
@@ -45,7 +45,7 @@ function makeEnv(users: FakeUser[]) {
     BOT_EVENTS_SECRET: 'made-up-bot-events-secret',
     TEAMSPEAK_BOT_SECRET: 'made-up-teamspeak-bot-secret',
     TEAMSPEAK_SEED_SECRET: SEED_SECRET,
-    TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
+    TEAMSPEAK_RESULTS: fakeQueue<TeamSpeakResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
   };
 }
