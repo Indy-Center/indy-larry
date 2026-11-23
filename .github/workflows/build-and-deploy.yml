@@ -296,6 +296,21 @@ jobs:
           set -e
           cd ~/apps/"$APP"
           docker compose pull --quiet
+          # A bot started with no state files posts its status messages and panels afresh and deletes the old
+          # ones, which a later restore can't undo. So on a server with an empty bot-state volume (a new server,
+          # or a move) the deploy only creates the container; `backups restore indy-larry <backup>` then starts
+          # it (README, Moving to another server). The check exits 3 for "no state files"; any other failure
+          # fails the deploy. </dev/null keeps it off this script's stdin.
+          state=0
+          docker compose run --rm --no-deps -T --entrypoint sh bot -c 'ls /data/*.json >/dev/null 2>&1 || exit 3' </dev/null || state=$?
+          if [ "$state" = 3 ]; then
+            docker compose create --remove-orphans
+            echo "::warning::The bot-state volume is empty, so the bot was created but not started. Restore its backup (backups restore indy-larry <backup>), which starts it; or, for a bot with no backup, docker compose up -d in ~/apps/$APP."
+            exit 0
+          elif [ "$state" != 0 ]; then
+            echo "::error::Could not check the bot-state volume (exit $state); the bot was left as it was."
+            exit 1
+          fi
           docker compose up -d --remove-orphans
           sleep 15
           docker compose ps
