@@ -8,7 +8,7 @@ import { noteResult } from './teamspeak-quiet';
 import type { TeamSpeakResult } from './teamspeak-shape';
 
 /**
- * teamspeak-bot's three routes, behind TEAMSPEAK_BOT_SECRET (bot-events.ts checks it). The bot pulls its jobs
+ * teamspeak-bot's three routes, behind TEAMSPEAK_BOT_SECRET (routes.ts checks it). The bot pulls its jobs
  * from the jobs store (teamspeak-jobs.ts), acks them, and posts its results, which go on
  * `teamspeak-results` for the consumer below. Each kind of result is one entry of RESULTS: what a posted
  * one must hold, and what the consumer does with it.

@@ -10,7 +10,7 @@ import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
  * `POST /teamspeak/seed`: the cutover's one-off import of the legacy bot's links (seed-ts-links.ts sends
  * them). Each row's Discord ID is matched to a CID (identity's `discord_id`, else VATUSA's lists, read once
  * per request), and the UID is written with the same write confirmTsLink uses, which queues the member's
- * sync. Behind TEAMSPEAK_SEED_SECRET (bot-events.ts), a secret set for the cutover and removed after.
+ * sync. Behind TEAMSPEAK_SEED_SECRET (routes.ts), a secret set for the cutover and removed after.
  */
 
 export type TeamSpeakSeedEnv = RoleSyncEnv & {

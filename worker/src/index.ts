@@ -2,13 +2,13 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { ChannelEdit, ChannelIdSend, ChannelSend, MessageRef, ChannelsSync, DeleteRequest, DirectSend, GroupPost, LarryRpc, MemberRole, RolesSync } from './client/api';
 import { describeError, ErrorReport } from './errors';
 import { deleteChannels, prepareChannelIdSend, syncChannels } from './managed-channels';
-import { handleFetch, type BotEventsEnv } from './bot-events';
 import { postToGroup } from './group-rpc';
 import { getGroupStatus } from './groups';
 import { linkDiscord } from './platforms/discord';
 import { confirmTsLink } from './platforms/teamspeak-links';
 import { consumeRoleSync, getLinks, startRoleSync, syncMembers, unlink, type RoleSyncEnv, type RoleSyncMessage } from './role-sync';
 import { deleteRoles, prepareMemberRole, setMemberRole, syncRoles } from './roles';
+import { handleFetch, type RoutesEnv } from './routes';
 import { consume, deleteNow, editNow, enqueue, enqueueDelete, enqueueEdit, sendJob, sendNow, SetupFaultError, type QueueJob, type SendEnv } from './send';
 import { consumeTeamSpeakResults } from './teamspeak-routes';
 import { checkQuiet } from './teamspeak-quiet';
@@ -36,11 +36,11 @@ async function reported<T>(env: SendEnv, ctx: ExecutionContext, method: string, 
   }
 }
 
-type Env = SendEnv & RoleSyncEnv & BotEventsEnv;
+type Env = SendEnv & RoleSyncEnv & RoutesEnv;
 
 /**
  * Larry's Worker. Other Workers reach these methods over a service binding. The fetch handler is
- * only for the bots on the VPS (bot-events.ts). The cron runs the role sync (role-sync.ts).
+ * only for the bots on the VPS and the cutover's seed script (routes.ts). The cron runs the role sync (role-sync.ts).
  */
 export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
   send(request: ChannelSend) {
@@ -162,7 +162,7 @@ export default class Larry extends WorkerEntrypoint<Env> implements LarryRpc {
     return reported(this.env, this.ctx, 'Queue consumer', (report) => consume(batch as MessageBatch<QueueJob>, this.env, (text) => report.add(text)));
   }
 
-  /** The bots' routes: `POST /bot/events` from larry's bot, and teamspeak-bot's `/teamspeak/...` (bot-events.ts). */
+  /** The HTTP routes: `POST /bot/events` from larry's bot, teamspeak-bot's `/teamspeak/...` and the seed (routes.ts). */
   fetch(request: Request) {
     return reported(this.env, this.ctx, "Bots' routes", () => handleFetch(request, this.env));
   }
