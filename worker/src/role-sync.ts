@@ -5,6 +5,7 @@ import type { GuildEnv } from './discord';
 import { GROUP_SOURCES, type GroupSourcesEnv } from './group-sources';
 import { refreshSource } from './groups';
 import { getUser, type IdentityEnv, type IdentityUser } from './identity';
+import { lookupVatusa } from './lookups';
 import { MAPPING, type MappingEntry } from './mapping';
 import { discordPlatform, type DiscordMessage, type DiscordPlatformEnv } from './platforms/discord';
 import { checkMode, type AnyPlatform, type JobRun, type MemberLookups, type Mode, type Resolution } from './platforms/platform';
@@ -62,6 +63,13 @@ const LATEST_RUN_KEY = 'role-sync:latest-run';
 /** Set when syncMembers() queues a member's sync, so the profile buttons can't flood the queue. */
 const memberKey = (cid: number) => `role-sync:member:${cid}`;
 const MEMBER_COOLDOWN_SECONDS = 120;
+/**
+ * VATUSA's record of a member, read fresh by syncMembers() just before it queues their jobs, so those jobs
+ * see a change made on VATUSA moments ago rather than the run's lists. `person` null: VATUSA has no record.
+ */
+const freshKey = (cid: number) => `role-sync:fresh:${cid}`;
+// Long enough for the jobs it was read for to run, short enough that the next run's lists take over.
+const FRESH_SECONDS = 10 * 60;
 // Long past the time a run's jobs take; a job whose lists have gone is left to the next run.
 const RUN_LISTS_TTL_SECONDS = 60 * 60;
 
@@ -126,7 +134,12 @@ async function runJob(env: RoleSyncEnv, mode: Mode, message: RoleSyncMessage, re
     return;
   }
   const kept = record?.platforms[platform.name];
-  const run: JobRun<unknown> = { people: record?.people ?? [], platform: kept !== undefined ? kept : await platform.readRun(env) };
+  let people = record?.people ?? [];
+  // A job without a run of its own (a member synced by name): VATUSA's fresh record of them, when
+  // syncMembers() read one, stands in for the run's.
+  const fresh = job.runId === undefined && job.cid !== undefined ? await env.KV.get<{ person: VatusaPerson | null }>(freshKey(job.cid), 'json') : null;
+  if (fresh) people = [...people.filter((person) => person.cid !== job.cid), ...(fresh.person ? [fresh.person] : [])];
+  const run: JobRun<unknown> = { people, platform: kept !== undefined ? kept : await platform.readRun(env) };
   const account = await platform.readAccount(env, mode, message);
   if (account) await syncAccount(env, run, platform, account, job.cid);
 }
@@ -265,11 +278,25 @@ export async function syncMembers(env: RoleSyncEnv, cids: number[]): Promise<Syn
   }
   for (const config of GROUP_SOURCES) await refreshSource(env, config);
   for (const cid of due) {
+    await readFresh(env, cid);
     const result = await queueMemberSync(env, cid);
     if (result.queued) await env.KV.put(memberKey(cid), new Date().toISOString(), { expirationTtl: MEMBER_COOLDOWN_SECONDS });
     results.set(cid, result);
   }
   return unique.map((cid) => ({ cid, ...results.get(cid)! }));
+}
+
+/**
+ * Read VATUSA's record of one member now, past the cache, for their jobs to use (freshKey). A failed read
+ * is logged and leaves the jobs on the run's lists, as before.
+ */
+async function readFresh(env: RoleSyncEnv, cid: number): Promise<void> {
+  try {
+    const person = await lookupVatusa(env.KV, { cid }, { fresh: true });
+    await env.KV.put(freshKey(cid), JSON.stringify({ person }), { expirationTtl: FRESH_SECONDS });
+  } catch (error) {
+    console.warn(`Role sync: couldn't read VATUSA's record of CID ${cid} fresh (${String(error)}); their sync uses the run's lists`);
+  }
 }
 
 /** RPC: clear a link, then queue the sync of the account the member falls back to on that platform, if any. */

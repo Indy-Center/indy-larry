@@ -41,7 +41,9 @@ export function fakeVatusaAndDiscord(
         if (failing.includes(path)) return new Response('Service Unavailable', { status: 503 });
         const user = path.match(/^\/user\/(\d+)(\?d)?$/);
         if (user) {
-          const found = (extras.users ?? []).find((candidate) => (user[2] ? candidate.discord_id === user[1] : String(candidate.cid) === user[1]));
+          const found =
+            (extras.users ?? []).find((candidate) => (user[2] ? candidate.discord_id === user[1] : String(candidate.cid) === user[1])) ??
+            (user[2] ? undefined : userFromLists(lists, Number(user[1])));
           if (!found) return new Response('Not Found', { status: 404 });
           // A user record, not wrapped in `data`, with discord_id as a bare number.
           return new Response(JSON.stringify(found).replace(/"discord_id":"(\d+)"/g, '"discord_id":$1'), { status: 200 });
@@ -61,4 +63,20 @@ export function fakeVatusaAndDiscord(
     }),
   );
   return { writes, vatusaCalls, vatusaCallTimes, vatsimCalls };
+}
+
+/**
+ * The `/user/{cid}` record VATUSA would give someone on the lists: their roster entry, the other rosters
+ * they're on as visiting facilities, and every role entry, ACE included. Undefined for someone not on them.
+ */
+function userFromLists(lists: VatusaLists, cid: number): VatusaUserRecord | undefined {
+  const entries = [...Object.entries(lists.rosters).flatMap(([roster, records]) => records.map((record) => ({ roster, record }))), ...lists.staff.map((record) => ({ roster: undefined, record }))].filter(
+    ({ record }) => record.cid === cid,
+  );
+  if (entries.length === 0) return undefined;
+  const base = entries[0]!.record;
+  const roles = entries.flatMap(({ record }) => record.roles ?? []);
+  if (lists.ace.some((entry) => entry.cid === cid)) roles.push({ facility: 'ZHQ', role: 'ACE' });
+  const visiting = [...new Set(entries.flatMap(({ roster }) => (roster && roster !== base.facility ? [roster] : [])))];
+  return { ...base, discord_id: entries.find(({ record }) => record.discord_id)?.record.discord_id ?? base.discord_id, roles, visiting_facilities: visiting.map((facility) => ({ facility })) } as VatusaUserRecord;
 }

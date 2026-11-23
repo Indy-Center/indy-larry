@@ -422,7 +422,7 @@ describe('syncMembers', () => {
     expect(env.KV.ttls.get('role-sync:member:1000002')).toBe(120);
   });
 
-  it("uses the newest run's lists when they are kept, without a VATUSA lookup", async () => {
+  it("reads the member from VATUSA fresh, even with the run's lists kept, and syncs against that", async () => {
     const { vatusaCalls } = fakeVatusaAndDiscord(vatusaLists(), server());
     await cron();
     await consume();
@@ -432,7 +432,32 @@ describe('syncMembers', () => {
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: OLD }]);
     const { lines } = await consume();
     expect(lines).toEqual([`Role sync (dry run): ${OLD} CID 1000001: add Student 3, Air Traffic Controller, Member; remove nothing; nickname "Test Person1000001"`]);
-    expect(vatusaCalls.length).toBe(before);
+    expect(vatusaCalls.slice(before)).toEqual(['/user/1000001']);
+  });
+
+  it('sees a change made on VATUSA since the run, rather than the run’s lists', async () => {
+    // The run's lists say S3; VATUSA has since changed them to S2.
+    fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [record({ cid: 1000001, rating: 3, rating_short: 'S2', discord_id: OLD })] });
+    await cron();
+    await consume();
+
+    await syncOne(1000001);
+    const { lines } = await consume();
+    expect(lines[0]).toMatch(/CID 1000001: add Student 2[,;]/);
+    expect(lines[0]).not.toContain('Student 3');
+  });
+
+  it("uses the run's lists, and says so, when the fresh read fails", async () => {
+    fakeVatusaAndDiscord(vatusaLists(), server(), ['/user/1000001']);
+    const warnings: string[] = [];
+    vi.mocked(console.warn).mockImplementation((line: string) => void warnings.push(line));
+    await cron();
+    await consume();
+
+    expect(await syncOne(1000001)).toEqual({ queued: true });
+    const { lines } = await consume();
+    expect(lines[0]).toContain('add Student 3');
+    expect(warnings.some((line) => line.startsWith("Role sync: couldn't read VATUSA's record of CID 1000001 fresh"))).toBe(true);
   });
 
   it("looks the member up in VATUSA when no run's lists are kept", async () => {
