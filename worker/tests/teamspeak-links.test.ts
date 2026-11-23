@@ -120,7 +120,8 @@ describe('an unlinked identity connecting', () => {
     const jobs = await tsJobs();
     expect(jobs).toHaveLength(1);
     const job = jobs[0]!;
-    expect(job).toMatchObject({ type: 'send-text', clientId: 42 });
+    // By UID, not client ID: TeamSpeak hands a freed client ID to the next client that joins.
+    expect(job).toEqual({ jobId: expect.any(String), type: 'send-text', uid: JO_UID, text: expect.any(String) });
     const token = tokenIn(job)!;
     // 32 random bytes, URL-safe base64.
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
