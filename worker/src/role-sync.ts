@@ -106,7 +106,7 @@ export async function consumeRoleSync(batch: MessageBatch<RoleSyncMessage>, env:
   const mode = checkMode(env);
   const records = new Map<string, Promise<RunRecord | null>>();
   const recordOf = (runId: string) => {
-    if (!records.has(runId)) records.set(runId, env.KV.get<RunRecord>(runKey(runId), 'json'));
+    if (!records.has(runId)) records.set(runId, readRecord(env, runId));
     return records.get(runId)!;
   };
   await consumeEach(batch, 'Role sync job', (message) => runJob(env, mode, message, recordOf));
@@ -137,7 +137,7 @@ async function runJob(env: RoleSyncEnv, mode: Mode, message: RoleSyncMessage, re
  */
 export async function syncNow(env: RoleSyncEnv, message: RoleSyncMessage): Promise<void> {
   const mode = checkMode(env);
-  await runJob(env, mode, message, (runId) => env.KV.get<RunRecord>(runKey(runId), 'json'));
+  await runJob(env, mode, message, (runId) => readRecord(env, runId));
 }
 
 /**
@@ -187,7 +187,17 @@ export function memberLookups(env: RoleSyncEnv, cid: number | null, known?: Iden
 /** The newest run's record, while it is kept. */
 async function latestRecord(env: Pick<RoleSyncEnv, 'KV'>): Promise<RunRecord | null> {
   const latestId = await env.KV.get(LATEST_RUN_KEY);
-  return latestId ? await env.KV.get<RunRecord>(runKey(latestId), 'json') : null;
+  return latestId ? await readRecord(env, latestId) : null;
+}
+
+/**
+ * A run's record from KV, while it is kept. A record written before platforms had their own parts
+ * (`{ people, server }`) has no `platforms`: its people are kept, and each platform's part is read now.
+ */
+async function readRecord(env: Pick<RoleSyncEnv, 'KV'>, runId: string): Promise<RunRecord | null> {
+  const stored = await env.KV.get<Partial<RunRecord>>(runKey(runId), 'json');
+  if (!stored) return null;
+  return { people: stored.people ?? [], platforms: stored.platforms ?? {} };
 }
 
 const NO_ACCOUNT = 'No Discord account or TeamSpeak identity is known for this member.';

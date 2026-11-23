@@ -166,6 +166,40 @@ describe('roles', () => {
   });
 });
 
+describe('a run record written before platforms had their own parts', () => {
+  const joServer = () => serverWith([member(JO, 'Test Person1000001', ROLE.observer, ROLE.member, ROLE.atc, ROLE.handGiven)]);
+
+  /** Rewrite the newest run's record in KV in the older `{ people, server }` shape, with no `platforms`. */
+  function toOldShape() {
+    const runId = env.KV.store.get('role-sync:latest-run')!;
+    const { people, platforms } = JSON.parse(env.KV.store.get(`role-sync:run:${runId}`)!) as { people: unknown; platforms: { discord: unknown } };
+    env.KV.store.set(`role-sync:run:${runId}`, JSON.stringify({ people, server: platforms.discord }));
+  }
+
+  it("runs a run-member job against that run's people, reading the server now", async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), joServer());
+    await cron();
+    toOldShape();
+    const { lines, messages } = await consume();
+
+    expect(roleWrites(writes)).toEqual([`PUT /guilds/${GUILD}/members/${JO}/roles/${ROLE.student3}`, `DELETE /guilds/${GUILD}/members/${JO}/roles/${ROLE.observer}`]);
+    expect(lines).toContain(`Role sync (live): ${JO} CID 1000001: add Student 3; remove Observer`);
+    expect(messages.every((message) => message.acked)).toBe(true);
+  });
+
+  it("runs a sync-member job against the newest run's people", async () => {
+    const { writes } = fakeVatusaAndDiscord(listsWith(s3(1000001, JO)), joServer());
+    await cron();
+    env.ROLE_SYNC_QUEUE.sent.splice(0);
+    toOldShape();
+    const { lines, messages } = await consume([{ type: 'sync-member', discordId: JO }]);
+
+    expect(roleWrites(writes)).toEqual([`PUT /guilds/${GUILD}/members/${JO}/roles/${ROLE.student3}`, `DELETE /guilds/${GUILD}/members/${JO}/roles/${ROLE.observer}`]);
+    expect(lines).toContain(`Role sync (live): ${JO} CID 1000001: add Student 3; remove Observer`);
+    expect(messages[0]!.acked).toBe(true);
+  });
+});
+
 describe("a member the sync can't resolve", () => {
   // On no list, and VATUSA answers 404 for their Discord ID: two managed roles and a hand-given one.
   const strangerServer = (extra: Partial<Server> = {}) => serverWith([member(STRANGER, 'Someone', ROLE.observer, ROLE.handGiven, ROLE.member)], [], extra);
