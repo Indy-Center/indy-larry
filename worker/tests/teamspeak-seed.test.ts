@@ -209,7 +209,13 @@ describe('the script', () => {
 
   it('reads the members table, Discord IDs exact, skipping rows missing either', () => {
     const path = legacyDb([['830000000000000001', UID('a')], ['830000000000000002', null], [null, UID('c')], ['830000000000000004', UID('d')]]);
-    expect(readRows(path)).toEqual([{ discordId: '830000000000000001', uid: UID('a') }, { discordId: '830000000000000004', uid: UID('d') }]);
+    expect(readRows(path)).toEqual([{ discordId: '830000000000000004', uid: UID('d') }, { discordId: '830000000000000001', uid: UID('a') }]);
+  });
+
+  it("puts a member's newest identity first, so that's the one written", () => {
+    const path = legacyDb([['830000000000000001', UID('old')], ['830000000000000002', UID('b')], ['830000000000000001', UID('new')]]);
+    const mine = readRows(path).filter((row) => row.discordId === '830000000000000001');
+    expect(mine.map((row) => row.uid)).toEqual([UID('new'), UID('old')]);
   });
 
   it('batches by 50 without splitting one member\'s rows', () => {
