@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MappingEntry } from '../src/mapping';
 import { nicknameGuard } from '../src/nicknames';
-import { discordPlatform, type DiscordAccount } from '../src/platforms/discord';
-import type { Change, Platform, Resolution } from '../src/platforms/platform';
-import { syncAccount, type RoleSyncMessage, type RunLists } from '../src/role-sync';
+import { discordPlatform, type DiscordAccount, type RunServer } from '../src/platforms/discord';
+import type { Change, JobRun, Platform, Resolution } from '../src/platforms/platform';
+import { syncAccount, type RoleSyncMessage } from '../src/role-sync';
 import { peopleFrom } from '../src/vatusa';
 import { fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, LARRY, type Write } from './fake-discord';
@@ -13,8 +13,8 @@ import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
 
 /**
- * The job is one per member: it resolves the member once, then calls every registered adapter for the
- * member's account on it. Shown with a made-up second platform beside Discord, and two made up alone.
+ * The job is one account on one platform: its adapter resolves it, the mapping is matched, and the same
+ * adapter applies the change. Shown with made-up platforms, and with Discord's.
  */
 
 const JO = '820000000000000001';
@@ -22,36 +22,31 @@ const STRANGER = '820000000000000002';
 const MEMBER_ROLE = '1125403438545641564';
 
 type FakeAccount = { id: string; held: string[] };
+type FakeRun = { untouchable: string[] };
+type FakeTypes = { ref: string; account: FakeAccount; found: unknown; message: RoleSyncMessage; run: FakeRun; id: string };
 
-/** A made-up platform whose groups are named after the mapping's entries; `accounts` by CID. */
-function fakePlatform(accounts: Record<number, FakeAccount>, resolveTo: Resolution<unknown> = { kind: 'unresolved' }) {
-  const calls = { resolve: [] as FakeAccount[], accountFor: [] as number[], current: [] as string[], apply: [] as Change<FakeAccount, unknown>[] };
-  const platform: Platform<string, FakeAccount, unknown> & { calls: typeof calls } = {
+/** A made-up platform whose groups are named after the mapping's entries. */
+function fakePlatform(resolveTo: Resolution<unknown> = { kind: 'unresolved' }) {
+  const calls = { resolve: [] as { account: FakeAccount; run: JobRun<FakeRun> }[], apply: [] as Change<FakeTypes>[] };
+  const platform: Platform<FakeTypes> & { calls: typeof calls } = {
     calls,
     name: 'teamspeak',
-    listAccounts: async () => ({ run: {}, jobs: () => [] }),
-    freshRun: async () => ({}),
-    owns: () => false,
-    jobOf: () => ({ accountId: '' }),
-    accountOf: async () => null,
-    async accountFor(_env, cid) {
-      calls.accountFor.push(cid);
-      return accounts[cid]?.id ?? null;
-    },
-    async current(_env, ref) {
-      calls.current.push(ref);
-      return Object.values(accounts).find((account) => account.id === ref) ?? null;
-    },
-    messageFor: (cid) => ({ type: 'sync-cid', cid, discordId: '' }) as RoleSyncMessage,
+    startRun: async () => ({ run: { untouchable: [] }, jobs: [] }),
+    readRun: async () => ({ untouchable: [] }),
+    isOwnMessage: (_message): _message is RoleSyncMessage => false,
+    describeJob: () => ({ accountId: '' }),
+    readAccount: async () => null,
+    findAccount: async () => null,
+    messageFor: (cid) => ({ type: 'ts-sync-cid', cid, uid: '' }),
     linkOf: () => null,
     unlink: async () => {},
-    async resolve(_env, _run, account) {
-      calls.resolve.push(account);
+    async resolve(_env, run, account) {
+      calls.resolve.push({ account, run });
       return resolveTo;
     },
-    held: (account) => account.held,
-    idOf: (entry: MappingEntry) => `group:${entry.name}`,
-    skipped: () => [],
+    heldIds: (account) => account.held,
+    idFor: (entry: MappingEntry) => `group:${entry.name}`,
+    untouchable: (run) => run.untouchable,
     async apply(_env, change) {
       calls.apply.push(change);
     },
@@ -76,7 +71,10 @@ function makeEnv() {
 }
 
 const vatusa = () => lists({ ZID: [record({ cid: 1200001, rating: 4, rating_short: 'S3' })] });
-const run = (): RunLists => ({ people: peopleFrom(vatusa()), server: { skippedRoles: [], guard: nicknameGuard('999999999999999999', LARRY, []) } });
+const people = () => peopleFrom(vatusa());
+const jo = () => people().find((one) => one.cid === 1200001)!;
+const fakeRun = (untouchable: string[] = []): JobRun<FakeRun> => ({ people: people(), platform: { untouchable } });
+const discordRun = (): JobRun<RunServer> => ({ people: people(), platform: { skippedRoles: [], guard: nicknameGuard('999999999999999999', LARRY, []) } });
 const discordAccount = (discordId: string, ...roleIds: string[]): DiscordAccount => ({ discordId, roleIds, nick: null });
 
 let env: ReturnType<typeof makeEnv>;
@@ -94,83 +92,62 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('one job per member, every platform', () => {
-  it("syncs a resolved Discord member's account on the second platform too, once, with the same mapping entries", async () => {
-    const second = fakePlatform({ 1200001: { id: 'ts-jo', held: ['group:Observer'] } });
+describe('one account on one platform', () => {
+  it("gives a member's account the entries they match and takes the rest, on its own platform", async () => {
+    const platform = fakePlatform({ kind: 'person', person: jo() });
+    const account = { id: 'jo', held: ['group:Observer', 'hand-given'] };
+    const run = fakeRun();
 
-    await syncAccount(env as never, run(), discordPlatform, discordAccount(JO), undefined, [discordPlatform, second]);
+    await syncAccount(env as never, run, platform, account);
 
-    // Discord: the S3's roles, as ever.
-    expect(writes.filter((write) => write.method === 'PUT').map((write) => write.path)).toContain(`/guilds/${GUILD}/members/${JO}/roles/${MEMBER_ROLE}`);
-    // The second platform: found by CID, read, and given the same entries; never asked to resolve.
-    expect(second.calls.accountFor).toEqual([1200001]);
-    expect(second.calls.current).toEqual(['ts-jo']);
-    expect(second.calls.resolve).toEqual([]);
-    expect(second.calls.apply).toHaveLength(1);
-    const change = second.calls.apply[0]!;
-    expect(change.resolution).toMatchObject({ kind: 'person', person: { cid: 1200001 } });
+    expect(platform.calls.resolve).toEqual([{ account, run }]);
+    expect(platform.calls.apply).toHaveLength(1);
+    const change = platform.calls.apply[0]!;
+    expect(change.account).toBe(account);
+    expect(change.run).toBe(run);
     expect(names(change.add)).toEqual(['Student 3', 'Air Traffic Controller', 'Member']);
     expect(names(change.remove)).toEqual(['Observer']);
-  });
-
-  it('skips a platform the member has no account on', async () => {
-    const second = fakePlatform({});
-    await syncAccount(env as never, run(), discordPlatform, discordAccount(JO), undefined, [discordPlatform, second]);
-    expect(second.calls.accountFor).toEqual([1200001]);
-    expect(second.calls.current).toEqual([]);
-    expect(second.calls.apply).toEqual([]);
-  });
-
-  it("takes an unresolved Discord account's roles on Discord only", async () => {
-    const second = fakePlatform({ 1200001: { id: 'ts-jo', held: [] } });
-
-    await syncAccount(env as never, run(), discordPlatform, discordAccount(STRANGER, MEMBER_ROLE), undefined, [discordPlatform, second]);
-
-    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual([`DELETE /guilds/${GUILD}/members/${STRANGER}/roles/${MEMBER_ROLE}`]);
-    expect(second.calls).toEqual({ resolve: [], accountFor: [], current: [], apply: [] });
-  });
-
-  it("takes an unresolved account's groups on its own platform only", async () => {
-    const origin = fakePlatform({});
-    const other = fakePlatform({});
-    const account = { id: 'ts-nobody', held: ['group:Member', 'group:Observer', 'hand-given'] };
-
-    await syncAccount(env as never, run(), origin, account, undefined, [origin, discordPlatform, other]);
-
-    expect(origin.calls.resolve).toEqual([account]);
-    expect(origin.calls.apply).toHaveLength(1);
-    expect(origin.calls.apply[0]!.resolution.kind).toBe('unresolved');
-    expect(names(origin.calls.apply[0]!.remove)).toEqual(['Observer', 'Member']);
-    expect(origin.calls.apply[0]!.add).toEqual([]);
-    expect(other.calls).toEqual({ resolve: [], accountFor: [], current: [], apply: [] });
     expect(writes).toEqual([]);
+  });
+
+  it('leaves the IDs its run marks untouchable', async () => {
+    const platform = fakePlatform({ kind: 'person', person: jo() });
+    await syncAccount(env as never, fakeRun(['group:Member', 'group:Observer']), platform, { id: 'jo', held: ['group:Observer'] });
+    const change = platform.calls.apply[0]!;
+    expect(names(change.add)).toEqual(['Student 3', 'Air Traffic Controller']);
+    expect(change.remove).toEqual([]);
+  });
+
+  it("takes an unresolved account's managed groups, without reading identity", async () => {
+    const platform = fakePlatform();
+    const account = { id: 'nobody', held: ['group:Member', 'group:Observer', 'hand-given'] };
+
+    await syncAccount(env as never, fakeRun(), platform, account);
+
+    const change = platform.calls.apply[0]!;
+    expect(change.resolution.kind).toBe('unresolved');
+    expect(change.add).toEqual([]);
+    expect(names(change.remove)).toEqual(['Observer', 'Member']);
     expect(env.IDENTITY.apiCalls).toEqual([]);
   });
 
-  it('calls each of two platforms once for a member, the origin on its own account', async () => {
-    const person = peopleFrom(vatusa()).find((one) => one.cid === 1200001)!;
-    const origin = fakePlatform({}, { kind: 'person', person });
-    const other = fakePlatform({ 1200001: { id: 'other-jo', held: [] } });
-    const account = { id: 'origin-jo', held: [] };
-
-    await syncAccount(env as never, run(), origin, account, undefined, [origin, other]);
-
-    expect(origin.calls.resolve).toEqual([account]);
-    expect(origin.calls.accountFor).toEqual([]);
-    expect(origin.calls.apply.map((change) => change.account)).toEqual([account]);
-    expect(other.calls.resolve).toEqual([]);
-    expect(other.calls.apply.map((change) => change.account)).toEqual([{ id: 'other-jo', held: [] }]);
-    // The mapping was matched once, for both: the same entries each way.
-    expect(names(origin.calls.apply[0]!.add)).toEqual(names(other.calls.apply[0]!.add));
+  it('leaves alone an account its adapter says to: nothing to add or take', async () => {
+    const platform = fakePlatform({ kind: 'left-alone' });
+    await syncAccount(env as never, fakeRun(), platform, { id: 'taken', held: ['group:Member'] }, 1200001);
+    expect(platform.calls.apply).toHaveLength(1);
+    expect(platform.calls.apply[0]!.add).toEqual([]);
+    expect(platform.calls.apply[0]!.remove).toEqual([]);
   });
 
-  it('leaves alone an account its adapter says to: nothing to add or take, and no other platform', async () => {
-    const origin = fakePlatform({}, { kind: 'left-alone' });
-    const other = fakePlatform({ 1200001: { id: 'other-jo', held: [] } });
-    await syncAccount(env as never, run(), origin, { id: 'taken', held: ['group:Member'] }, 1200001, [origin, other]);
-    expect(origin.calls.apply).toHaveLength(1);
-    expect(origin.calls.apply[0]!.add).toEqual([]);
-    expect(origin.calls.apply[0]!.remove).toEqual([]);
-    expect(other.calls.apply).toEqual([]);
+  it("syncs a Discord account through Discord's adapter: its roles, and only Discord's", async () => {
+    await syncAccount(env as never, discordRun(), discordPlatform, discordAccount(JO));
+    expect(writes.filter((write) => write.method === 'PUT').map((write) => write.path)).toContain(`/guilds/${GUILD}/members/${JO}/roles/${MEMBER_ROLE}`);
+    // Roles and nickname: every write is to this member of the server.
+    expect(writes.every((write) => write.path.startsWith(`/guilds/${GUILD}/members/${JO}`))).toBe(true);
+  });
+
+  it("takes an unresolved Discord account's roles", async () => {
+    await syncAccount(env as never, discordRun(), discordPlatform, discordAccount(STRANGER, MEMBER_ROLE));
+    expect(writes.map((write) => `${write.method} ${write.path}`)).toEqual([`DELETE /guilds/${GUILD}/members/${STRANGER}/roles/${MEMBER_ROLE}`]);
   });
 });

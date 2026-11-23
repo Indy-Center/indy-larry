@@ -11,11 +11,12 @@ import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
 
 /**
- * Sync on TeamSpeak connect, a full sync on `reconnected`, and the quiet alert: driven through the
+ * Sync on TeamSpeak connect, TeamSpeak's run on `reconnected`, and the quiet alert: driven through the
  * results consumer and the cron. Made-up CIDs and UIDs throughout.
  */
 
 const JO_UID = 'joMadeUpUid00000000000000000=';
+const JO_DISCORD = '830000000000000001';
 const ALERTS = '300000000000000001';
 const MINUTE = 60_000;
 const START = new Date('2026-11-22T12:00:00Z');
@@ -105,17 +106,26 @@ describe('a linked member connecting', () => {
     await connect();
     expect(queuedFor(1000001)).toHaveLength(2);
   });
+
+  it('queues only their TeamSpeak job when they have Discord too', async () => {
+    env = makeEnv([{ ...tsUser(1000001, JO_UID), discord_id: JO_DISCORD }]);
+    larry = new Larry({} as ExecutionContext, env as never);
+    await connect();
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'ts-sync-cid', cid: 1000001, uid: JO_UID }]);
+  });
 });
 
 describe('reconnected', () => {
-  it('starts a full sync, as the cron does', async () => {
+  it("starts TeamSpeak's part of a run, and not Discord's", async () => {
+    fakeVatusaAndDiscord(goodLists(), { roles: [], members: [{ user: { id: JO_DISCORD }, roles: [] }] });
     const messages = await receive({ type: 'reconnected', at: '2026-11-22T12:00:00Z' });
 
     expect(messages[0]!.acked).toBe(true);
-    // The cron's TeamSpeak part: one report-accounts job asking teamspeak-bot for its accounts.
+    // One report-accounts job asking teamspeak-bot for its accounts, and no Discord run-member jobs.
     const store = env.TEAMSPEAK_JOBS.get(env.TEAMSPEAK_JOBS.idFromName('teamspeak-jobs'));
     const jobs: TeamSpeakJob[] = store.pull(10);
     expect(jobs.map((job) => job.type)).toEqual(['report-accounts']);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 });
 

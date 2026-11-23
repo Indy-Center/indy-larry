@@ -315,11 +315,11 @@ describe("unlink(cid, 'teamspeak')", () => {
     expect(await larry.getLinks(1000001)).toEqual({ discord: null, teamspeak: null });
   });
 
-  it("queues the member's sync on the account they still have", async () => {
+  it('leaves their Discord account alone: unlinking TeamSpeak queues no Discord sync', async () => {
     start('live', [tsUser(1000001, JO_UID, JO_DISCORD)]);
     await larry.unlink(1000001, 'teamspeak');
 
-    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JO_DISCORD }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 
   it('clears the link in dry-run, logging the removal instead of queueing it', async () => {

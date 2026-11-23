@@ -7,7 +7,7 @@ import { MAPPING } from '../mapping';
 import { nicknameFor } from '../nickname-rule';
 import { applyNickname, nicknameGuard, type NicknameGuard, type NicknameOutcome } from '../nicknames';
 import { getMember, listMembers, syncRefusal, type DiscordMember, type DiscordRole } from '../roles';
-import type { RoleSyncEnv, RunLists } from '../role-sync';
+import type { RoleSyncEnv } from '../role-sync';
 import type { VatusaPerson } from '../vatusa';
 import { checkMode, type Change, type MemberLookups, type Mode, type Platform, type Resolution } from './platform';
 
@@ -60,7 +60,7 @@ export type DiscordPlatformEnv = {
   DISCORD_JOIN_BOT_TOKEN?: string;
 };
 
-/** What a run read from the server once: the mapped roles it skips, and who it won't rename. Kept in the run's record as `server`. */
+/** Discord's part of a run, read from the server once: the mapped roles it skips, and who it won't rename. */
 export type RunServer = { skippedRoles: string[]; guard: NicknameGuard };
 
 /** A Discord member as the sync takes them: what they hold now. */
@@ -86,45 +86,42 @@ async function memberNow(env: GuildEnv, discordId: string): Promise<DiscordAccou
   return memberFrom(discordId, held);
 }
 
-export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound, DiscordMessage> = {
+type DiscordTypes = { ref: DiscordRef; account: DiscordAccount; found: DiscordFound; message: DiscordMessage; run: RunServer; id: string };
+
+export const discordPlatform: Platform<DiscordTypes> = {
   name: 'discord',
 
-  async listAccounts(env, people) {
+  async startRun(env, runId, people) {
     await clearSharedAlerts(env, people);
     const members = await listMembers(env.DISCORD_TOKEN, guildId(env));
     if (!members) throw new Error("Role sync can't list the server's members: switch on the Server Members intent");
     await syncGroups(env);
-    const server = await readServer(env);
     return {
-      run: { server },
-      jobs: (runId) =>
-        members.flatMap((member) =>
-          member.user ? [{ type: 'run-member' as const, runId, discordId: member.user.id, roleIds: member.roles, nick: member.nick ?? null, ...(member.user.bot ? { bot: true } : {}) }] : [],
-        ),
+      run: await readServer(env),
+      jobs: members.flatMap((member) =>
+        member.user ? [{ type: 'run-member' as const, runId, discordId: member.user.id, roleIds: member.roles, nick: member.nick ?? null, ...(member.user.bot ? { bot: true } : {}) }] : [],
+      ),
     };
   },
 
-  async freshRun(env) {
-    return { server: await readServer(env) };
-  },
+  readRun: readServer,
 
-  owns: (message) => MESSAGE_TYPES.includes(message.type),
+  isOwnMessage: (message): message is DiscordMessage => MESSAGE_TYPES.includes(message.type),
 
-  jobOf: (message) => ({
+  describeJob: (message) => ({
     accountId: message.discordId,
     ...(message.type === 'sync-cid' ? { cid: message.cid } : {}),
     ...(message.type === 'run-member' ? { runId: message.runId } : {}),
   }),
 
-  async accountOf(env, mode, message) {
+  async readAccount(env, mode, message) {
     if (message.type !== 'run-member') return memberNow(env, message.discordId);
     // The run listed the server minutes ago: before changing anything, read what they hold now.
     if (mode === 'live') return memberNow(env, message.discordId);
     return memberFrom(message.discordId, { roles: message.roleIds, nick: message.nick, user: { id: message.discordId, bot: message.bot } });
   },
 
-  accountFor: discordIdFor,
-  current: (env, ref) => memberNow(env, ref.id),
+  findAccount: discordIdFor,
   messageFor: (cid, ref) => ({ type: 'sync-cid', cid, discordId: ref.id }),
   linkOf: (ref) => ({ id: ref.id, source: ref.source }),
 
@@ -135,7 +132,7 @@ export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound,
   async resolve(env, run, account, cid) {
     // As VATUSA's bot does: a bot account is never looked up, and keeps its roles.
     if (account.bot) return { kind: 'left-alone', found: { kind: 'bot' } };
-    const found = await resolvePerson(env, run, { discordId: account.discordId, cid });
+    const found = await resolvePerson(env, run.people, { discordId: account.discordId, cid });
     if (found.kind === 'shared-id') await reportSharedId(env, account.discordId, found.sharedCids);
     if (found.kind === 'person') return { kind: 'person', person: found.person, identity: found.identity, found };
     // An account another member has linked isn't no one: its own job syncs it.
@@ -143,9 +140,9 @@ export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound,
     return { kind: 'unresolved', found };
   },
 
-  held: (account) => account.roleIds,
-  idOf: (entry) => entry.discordRoleId,
-  skipped: (run) => run.server.skippedRoles,
+  heldIds: (account) => account.roleIds,
+  idFor: (entry) => entry.discordRoleId,
+  untouchable: (server) => server.skippedRoles,
   apply: applyDiscord,
 };
 
@@ -153,7 +150,7 @@ export const discordPlatform: Platform<DiscordRef, DiscordAccount, DiscordFound,
  * Change one member's mapped roles, their groups' roles and their nickname (`live`), or log what would
  * change (`dry-run`), then log one line for them. Throws when Discord refuses a change.
  */
-async function applyDiscord(env: RoleSyncEnv, change: Change<DiscordAccount, DiscordFound>): Promise<void> {
+async function applyDiscord(env: RoleSyncEnv, change: Change<DiscordTypes>): Promise<void> {
   const { mode, run, account, resolution, add, remove } = change;
   const label = mode === 'live' ? 'live' : 'dry run';
   if (resolution.found?.kind === 'bot') {
@@ -181,7 +178,7 @@ async function applyDiscord(env: RoleSyncEnv, change: Change<DiscordAccount, Dis
   if (person) {
     const known = resolution.found?.kind === 'person' ? resolution.found.identity : undefined;
     const to = nicknameFor(person, person.rating < 1 ? null : await identityForNickname(change.identity, account.discordId, known));
-    if (to) result.nickname = await applyNickname(env, run.server.guard, account, to, mode === 'dry-run');
+    if (to) result.nickname = await applyNickname(env, run.platform.guard, account, to, mode === 'dry-run');
   }
 
   console.log(`Role sync (${label}): ${account.discordId} ${summary(resolution, result)}${groupNote(groups, mode)}`);
@@ -234,7 +231,7 @@ async function reportSharedId(env: AlertEnv, discordId: string, cids: number[]):
 /**
  * The identity user whose names the nickname reads. resolvePerson has already asked identity when it
  * looked for the member's link (`known`, undefined when it didn't); otherwise this asks by CID, through the
- * member's shared lookup (`identity`), which the other adapters then reuse. Identity failing here doesn't
+ * job's lookup (`identity`). Identity failing here doesn't
  * fail the job: the nickname falls back to VATUSA's name, and it is logged.
  */
 async function identityForNickname(identity: MemberLookups['identity'], discordId: string, known: IdentityUser | null | undefined): Promise<IdentityUser | null> {
@@ -310,7 +307,7 @@ type LinkAnswer = { holder: IdentityUser | null } | { holder: null; unreachable:
  * Discord account is a stale account and gets nothing. Off the lists, VATUSA's per-user lookup; for a CID
  * VATUSA doesn't know, only their rating from VATSIM.
  */
-async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: RunLists, member: { discordId: string; cid?: number }): Promise<Exclude<DiscordFound, { kind: 'bot' }>> {
+async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, people: VatusaPerson[], member: { discordId: string; cid?: number }): Promise<Exclude<DiscordFound, { kind: 'bot' }>> {
   // A CID was given (a link write, syncMembers) and its account was settled when the job was queued. Look
   // again for the race (another member linked it since); if identity can't answer now, go on with the job.
   const link: LinkAnswer =
@@ -324,7 +321,7 @@ async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: Ru
   if (member.cid !== undefined && holder && holder.cid !== member.cid) return { kind: 'account-taken' };
   const cid = member.cid ?? holder?.cid;
   const identity = holder ?? undefined;
-  const matches = run.people.filter((person) => (cid !== undefined ? person.cid === cid : person.discordId === member.discordId));
+  const matches = people.filter((person) => (cid !== undefined ? person.cid === cid : person.discordId === member.discordId));
   if (matches.length > 1) return { kind: 'shared-id', sharedCids: matches.map((match) => match.cid) };
 
   const person = matches[0] ?? (await lookupVatusa(env.KV, cid !== undefined ? { cid } : { discordId: member.discordId }));
@@ -355,10 +352,10 @@ async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: Ru
 export async function discordIdFor(env: RoleSyncEnv, cid: number, member: MemberLookups): Promise<DiscordRef | null> {
   const linked = (await member.identity())?.discordId;
   if (linked) return { id: linked, source: 'linked' };
-  const latest = await member.latest();
-  const person = latest?.people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
+  const latest = await member.latestPeople();
+  const person = latest?.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
   if (!person?.discordId) return null;
-  if (latest && sharedDiscordIds(latest.people).has(person.discordId)) return null;
+  if (latest && sharedDiscordIds(latest).has(person.discordId)) return null;
   const holder = await findByDiscordId(env, person.discordId);
   return holder && holder.cid !== cid ? null : { id: person.discordId, source: 'vatusa' };
 }

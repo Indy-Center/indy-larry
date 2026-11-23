@@ -35,9 +35,9 @@ export async function receiveConnect(env: RoleSyncEnv, result: Extract<TeamSpeak
   const mode = checkMode(env);
   const holder = await findByTeamspeakUid(env, result.uid);
   if (holder) {
-    // A UID a member holds: their sync, unless they were synced in the last 5 minutes.
+    // A UID a member holds: their TeamSpeak sync, unless they were synced in the last 5 minutes.
     console.log(`TeamSpeak ${result.uid} connected: linked to CID ${holder.cid}`);
-    await syncOnConnect(env, holder.cid);
+    await syncOnConnect(env, holder);
     return;
   }
 

@@ -86,7 +86,8 @@ const RESULTS: { [Type in TeamSpeakResult['type']]: ResultKind<Extract<TeamSpeak
     valid: ({ at }) => isText(at),
     async handle(env, result) {
       console.log(`teamspeak-bot reconnected to ServerQuery at ${result.at}`);
-      await startRoleSync(env);
+      // TeamSpeak's part of a run only: Discord's needs nothing from the bot.
+      await startRoleSync(env, ['teamspeak']);
     },
   },
   accounts: {
