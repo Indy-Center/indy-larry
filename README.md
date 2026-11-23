@@ -309,15 +309,15 @@ bash test/backup/roundtrip.sh # the backup round trip; needs Docker
 
 ## Deployment
 
-The bot runs on the Vanderbilt VPS, following the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/). It only makes outbound calls (Discord, vNAS, VATSIM, the Indy Center CMS, GitHub for airspace boundaries), so it has no Traefik labels, doesn't join `traefik-shared` and publishes no ports.
+The bot runs on the ALEXANDRIA VPS, following the [VPS apps pattern](https://tech.flyindycenter.com/patterns/vps-apps/). It only makes outbound calls (Discord, vNAS, VATSIM, the Indy Center CMS, GitHub for airspace boundaries), so it has no Traefik labels, doesn't join `traefik-shared` and publishes no ports.
 
-`build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then rsyncs `deploy/` to `/home/deploy/apps/indy-larry/`, writes `.env` there from the `ENV_*` secrets and variables, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later.
+`build-and-deploy.yml` runs on every push to `main`, and by hand from **Actions → Build and Deploy → Run workflow**. It calls `ci.yml` and only deploys if it passes. It builds the image and pushes it to `ghcr.io/indy-center/vnas-discord-bot`, tagged `latest` and with the commit SHA. It then rsyncs `deploy/` to `/home/deploy/apps/indy-larry/`, writes `.env` there from the `ENV_*` secrets and variables, pulls and runs `docker compose up -d`, and fails if anything is restarting 15 seconds later. On a server whose `bot-state` volume is empty or missing, it creates the container without starting it, and says so in the run's log (see [Moving to another server](#moving-to-another-server)).
 
 The app directory and compose project are named after the repository, so renaming the repo deploys a second copy next to the old one, with its own empty volume. Two copies with the same token repost the panels and double up status embeds. After a rename, stop the old one on the VPS: `cd ~/apps/<old name> && docker compose down`.
 
 Secrets:
 
-- **Deploy credentials**: the `VANDERBILT_HOST` and `VANDERBILT_DEPLOY_USER` organization variables and the `VANDERBILT_DEPLOY_SSH_KEY` and `VANDERBILT_KNOWN_HOSTS` organization secrets. An org admin adds this repository to the repository access of all four.
+- **Deploy credentials**: the server is named once, as `SERVER: ALEXANDRIA` at the top of `build-and-deploy.yml`. The deploy reads the `ALEXANDRIA_HOST` and `ALEXANDRIA_DEPLOY_USER` organization variables and the `ALEXANDRIA_DEPLOY_SSH_KEY` and `ALEXANDRIA_KNOWN_HOSTS` organization secrets. An org admin adds this repository to the repository access of all four; until then the deploy's Set up SSH step fails, naming each one it can't see.
 - **Runtime settings**: one repository secret or variable per setting in [`deploy/.env.example`](deploy/.env.example), named `ENV_<NAME>`, plus a matching line in the **Write .env** step of `.github/workflows/build-and-deploy.yml`. Either kind works (a secret wins if both exist), except `ENV_DISCORD_TOKEN`, which must be a secret. Every deploy writes the settings that are set to `/home/deploy/apps/indy-larry/.env` as `NAME='value'`, readable only by `deploy`; unset ones are left out so the defaults apply. A value can't contain a single quote or a newline; the deploy fails with the setting's name before anything reaches the VPS.
 
 | Name | Kind | Value |
@@ -347,16 +347,26 @@ To change a setting, update it under **Settings → Secrets and variables → Ac
 
 ### First deploy
 
-1. An org admin adds this repository to the `VANDERBILT_*` secrets.
+1. An org admin adds this repository to the `ALEXANDRIA_*` settings.
 2. Add the `ENV_*` secret and variables from the table above.
 3. Stop any other copy of the bot.
 4. Run **Build and Deploy**. The first run pushes the image, then fails at the pull, because new GHCR packages start private.
 5. Make the package public: **Indy-Center → Packages → vnas-discord-bot → Package settings → Change visibility → Public**.
-6. Run **Build and Deploy** again, then check the run's log, or on the VPS:
+6. Run **Build and Deploy** again. With no state on the server yet, it creates the bot without starting it. For a bot with no backup to bring back, start it by hand on the VPS, then check it:
 
    ```bash
-   cd /home/deploy/apps/indy-larry && docker compose ps && docker compose logs --tail 50
+   cd /home/deploy/apps/indy-larry && docker compose up -d && docker compose ps && docker compose logs --tail 50
    ```
+
+### Moving to another server
+
+The bot's state is in its `bot-state` volume, on the server it runs on. Started without it, the bot deletes its status messages and panels and posts new ones (crossposting the status messages to the servers that follow the channel again), forgets when temporary relief roles expire, drops its open request alerts and any running Iron Mic, and may repeat alerts. Restoring the state afterwards doesn't undo that: the messages it names are gone. So the deploy never starts the bot on an empty volume, and a move goes:
+
+1. On the old server, in `~/apps/indy-larry`: `docker compose down` (never `-v`). Only one copy may run at a time: two with the same token delete each other's messages.
+2. Still there, as `deploy`: `backups now indy-larry`, then `backups list indy-larry`, and note the new backup's exact name. Then take it out of that server's backup runner, so it stops backing up a stopped bot under the same name: `mkdir -p ~/moved-apps && mv ~/apps/indy-larry ~/moved-apps/` (the volume stays, as the fallback).
+3. Change `SERVER` at the top of `build-and-deploy.yml` to the new server and merge. The deploy finds no state, creates the container without starting it, and says so in the run's log. Until the restore, the new server's runner may back up the empty volume under the same name, so restore by the exact name, never `latest`.
+4. On the new server, as `deploy`: `backups restore indy-larry <that exact name>`, typing `indy-larry` when asked. `restore.sh` puts the state in the volume and starts the bot (it starts the bot however the restore ends, so if the swap fails the bot starts on the empty volume: read its output, and `docker compose down` at once if it failed).
+5. Check: `docker compose logs bot` in `~/apps/indy-larry` shows `Adopted N existing status message(s)` with N above 0, and in Discord the bot edits its existing status messages and panels rather than posting new ones.
 
 ## Backups
 

@@ -5,6 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  # The server the bot runs on, by the prefix of its four organization settings (ALEXANDRIA_HOST and so on;
+  # docker-infrastructure's README lists each server's). Moving the bot to another server starts here.
+  SERVER: ALEXANDRIA
+
 concurrency:
   group: deploy-${{ github.event.repository.name }}
   cancel-in-progress: false
@@ -177,24 +182,33 @@ jobs:
             -t "$IMAGE:latest" -t "$IMAGE:${{ github.sha }}" .
           docker push --all-tags "$IMAGE"
 
-      # VANDERBILT_HOST and VANDERBILT_DEPLOY_USER are organization variables, the key and known_hosts are organization
+      # <SERVER>_HOST and <SERVER>_DEPLOY_USER are organization variables, the key and known_hosts are organization
       # secrets; all four are limited to selected repositories.
-      # An org admin adds this repository to each of them before the first deploy.
+      # An org admin adds this repository to each of them before the first deploy. Until then this step fails,
+      # naming the settings it can't see.
       - name: Set up SSH
         env:
-          VANDERBILT_HOST: ${{ vars.VANDERBILT_HOST }}
-          VANDERBILT_DEPLOY_USER: ${{ vars.VANDERBILT_DEPLOY_USER }}
-          VANDERBILT_DEPLOY_SSH_KEY: ${{ secrets.VANDERBILT_DEPLOY_SSH_KEY }}
-          VANDERBILT_KNOWN_HOSTS: ${{ secrets.VANDERBILT_KNOWN_HOSTS }}
+          HOST: ${{ vars[format('{0}_HOST', env.SERVER)] }}
+          DEPLOY_USER: ${{ vars[format('{0}_DEPLOY_USER', env.SERVER)] }}
+          DEPLOY_SSH_KEY: ${{ secrets[format('{0}_DEPLOY_SSH_KEY', env.SERVER)] }}
+          KNOWN_HOSTS: ${{ secrets[format('{0}_KNOWN_HOSTS', env.SERVER)] }}
         run: |
+          missing=""
+          for name in HOST DEPLOY_USER DEPLOY_SSH_KEY KNOWN_HOSTS; do
+            [ -n "${!name}" ] || missing+=" ${SERVER}_$name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not set, or this repository has no access:$missing"
+            exit 1
+          fi
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$VANDERBILT_DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "$VANDERBILT_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           cat > ~/.ssh/config <<EOF
           Host vps
-            HostName $VANDERBILT_HOST
-            User $VANDERBILT_DEPLOY_USER
+            HostName $HOST
+            User $DEPLOY_USER
             IdentityFile ~/.ssh/deploy_key
             IdentitiesOnly yes
             StrictHostKeyChecking yes
@@ -282,6 +296,21 @@ jobs:
           set -e
           cd ~/apps/"$APP"
           docker compose pull --quiet
+          # A bot started with no state files posts its status messages and panels afresh and deletes the old
+          # ones, which a later restore can't undo. So on a server with an empty bot-state volume (a new server,
+          # or a move) the deploy only creates the container; `backups restore indy-larry <backup>` then starts
+          # it (README, Moving to another server). The check exits 3 for "no state files"; any other failure
+          # fails the deploy. </dev/null keeps it off this script's stdin.
+          state=0
+          docker compose run --rm --no-deps -T --entrypoint sh bot -c 'ls /data/*.json >/dev/null 2>&1 || exit 3' </dev/null || state=$?
+          if [ "$state" = 3 ]; then
+            docker compose create --remove-orphans
+            echo "::warning::The bot-state volume is empty, so the bot was created but not started. Restore its backup (backups restore indy-larry <backup>), which starts it; or, for a bot with no backup, docker compose up -d in ~/apps/$APP."
+            exit 0
+          elif [ "$state" != 0 ]; then
+            echo "::error::Could not check the bot-state volume (exit $state); the bot was left as it was."
+            exit 1
+          fi
           docker compose up -d --remove-orphans
           sleep 15
           docker compose ps
