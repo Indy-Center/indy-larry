@@ -53,7 +53,7 @@ export async function receiveConnect(env: RoleSyncEnv, result: Extract<TeamSpeak
   const token = newToken();
   await env.KV.put(tokenKey(token), result.uid, { expirationTtl: LINK_SECONDS });
   await env.KV.put(sentKey(result.uid), new Date().toISOString(), { expirationTtl: LINK_SECONDS });
-  await jobsStore(env).enqueue({ type: 'send-text', clientId: result.clientId, text: linkText(token) });
+  await jobsStore(env).enqueue({ type: 'send-text', uid: result.uid, text: linkText(token) });
   // Never the token: whoever holds it can link the identity.
   console.log(`Link TeamSpeak (live): sent TeamSpeak ${result.uid} a link`);
 }

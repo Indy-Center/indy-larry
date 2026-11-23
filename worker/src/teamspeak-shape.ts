@@ -26,10 +26,13 @@ export type TeamSpeakJob =
     }
   | {
       jobId: string;
-      /** Send `text` to one connected client as a private text message. */
+      /**
+       * Send `text` as a private text message to every client holding `uid` when the job is applied. By UID,
+       * not client ID: TeamSpeak hands a freed client ID to the next client that joins.
+       */
       type: 'send-text';
-      /** The client's ID on the server now (TeamSpeak's `clid`), from its `client-connected` result. */
-      clientId: number;
+      /** The identity's unique identifier (TeamSpeak's `client_unique_identifier`), from its `client-connected` result. */
+      uid: string;
       text: string;
     };
 
