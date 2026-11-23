@@ -213,6 +213,14 @@ describe('an unlinked identity connecting', () => {
     expect(jobs).toHaveLength(2);
   });
 
+  it('leaves the kept accounts result showing the groups taken, so linking straight after adds them back', async () => {
+    start('live', []);
+    keepAccounts({ [JO_UID]: [16, 7, 6] });
+    await connect(JO_UID);
+
+    expect(JSON.parse(env.KV.store.get('role-sync:teamspeak:accounts')!).groups[JO_UID]).toEqual([6]);
+  });
+
   it('loses no group when the latest accounts result says it holds none', async () => {
     start('live', []);
     keepAccounts({ [JO_UID]: [6] });

@@ -27,10 +27,11 @@ export function fakeKv({ expire = false }: { expire?: boolean } = {}): FakeKv {
       const value = live(key);
       return value !== null && (type === 'json' || (type as { type?: string })?.type === 'json') ? JSON.parse(value) : value;
     },
-    async put(key: string, value: string, options?: { expirationTtl?: number }) {
+    async put(key: string, value: string, options?: { expirationTtl?: number; expiration?: number }) {
       store.set(key, value);
       ttls.set(key, options?.expirationTtl);
-      if (options?.expirationTtl === undefined) expiresAt.delete(key);
+      if (options?.expiration !== undefined) expiresAt.set(key, options.expiration * 1000);
+      else if (options?.expirationTtl === undefined) expiresAt.delete(key);
       else expiresAt.set(key, Date.now() + options.expirationTtl * 1000);
     },
     async delete(key: string) {
