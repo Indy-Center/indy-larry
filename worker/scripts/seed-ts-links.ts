@@ -18,7 +18,7 @@ const HEADINGS: Record<Outcome, string> = {
   written: 'Written',
   'already-linked': 'Already linked (left alone)',
   'uid-on-another-member': 'UID already on another member (skipped)',
-  'extra-uid': 'Extra UID (the member keeps their first)',
+  'extra-uid': 'Extra UID (the member keeps their newest)',
   'no-cid': 'No CID for the Discord ID (dropped; they get the link message on their next connect)',
   'never-signed-in': 'Never signed in (dropped)',
 };
@@ -32,7 +32,9 @@ export function readRows(path: string): SeedRow[] {
     const discord = find('discordid');
     const teamspeak = find('teamspeakid', 'teamspeakuid', 'tsid', 'tsuid');
     if (!discord || !teamspeak) throw new Error(`members has columns [${columns.join(', ')}]; expected a Discord ID and a TeamSpeak ID`);
-    const query = db.prepare(`SELECT "${discord}" AS d, "${teamspeak}" AS t FROM members ORDER BY rowid`);
+    // Newest row first: the route writes a member's first row and lists the rest as extra, so a
+    // member with several identities keeps the one they added last, the one most likely in use.
+    const query = db.prepare(`SELECT "${discord}" AS d, "${teamspeak}" AS t FROM members ORDER BY rowid DESC`);
     // Discord IDs are past 2^53: read them exactly.
     query.setReadBigInts(true);
     return query
