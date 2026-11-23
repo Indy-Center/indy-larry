@@ -25,11 +25,14 @@ async function takeVatusaSlot(): Promise<void> {
   if (start > now) await new Promise((resolve) => setTimeout(resolve, start - now));
 }
 
-/** VATUSA's record of this person, or null when it has none (404). */
-export async function lookupVatusa(kv: KVNamespace, key: LookupKey): Promise<VatusaPerson | null> {
+/**
+ * VATUSA's record of this person, or null when it has none (404). `fresh` skips the cached answer (for a
+ * sync someone asked for, so a change made on VATUSA moments ago is seen) and caches the new one.
+ */
+export async function lookupVatusa(kv: KVNamespace, key: LookupKey, { fresh = false }: { fresh?: boolean } = {}): Promise<VatusaPerson | null> {
   const id = 'discordId' in key ? `discord:${key.discordId}` : `cid:${key.cid}`;
   const cacheKey = `role-sync:vatusa-user:${id}`;
-  const cached = await kv.get<{ record: VatusaUserRecord | null }>(cacheKey, 'json');
+  const cached = fresh ? null : await kv.get<{ record: VatusaUserRecord | null }>(cacheKey, 'json');
   if (cached) return cached.record ? personFromUser(cached.record) : null;
 
   await takeVatusaSlot();
