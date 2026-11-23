@@ -1,6 +1,7 @@
 import { findByTeamspeakUid, getUser, writeTeamspeakUid } from '../identity';
-import { lookupVatsimRating, lookupVatusa } from '../lookups';
+import { lookupVatsimRating, lookupVatusa, vatsimOnlyPerson } from '../lookups';
 import { MAPPING } from '../mapping';
+import { sendInBatches } from '../queues';
 import type { RoleSyncEnv, RunLists } from '../role-sync';
 import { enqueueTsGroups, jobsStore, type TeamSpeakJobsEnv } from '../teamspeak-jobs';
 import type { TsResult } from '../teamspeak-shape';
@@ -55,8 +56,6 @@ const ASKED_KEY = 'role-sync:teamspeak:asked';
 const ACCOUNTS_KEY = 'role-sync:teamspeak:accounts';
 // As long as a run's lists are kept.
 const KEEP_SECONDS = 60 * 60;
-// Queues takes at most 100 messages in one sendBatch.
-const SEND_BATCH = 100;
 
 type KeptAccounts = { runId: string; groups: Record<string, number[]> };
 
@@ -175,8 +174,7 @@ async function personFor(env: Pick<RoleSyncEnv, 'KV'>, run: RunLists, cid: numbe
   const person = run.people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
   if (person) return person;
   const vatsim = await lookupVatsimRating(env.KV, cid);
-  if (!vatsim) return null;
-  return { cid, discordId: null, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], name: null };
+  return vatsim ? vatsimOnlyPerson(cid, vatsim) : null;
 }
 
 /**
@@ -196,7 +194,7 @@ export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_Q
   await env.KV.delete(ASKED_KEY);
 
   const uids = [...new Set([...result.holders.map((holder) => holder.uid), ...result.connected])];
-  const jobs = uids.map((uid) => ({ body: { type: 'ts-run-account' as const, runId, uid, groups: groups[uid] ?? [] } }));
-  for (let i = 0; i < jobs.length; i += SEND_BATCH) await env.ROLE_SYNC_QUEUE.sendBatch(jobs.slice(i, i + SEND_BATCH));
+  const jobs = uids.map((uid) => ({ type: 'ts-run-account' as const, runId, uid, groups: groups[uid] ?? [] }));
+  await sendInBatches(env.ROLE_SYNC_QUEUE, jobs);
   console.log(`Role sync run ${runId}: teamspeak-bot reported ${result.holders.length} identities holding a managed group and ${result.connected.length} connected; queued ${jobs.length}`);
 }

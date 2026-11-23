@@ -9,6 +9,7 @@ import { MAPPING, type MappingEntry } from './mapping';
 import { discordPlatform, type DiscordMessage, type DiscordPlatformEnv, type RunServer } from './platforms/discord';
 import { checkMode, type AnyPlatform, type MemberLookups, type Mode, type Resolution } from './platforms/platform';
 import { teamspeakPlatform, type TeamSpeakMessage, type TeamSpeakPlatformEnv } from './platforms/teamspeak';
+import { consumeEach, sendInBatches } from './queues';
 import type { SendEnv } from './send';
 import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
 
@@ -66,8 +67,6 @@ const memberKey = (cid: number) => `role-sync:member:${cid}`;
 const MEMBER_COOLDOWN_SECONDS = 120;
 // Long past the time a run's jobs take; a job whose lists have gone is left to the next run.
 const RUN_LISTS_TTL_SECONDS = 60 * 60;
-// Queues takes at most 100 messages in one sendBatch.
-const SEND_BATCH = 100;
 
 /**
  * The cron: fetch VATUSA's lists, then let each adapter read what it needs for the run and list its
@@ -90,8 +89,8 @@ export async function startRoleSync(env: RoleSyncEnv): Promise<void> {
   await env.KV.put(runKey(runId), JSON.stringify(run), { expirationTtl: RUN_LISTS_TTL_SECONDS });
   await env.KV.put(LATEST_RUN_KEY, runId, { expirationTtl: RUN_LISTS_TTL_SECONDS });
 
-  const jobs: MessageSendRequest<RoleSyncMessage>[] = listed.flatMap((one) => one.jobs(runId)).map((body) => ({ body }));
-  for (let i = 0; i < jobs.length; i += SEND_BATCH) await env.ROLE_SYNC_QUEUE.sendBatch(jobs.slice(i, i + SEND_BATCH));
+  const jobs: RoleSyncMessage[] = listed.flatMap((one) => one.jobs(runId));
+  await sendInBatches(env.ROLE_SYNC_QUEUE, jobs);
   console.log(`Role sync run ${runId}: ${run.people.length} people on VATUSA's lists; queued ${jobs.length} members`);
 }
 
@@ -104,15 +103,7 @@ export async function consumeRoleSync(batch: MessageBatch<RoleSyncMessage>, env:
     return runs.get(runId) ?? null;
   };
 
-  for (const message of batch.messages) {
-    try {
-      await runJob(env, mode, message.body, listsOf);
-      message.ack();
-    } catch (error) {
-      console.error(`Role sync job failed, retrying: ${String(error)}`);
-      message.retry({ delaySeconds: 10 * message.attempts });
-    }
-  }
+  await consumeEach(batch, 'Role sync job', (message) => runJob(env, mode, message, listsOf));
 }
 
 /**

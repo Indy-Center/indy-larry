@@ -1,4 +1,6 @@
+import { readJson, status } from './http';
 import { receiveAccounts } from './platforms/teamspeak';
+import { consumeEach } from './queues';
 import { receiveConnect } from './platforms/teamspeak-links';
 import { startRoleSync, type RoleSyncEnv } from './role-sync';
 import { jobsStore, MAX_PULL, type TeamSpeakJobsEnv } from './teamspeak-jobs';
@@ -17,8 +19,6 @@ export type TeamSpeakEnv = TeamSpeakJobsEnv & {
   TEAMSPEAK_BOT_SECRET?: string;
   TEAMSPEAK_RESULTS: Queue<TsResult>;
 };
-
-const status = (code: number) => new Response(null, { status: code });
 
 /** `POST /teamspeak/jobs/pull`: `{ max }` (a whole number from 1; more than 10 gives 10) → `200 { jobs }`. */
 export async function pullJobs(request: Request, env: TeamSpeakEnv): Promise<Response> {
@@ -54,23 +54,16 @@ export async function postResults(request: Request, env: TeamSpeakEnv): Promise<
  * (teamspeak-quiet.ts). A result that throws there is retried on its own.
  */
 export async function consumeTsResults(batch: MessageBatch<TsResult>, env: RoleSyncEnv): Promise<void> {
-  for (const message of batch.messages) {
-    const { body } = message;
-    try {
-      // Any result shows the bot is up: keep its time, and clear a standing quiet alert.
-      await noteResult(env);
-      if (body?.type === 'reconnected') {
-        console.log(describeResult(body));
-        await startRoleSync(env);
-      } else if (body?.type === 'accounts') await receiveAccounts(env, body);
-      else if (body?.type === 'client-connected') await receiveConnect(env, body);
-      else (body?.type === 'failed' ? console.warn : console.log)(describeResult(body));
-      message.ack();
-    } catch (error) {
-      console.error(`TeamSpeak result failed, retrying: ${String(error)}`);
-      message.retry({ delaySeconds: 10 * message.attempts });
-    }
-  }
+  await consumeEach(batch, 'TeamSpeak result', async (body) => {
+    // Any result shows the bot is up: keep its time, and clear a standing quiet alert.
+    await noteResult(env);
+    if (body?.type === 'reconnected') {
+      console.log(describeResult(body));
+      await startRoleSync(env);
+    } else if (body?.type === 'accounts') await receiveAccounts(env, body);
+    else if (body?.type === 'client-connected') await receiveConnect(env, body);
+    else (body?.type === 'failed' ? console.warn : console.log)(describeResult(body));
+  });
 }
 
 function describeResult(result: TsResult): string {
@@ -117,12 +110,4 @@ function isResult(value: unknown): value is TsResult {
 
 function isGroups(groups: unknown): boolean {
   return Array.isArray(groups) && groups.every((id) => Number.isInteger(id) && id > 0);
-}
-
-async function readJson(request: Request): Promise<unknown> {
-  try {
-    return JSON.parse(await request.text());
-  } catch {
-    return null;
-  }
 }

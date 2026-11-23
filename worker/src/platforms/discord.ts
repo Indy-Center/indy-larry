@@ -2,7 +2,7 @@ import { postOnce, type AlertEnv } from '../alerts';
 import { discord, guildId, SNOWFLAKE, type GuildEnv } from '../discord';
 import { groupChanges, syncGroups, type GroupChanges } from '../groups';
 import { findByDiscordId, getUser, IdentityConflict, writeDiscordId, type IdentityEnv, type IdentityUser } from '../identity';
-import { lookupVatsimRating, lookupVatusa } from '../lookups';
+import { lookupVatsimRating, lookupVatusa, vatsimOnlyPerson } from '../lookups';
 import { MAPPING } from '../mapping';
 import { nicknameFor } from '../nickname-rule';
 import { applyNickname, nicknameGuard, type NicknameGuard, type NicknameOutcome } from '../nicknames';
@@ -344,11 +344,7 @@ async function resolvePerson(env: Pick<RoleSyncEnv, 'KV'> & IdentityEnv, run: Ru
     if ('unreachable' in link) throw link.unreachable;
     return { kind: 'no-one' };
   }
-  return {
-    kind: 'person',
-    person: { cid, discordId: member.discordId, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], name: null },
-    identity,
-  };
+  return { kind: 'person', person: vatsimOnlyPerson(cid, vatsim, member.discordId), identity };
 }
 
 /**

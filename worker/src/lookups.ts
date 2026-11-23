@@ -64,8 +64,10 @@ const RATING_SHORT: Record<number, string> = {
   12: 'ADM',
 };
 
+export type VatsimRating = { rating: number; ratingShort: string };
+
 /** A CID's ATC rating from VATSIM, or null when VATSIM has no such member (404). */
-export async function lookupVatsimRating(kv: KVNamespace, cid: number): Promise<{ rating: number; ratingShort: string } | null> {
+export async function lookupVatsimRating(kv: KVNamespace, cid: number): Promise<VatsimRating | null> {
   const cacheKey = `role-sync:vatsim-rating:${cid}`;
   const cached = await kv.get<{ rating: number | null }>(cacheKey, 'json');
   let rating = cached ? cached.rating : undefined;
@@ -80,4 +82,9 @@ export async function lookupVatsimRating(kv: KVNamespace, cid: number): Promise<
     await kv.put(cacheKey, JSON.stringify({ rating: rating ?? null }), { expirationTtl: CACHE_SECONDS });
   }
   return rating == null ? null : { rating, ratingShort: RATING_SHORT[rating] ?? String(rating) };
+}
+
+/** A CID VATUSA has no record of, as the sync takes them: their VATSIM rating, and no roster, role or name. */
+export function vatsimOnlyPerson(cid: number, vatsim: VatsimRating, discordId: string | null = null): VatusaPerson {
+  return { cid, discordId, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], name: null };
 }

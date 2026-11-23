@@ -1,5 +1,6 @@
 import { hasBearer } from './auth';
 import { SNOWFLAKE } from './discord';
+import { readJson, status } from './http';
 import type { RoleSyncEnv, RoleSyncMessage } from './role-sync';
 import { ackJobs, postResults, pullJobs, type TeamSpeakEnv } from './teamspeak-routes';
 import { seedLinks, type TeamSpeakSeedEnv } from './teamspeak-seed';
@@ -33,8 +34,6 @@ const ROUTES: Record<string, Route> = {
 /** What larry's bot may send: a member joined the server, so sync them now. */
 type BotEvent = { type: 'sync-member'; discordId: string };
 
-const status = (code: number) => new Response(null, { status: code });
-
 export async function handleFetch(request: Request, env: BotEventsEnv): Promise<Response> {
   const { pathname } = new URL(request.url);
   const route = Object.hasOwn(ROUTES, pathname) ? ROUTES[pathname] : undefined;
@@ -45,7 +44,7 @@ export async function handleFetch(request: Request, env: BotEventsEnv): Promise<
 
 /** `POST /bot/events`: queues a known event's job on `role-sync` → `202`. */
 async function botEvent(request: Request, env: BotEventsEnv): Promise<Response> {
-  const event = readEvent(await request.text());
+  const event = readEvent(await readJson(request));
   if (!event) return status(400);
   const job: RoleSyncMessage = { type: 'sync-member', discordId: event.discordId };
   await env.ROLE_SYNC_QUEUE.send(job);
@@ -53,13 +52,7 @@ async function botEvent(request: Request, env: BotEventsEnv): Promise<Response> 
 }
 
 /** The body as a known event, or null for anything else. */
-function readEvent(text: string): BotEvent | null {
-  let body: unknown;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    return null;
-  }
+function readEvent(body: unknown): BotEvent | null {
   if (!body || typeof body !== 'object') return null;
   const { type, discordId } = body as Record<string, unknown>;
   if (type === 'sync-member' && typeof discordId === 'string' && SNOWFLAKE.test(discordId)) return { type, discordId };

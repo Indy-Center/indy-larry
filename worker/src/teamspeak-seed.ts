@@ -1,4 +1,5 @@
 import { SNOWFLAKE } from './discord';
+import { readJson } from './http';
 import { findByDiscordId, getUser } from './identity';
 import { checkMode } from './platforms/platform';
 import { heldByAnother, writeTsLink } from './platforms/teamspeak-links';
@@ -26,12 +27,8 @@ export type SeedResult = { discordId: string; uid: string; outcome: SeedOutcome;
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 export async function seedLinks(request: Request, env: TeamSpeakSeedEnv): Promise<Response> {
-  let body: unknown;
-  try {
-    body = JSON.parse(await request.text());
-  } catch {
-    return json({ error: 'not JSON' }, 400);
-  }
+  const body = await readJson(request);
+  if (body === undefined) return json({ error: 'not JSON' }, 400);
   const { rows, dryRun } = (body ?? {}) as { rows?: unknown; dryRun?: unknown };
   if (typeof dryRun !== 'boolean' || !Array.isArray(rows) || rows.length > MAX_SEED_ROWS || !rows.every(isRow)) {
     return json({ error: `expected { rows: [{ discordId, uid }] } of at most ${MAX_SEED_ROWS}, and dryRun: true or false` }, 400);
