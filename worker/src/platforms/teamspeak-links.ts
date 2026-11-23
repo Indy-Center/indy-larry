@@ -26,7 +26,7 @@ const EXPIRED = "This link has expired or was already used. Reconnect to TeamSpe
 const TAKEN = 'That TeamSpeak identity is linked to another member.';
 const SIGN_IN = 'Sign in to flyindycenter.com once before linking.';
 
-const linkText = (token: string) => `Link this TeamSpeak identity to your Indy Center account: https://flyindycenter.com/profile?ts=${token} (works once, for 15 minutes)`;
+const linkText = (token: string) => `Link this TeamSpeak identity to your Indy Center account: https://flyindycenter.com/profile?ts=${token}`;
 
 /**
  * The `teamspeak-results` consumer's `client-connected`: a UID a member holds, or one no member holds,
