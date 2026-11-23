@@ -455,8 +455,26 @@ describe('nicknames', () => {
     expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('Jo')])).toBe('Jo');
   });
 
-  it("does not apply VATUSA's name-privacy flag to identity's name", async () => {
-    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera', flag_nameprivacy: true }, [named('Joanna Rivera', JO)])).toBe('Joanna Rivera');
+  describe("with VATUSA's name-privacy flag on", () => {
+    const flagged = { fname: 'Joanna', lname: 'Rivera', flag_nameprivacy: true };
+
+    it('uses First CID when they have no preferred name in identity, not the VATSIM name identity falls back to', async () => {
+      expect(await nicknameOf(flagged, [named('Joanna Rivera', JO)])).toBe('Joanna 1000001');
+    });
+
+    it("uses identity's name when they have set a preferred name", async () => {
+      expect(await nicknameOf(flagged, [{ ...named('Jordan S.', JO), preferred_name: 'Jordan S.' }])).toBe('Jordan S.');
+    });
+
+    it('shortens a long First CID as before', async () => {
+      expect(await nicknameOf({ fname: 'Wolfeschlegelsteinhausenbergerdorff', lname: 'Smith', flag_nameprivacy: true }, [named('Wolfeschlegelsteinhausenbergerdorff Smith', JO)])).toBe(
+        'Wolfeschlegelsteinhausenbergerdo',
+      );
+    });
+  });
+
+  it("uses identity's name when the flag is off and they have no preferred name", async () => {
+    expect(await nicknameOf({ fname: 'Joanna', lname: 'Rivera' }, [named('Joanna Rivera', JO)])).toBe('Joanna Rivera');
   });
 
   it("shortens identity's name over 32 characters like a VATUSA name", async () => {

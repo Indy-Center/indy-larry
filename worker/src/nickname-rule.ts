@@ -5,22 +5,27 @@ import type { VatusaName } from './vatusa';
  * The one rule for a member's Discord nickname. Null leaves their nickname as it is.
  *
  * 1. Nobody rated below 1 gets one.
- * 2. Else identity's `name` (their preferred name, else their VATSIM first and last name) whenever
- *    identity knows them, shortened as VATUSA's bot does. VATUSA's name-privacy flag is not applied.
- * 3. Else VATUSA's "First Last", or "First CID" when VATUSA's name-privacy flag is on, shortened the
- *    same way.
- * 4. Else null.
+ * 2. Else, when identity knows them and they have set a preferred name, identity's `name` (that
+ *    preferred name), shortened as VATUSA's bot does.
+ * 3. Else, when VATUSA's name-privacy flag is on, VATUSA's "First CID", shortened the same way, so
+ *    identity's fallback to their VATSIM first and last name never shows a private member's surname.
+ * 4. Else identity's `name` (their VATSIM first and last name) whenever identity knows them, shortened
+ *    the same way.
+ * 5. Else VATUSA's "First Last", shortened the same way.
+ * 6. Else null.
  *
  * `identity` is null when identity has no user for them or couldn't be reached.
  */
 export function nicknameFor(
   person: { cid: number; rating: number; name: VatusaName | null },
-  identity: { name: string | null } | null,
+  identity: { name: string | null; preferredName: string | null } | null,
 ): string | null {
   if (person.rating < 1) return null;
   const name = identity?.name?.trim();
+  if (name && identity?.preferredName?.trim()) return shorten(name);
+  if (person.name?.privacy) return shorten(`${person.name.first} ${person.cid}`);
   if (name) return shorten(name);
-  if (person.name) return shorten(person.name.privacy ? `${person.name.first} ${person.cid}` : `${person.name.first} ${person.name.last}`);
+  if (person.name) return shorten(`${person.name.first} ${person.name.last}`);
   return null;
 }
 
