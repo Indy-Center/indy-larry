@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
-import { enqueueTsGroups, TeamSpeakJobs } from '../src/teamspeak-jobs';
-import type { TsResult } from '../src/teamspeak-shape';
+import { enqueueTeamSpeakGroups, TeamSpeakJobs } from '../src/teamspeak-jobs';
+import type { TeamSpeakResult } from '../src/teamspeak-shape';
 import { batchOf, fakeDurableObjects, fakeKv, fakeQueue } from './fake-cloudflare';
 
 const TS_SECRET = 'made-up-teamspeak-bot-secret';
@@ -18,7 +18,7 @@ function makeEnv() {
     BOT_EVENTS_SECRET: 'made-up-bot-events-secret',
     KV: fakeKv(),
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
-    TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
+    TEAMSPEAK_RESULTS: fakeQueue<TeamSpeakResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
   };
 }
@@ -39,7 +39,7 @@ afterEach(() => {
 });
 
 const later = (seconds: number) => vi.setSystemTime(new Date(START.getTime() + seconds * 1000));
-const enqueue = (uid: string, add: number[], remove: number[]) => enqueueTsGroups(env as never, uid, add, remove);
+const enqueue = (uid: string, add: number[], remove: number[]) => enqueueTeamSpeakGroups(env as never, uid, add, remove);
 
 function post(path: string, body: unknown, secret: string | null = TS_SECRET) {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -58,7 +58,7 @@ async function ack(acks: string[], retries: string[] = []) {
   expect(res.status).toBe(204);
 }
 
-describe('enqueueTsGroups and the jobs store', () => {
+describe('enqueueTeamSpeakGroups and the jobs store', () => {
   it('stores a set-groups job and hands it out on a pull, with the ID it returned', async () => {
     const jobId = await enqueue(ALICE, [12, 14], [9]);
     expect(jobId).toEqual(expect.any(String));
@@ -66,9 +66,9 @@ describe('enqueueTsGroups and the jobs store', () => {
   });
 
   it('refuses a job that is not a UID and lists of group IDs, and stores nothing', async () => {
-    await expect(enqueueTsGroups(env as never, '', [1], [])).rejects.toThrow(TypeError);
-    await expect(enqueueTsGroups(env as never, ALICE, [1.5], [])).rejects.toThrow(TypeError);
-    await expect(enqueueTsGroups(env as never, ALICE, [], ['7' as never])).rejects.toThrow(TypeError);
+    await expect(enqueueTeamSpeakGroups(env as never, '', [1], [])).rejects.toThrow(TypeError);
+    await expect(enqueueTeamSpeakGroups(env as never, ALICE, [1.5], [])).rejects.toThrow(TypeError);
+    await expect(enqueueTeamSpeakGroups(env as never, ALICE, [], ['7' as never])).rejects.toThrow(TypeError);
     expect(await pull()).toEqual([]);
   });
 
@@ -219,7 +219,7 @@ describe('the teamspeak-results consumer', () => {
   it('logs each result type it is handed, and the batch succeeds', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const results: TsResult[] = [
+    const results: TeamSpeakResult[] = [
       { type: 'applied', jobId: 'job-1' },
       { type: 'failed', jobId: 'job-2', error: 'unknown uid' },
       { type: 'failed', jobId: 'job-3' },

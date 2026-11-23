@@ -1,9 +1,10 @@
 import { findByTeamspeakUid, getUser, writeTeamspeakUid } from '../identity';
-import { lookupVatsimRating, lookupVatusa } from '../lookups';
+import { lookupVatsimRating, lookupVatusa, vatsimOnlyPerson } from '../lookups';
 import { MAPPING } from '../mapping';
-import type { RoleSyncEnv, RunLists } from '../role-sync';
-import { enqueueTsGroups, jobsStore, type TeamSpeakJobsEnv } from '../teamspeak-jobs';
-import type { TsResult } from '../teamspeak-shape';
+import { sendInBatches } from '../queues';
+import type { RoleSyncEnv } from '../role-sync';
+import { enqueueTeamSpeakGroups, jobsStore, type TeamSpeakJobsEnv } from '../teamspeak-jobs';
+import type { TeamSpeakResult } from '../teamspeak-shape';
 import type { VatusaPerson } from '../vatusa';
 import { checkMode, type Change, type Mode, type Platform } from './platform';
 
@@ -15,8 +16,7 @@ import { checkMode, type Change, type Mode, type Platform } from './platform';
  * The cron asks the bot for its accounts with a `report-accounts` job. Its `accounts` result (on
  * `teamspeak-results`, through receiveAccounts) is kept for an hour and queues one job per UID it names:
  * every identity holding a managed group, and every one connected. Each job resolves its UID through
- * identity's `teamspeak_uid` lookup; a member is synced on every platform they are on by one job a run, so
- * a member Discord's part of the run already lists is left to that job. A member's groups change by a
+ * identity's `teamspeak_uid` lookup, whatever Discord's part of the run does. A member's groups change by a
  * `set-groups` job, in `live` only and only when something differs. A UID no member has linked, or whose
  * member VATUSA and VATSIM don't know, loses every managed group. Admin groups are never in the mapping
  * (mapping.ts refuses them), so never in a change.
@@ -35,7 +35,7 @@ export type TeamSpeakMessage =
       groups: number[];
     }
   | {
-      /** One member's job by CID, from syncMembers() when they have no Discord account. */
+      /** One member's job by CID: syncMembers(), a connect, a link write. */
       type: 'ts-sync-cid';
       cid: number;
       uid: string;
@@ -55,18 +55,21 @@ const ASKED_KEY = 'role-sync:teamspeak:asked';
 const ACCOUNTS_KEY = 'role-sync:teamspeak:accounts';
 // As long as a run's lists are kept.
 const KEEP_SECONDS = 60 * 60;
-// Queues takes at most 100 messages in one sendBatch.
-const SEND_BATCH = 100;
 
 type KeptAccounts = { runId: string; groups: Record<string, number[]> };
 
 /** Every group the mapping names: the only ones the sync adds or removes. */
 const managedGroups = () => MAPPING.flatMap((entry) => (entry.teamspeakGroupId === undefined ? [] : [entry.teamspeakGroupId]));
 
-export const teamspeakPlatform: Platform<TeamSpeakRef, TeamSpeakAccount, never, TeamSpeakMessage> = {
+/** TeamSpeak's part of a run: nothing read once; its accounts come with the bot's answer. */
+type TeamSpeakRun = Record<string, never>;
+
+type TeamSpeakTypes = { ref: TeamSpeakRef; account: TeamSpeakAccount; found: never; message: TeamSpeakMessage; run: TeamSpeakRun; id: number };
+
+export const teamspeakPlatform: Platform<TeamSpeakTypes> = {
   name: 'teamspeak',
 
-  async listAccounts(env, _people, runId) {
+  async startRun(env, runId) {
     const unanswered = await env.KV.get(ASKED_KEY);
     if (unanswered) console.warn(`Role sync: TeamSpeak's part of run ${unanswered} skipped: teamspeak-bot didn't answer report-accounts before the next run`);
     try {
@@ -79,27 +82,26 @@ export const teamspeakPlatform: Platform<TeamSpeakRef, TeamSpeakAccount, never, 
       console.warn(`Role sync: TeamSpeak's part of run ${runId} skipped: couldn't queue report-accounts: ${String(error)}`);
     }
     // Its jobs are queued when the bot answers (receiveAccounts).
-    return { run: {}, jobs: () => [] };
+    return { run: {}, jobs: [] };
   },
 
-  freshRun: async () => ({}),
+  readRun: async () => ({}),
 
-  owns: (message) => MESSAGE_TYPES.includes(message.type),
+  isOwnMessage: (message): message is TeamSpeakMessage => MESSAGE_TYPES.includes(message.type),
 
-  jobOf: (message) => ({ accountId: `TeamSpeak ${message.uid}`, ...(message.type === 'ts-sync-cid' ? { cid: message.cid } : { runId: message.runId }) }),
+  describeJob: (message) => ({ accountId: `TeamSpeak ${message.uid}`, ...(message.type === 'ts-sync-cid' ? { cid: message.cid } : { runId: message.runId }) }),
 
-  async accountOf(env, _mode, message) {
+  async readAccount(env, _mode, message) {
     // The run's result is the newest word on what it holds: the bot answers only when asked.
     if (message.type === 'ts-run-account') return { uid: message.uid, groups: message.groups };
     return currentAccount(env, message.uid);
   },
 
-  async accountFor(_env, _cid, member) {
+  async findAccount(_env, _cid, member) {
     const uid = (await member.identity())?.teamspeakUid;
     return uid ? { uid } : null;
   },
 
-  current: (env, ref) => currentAccount(env, ref.uid),
   messageFor: (cid, ref) => ({ type: 'ts-sync-cid', cid, uid: ref.uid }),
   linkOf: (ref) => ({ uid: ref.uid }),
 
@@ -114,14 +116,14 @@ export const teamspeakPlatform: Platform<TeamSpeakRef, TeamSpeakAccount, never, 
     // The UID's link in identity is the only way to a member.
     const user = await findByTeamspeakUid(env, account.uid);
     if (!user) return { kind: 'unresolved' };
-    const person = await personFor(env, run, user.cid);
+    const person = await personFor(env, run.people, user.cid);
     return person ? { kind: 'person', person, identity: user } : { kind: 'unresolved' };
   },
 
-  held: (account) => account.groups.map(String),
-  idOf: (entry) => (entry.teamspeakGroupId === undefined ? undefined : String(entry.teamspeakGroupId)),
+  heldIds: (account) => account.groups,
+  idFor: (entry) => entry.teamspeakGroupId,
   // Admin groups can't be in the mapping, so nothing the mapping names is off limits.
-  skipped: () => [],
+  untouchable: () => [],
   apply: applyTeamSpeak,
 };
 
@@ -129,7 +131,7 @@ export const teamspeakPlatform: Platform<TeamSpeakRef, TeamSpeakAccount, never, 
  * Queue one `set-groups` job with the change (`live`, and only when there is one), or log what it would be
  * (`dry-run`), then log one line for the identity.
  */
-async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakAccount, never>): Promise<void> {
+async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakTypes>): Promise<void> {
   const { mode, account, resolution, add, remove } = change;
   const label = mode === 'live' ? 'live' : 'dry run';
   const names = (entries: typeof add) => entries.map((entry) => entry.name).join(', ') || 'nothing';
@@ -138,7 +140,7 @@ async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakAccount,
     return;
   }
   if (mode === 'live' && (add.length > 0 || remove.length > 0)) {
-    await enqueueTsGroups(env, account.uid, add.map((entry) => entry.teamspeakGroupId!), remove.map((entry) => entry.teamspeakGroupId!));
+    await enqueueTeamSpeakGroups(env, account.uid, add.map((entry) => entry.teamspeakGroupId!), remove.map((entry) => entry.teamspeakGroupId!));
   }
   const who = resolution.kind === 'person' ? `CID ${resolution.person.cid}: add ${names(add)};` : 'unresolved:';
   console.log(`Role sync (${label}): TeamSpeak ${account.uid} ${who} remove ${names(remove)}`);
@@ -153,7 +155,7 @@ export async function removeManagedGroups(env: TeamSpeakJobsEnv, mode: Mode, uid
     console.log(`Link TeamSpeak (dry run): would remove every managed group from TeamSpeak ${uid}`);
     return;
   }
-  await enqueueTsGroups(env, uid, [], managedGroups());
+  await enqueueTeamSpeakGroups(env, uid, [], managedGroups());
   console.log(`Link TeamSpeak (live): removing every managed group from TeamSpeak ${uid}`);
 }
 
@@ -171,12 +173,11 @@ async function currentAccount(env: Pick<RoleSyncEnv, 'KV'>, uid: string): Promis
 }
 
 /** Who a linked CID is: VATUSA's record (the run's lists, else its per-user lookup), else their VATSIM rating; null when neither knows them. */
-async function personFor(env: Pick<RoleSyncEnv, 'KV'>, run: RunLists, cid: number): Promise<VatusaPerson | null> {
-  const person = run.people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
+async function personFor(env: Pick<RoleSyncEnv, 'KV'>, people: VatusaPerson[], cid: number): Promise<VatusaPerson | null> {
+  const person = people.find((candidate) => candidate.cid === cid) ?? (await lookupVatusa(env.KV, { cid }));
   if (person) return person;
   const vatsim = await lookupVatsimRating(env.KV, cid);
-  if (!vatsim) return null;
-  return { cid, discordId: null, rating: vatsim.rating, ratingShort: vatsim.ratingShort, facility: '', rosters: [], roles: [], name: null };
+  return vatsim ? vatsimOnlyPerson(cid, vatsim) : null;
 }
 
 /**
@@ -184,7 +185,7 @@ async function personFor(env: Pick<RoleSyncEnv, 'KV'>, run: RunLists, cid: numbe
  * identity's groups for the run, and queue one job per UID it names. An answer no run is waiting for (a
  * second answer, or one after its run was skipped) is logged and dropped.
  */
-export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_QUEUE'>, result: Extract<TsResult, { type: 'accounts' }>): Promise<void> {
+export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_QUEUE'>, result: Extract<TeamSpeakResult, { type: 'accounts' }>): Promise<void> {
   const runId = await env.KV.get(ASKED_KEY);
   if (!runId) {
     console.warn('Role sync: teamspeak-bot sent its accounts, but no run is waiting for them; ignored');
@@ -196,7 +197,7 @@ export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_Q
   await env.KV.delete(ASKED_KEY);
 
   const uids = [...new Set([...result.holders.map((holder) => holder.uid), ...result.connected])];
-  const jobs = uids.map((uid) => ({ body: { type: 'ts-run-account' as const, runId, uid, groups: groups[uid] ?? [] } }));
-  for (let i = 0; i < jobs.length; i += SEND_BATCH) await env.ROLE_SYNC_QUEUE.sendBatch(jobs.slice(i, i + SEND_BATCH));
+  const jobs = uids.map((uid) => ({ type: 'ts-run-account' as const, runId, uid, groups: groups[uid] ?? [] }));
+  await sendInBatches(env.ROLE_SYNC_QUEUE, jobs);
   console.log(`Role sync run ${runId}: teamspeak-bot reported ${result.holders.length} identities holding a managed group and ${result.connected.length} connected; queued ${jobs.length}`);
 }

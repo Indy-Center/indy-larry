@@ -1,8 +1,8 @@
 import type { GroupNotice, GroupPost, GroupPostResult } from './client/api';
 import { effectiveMode, findSource, groupRecord, refreshSource } from './groups';
 import { prepareChannelIdSend } from './managed-channels';
-import { discordPlatform, type DiscordRef } from './platforms/discord';
-import { accountFor, syncNow, type RoleSyncEnv } from './role-sync';
+import { discordPlatform } from './platforms/discord';
+import { memberLookups, syncNow, type RoleSyncEnv } from './role-sync';
 
 /** postToGroup(), which needs the role sync as well as the groups: it syncs who it mentions before posting. */
 
@@ -68,7 +68,7 @@ export async function postToGroup(env: RoleSyncEnv, request: GroupPost): Promise
 
   const users: string[] = [];
   for (const cid of [...new Set(mention)].map(Number)) {
-    const account = await accountFor<DiscordRef>(env, discordPlatform, cid);
+    const account = await discordPlatform.findAccount(env, cid, memberLookups(env, cid));
     if (!account) continue;
     await syncNow(env, discordPlatform.messageFor(cid, account));
     users.push(account.id);

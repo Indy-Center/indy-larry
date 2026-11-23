@@ -1,7 +1,8 @@
 import { SNOWFLAKE } from './discord';
+import { readJson } from './http';
 import { findByDiscordId, getUser } from './identity';
 import { checkMode } from './platforms/platform';
-import { heldByAnother, writeTsLink } from './platforms/teamspeak-links';
+import { heldByAnother, writeTeamSpeakLink } from './platforms/teamspeak-links';
 import type { RoleSyncEnv } from './role-sync';
 import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
 
@@ -9,7 +10,7 @@ import { fetchLists, peopleFrom, type VatusaPerson } from './vatusa';
  * `POST /teamspeak/seed`: the cutover's one-off import of the legacy bot's links (seed-ts-links.ts sends
  * them). Each row's Discord ID is matched to a CID (identity's `discord_id`, else VATUSA's lists, read once
  * per request), and the UID is written with the same write confirmTsLink uses, which queues the member's
- * sync. Behind TEAMSPEAK_SEED_SECRET (bot-events.ts), a secret set for the cutover and removed after.
+ * sync. Behind TEAMSPEAK_SEED_SECRET (routes.ts), a secret set for the cutover and removed after.
  */
 
 export type TeamSpeakSeedEnv = RoleSyncEnv & {
@@ -26,12 +27,8 @@ export type SeedResult = { discordId: string; uid: string; outcome: SeedOutcome;
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 export async function seedLinks(request: Request, env: TeamSpeakSeedEnv): Promise<Response> {
-  let body: unknown;
-  try {
-    body = JSON.parse(await request.text());
-  } catch {
-    return json({ error: 'not JSON' }, 400);
-  }
+  const body = await readJson(request);
+  if (body === undefined) return json({ error: 'not JSON' }, 400);
   const { rows, dryRun } = (body ?? {}) as { rows?: unknown; dryRun?: unknown };
   if (typeof dryRun !== 'boolean' || !Array.isArray(rows) || rows.length > MAX_SEED_ROWS || !rows.every(isRow)) {
     return json({ error: `expected { rows: [{ discordId, uid }] } of at most ${MAX_SEED_ROWS}, and dryRun: true or false` }, 400);
@@ -86,7 +83,7 @@ export async function seedLinks(request: Request, env: TeamSpeakSeedEnv): Promis
         done('written', cid);
         continue;
       }
-      const written = await writeTsLink(env, mode, cid, user, uid);
+      const written = await writeTeamSpeakLink(env, mode, cid, user, uid);
       if (written === 'written') {
         claimedCids.add(cid);
         claimedUids.add(uid);

@@ -1,7 +1,7 @@
 import { findByTeamspeakUid, getUser, IdentityConflict, writeTeamspeakUid, type IdentityUser } from '../identity';
 import { syncOnConnect, type RoleSyncEnv } from '../role-sync';
 import { jobsStore } from '../teamspeak-jobs';
-import type { TsResult } from '../teamspeak-shape';
+import type { TeamSpeakResult } from '../teamspeak-shape';
 import { checkMode, type Mode } from './platform';
 import { removeManagedGroups, teamspeakPlatform } from './teamspeak';
 
@@ -31,13 +31,13 @@ const linkText = (token: string) => `Link this TeamSpeak identity to your Indy C
  * The `teamspeak-results` consumer's `client-connected`: a UID a member holds, or one no member holds,
  * which is sent its link. Throws (so the result is retried) when identity can't be reached.
  */
-export async function receiveConnect(env: RoleSyncEnv, result: Extract<TsResult, { type: 'client-connected' }>): Promise<void> {
+export async function receiveConnect(env: RoleSyncEnv, result: Extract<TeamSpeakResult, { type: 'client-connected' }>): Promise<void> {
   const mode = checkMode(env);
   const holder = await findByTeamspeakUid(env, result.uid);
   if (holder) {
-    // A UID a member holds: their sync, unless they were synced in the last 5 minutes.
+    // A UID a member holds: their TeamSpeak sync, unless they were synced in the last 5 minutes.
     console.log(`TeamSpeak ${result.uid} connected: linked to CID ${holder.cid}`);
-    await syncOnConnect(env, holder.cid);
+    await syncOnConnect(env, holder);
     return;
   }
 
@@ -74,7 +74,7 @@ export async function confirmTsLink(env: RoleSyncEnv, cid: number, token: string
   // Used: it can't link twice, and the next connect of an identity still unlinked gets a fresh one.
   await env.KV.delete(tokenKey(token));
   await env.KV.delete(sentKey(uid));
-  const written = await writeTsLink(env, mode, cid, user, uid);
+  const written = await writeTeamSpeakLink(env, mode, cid, user, uid);
   if (written !== 'written') throw new Error(written === 'taken' ? TAKEN : SIGN_IN);
 }
 
@@ -89,7 +89,7 @@ export async function heldByAnother(env: RoleSyncEnv, cid: number, uid: string):
  * its managed groups first, the UID is written to identity, and the member's sync is queued. `taken` when
  * someone linked the UID between the check and the write, `sign-in` when identity has no user for the CID.
  */
-export async function writeTsLink(env: RoleSyncEnv, mode: Mode, cid: number, user: IdentityUser, uid: string): Promise<'written' | 'taken' | 'sign-in'> {
+export async function writeTeamSpeakLink(env: RoleSyncEnv, mode: Mode, cid: number, user: IdentityUser, uid: string): Promise<'written' | 'taken' | 'sign-in'> {
   if (user.teamspeakUid && user.teamspeakUid !== uid) await removeManagedGroups(env, mode, user.teamspeakUid);
   try {
     if (!(await writeTeamspeakUid(env, cid, uid))) return 'sign-in';

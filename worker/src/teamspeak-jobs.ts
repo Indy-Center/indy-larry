@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import type { TsJob, TsJobRequest } from './teamspeak-shape';
+import type { TeamSpeakJob, TeamSpeakJobRequest } from './teamspeak-shape';
 
 /**
  * The TeamSpeak jobs store: one Durable Object with SQLite storage, by a fixed name, holding the jobs
@@ -47,9 +47,9 @@ export class TeamSpeakJobs extends DurableObject {
   }
 
   /** Adds a job and returns its ID. */
-  enqueue(request: TsJobRequest): string {
+  enqueue(request: TeamSpeakJobRequest): string {
     const jobId = crypto.randomUUID();
-    const job = { jobId, ...request } as TsJob;
+    const job = { jobId, ...request } as TeamSpeakJob;
     this.sql.exec('INSERT INTO jobs (job_id, body, created_at) VALUES (?, ?, ?)', jobId, JSON.stringify(job), Date.now());
     return jobId;
   }
@@ -58,13 +58,13 @@ export class TeamSpeakJobs extends DurableObject {
    * Adds a job after deleting any older job of the same type that hasn't been pulled (no lease, no try),
    * so at most one of them waits. A leased or retried one is left alone. Returns the new job's ID.
    */
-  enqueueReplacing(request: TsJobRequest): string {
+  enqueueReplacing(request: TeamSpeakJobRequest): string {
     this.sql.exec("DELETE FROM jobs WHERE leased_until = 0 AND tries = 0 AND json_extract(body, '$.type') = ?", request.type);
     return this.enqueue(request);
   }
 
   /** Up to `max` (at most 10) of the oldest jobs not leased, each now leased for 60 seconds. */
-  pull(max: number): TsJob[] {
+  pull(max: number): TeamSpeakJob[] {
     const now = Date.now();
     for (const row of this.sql.exec<JobRow>('SELECT job_id, body, tries FROM jobs WHERE leased_until > 0 AND leased_until <= ? ORDER BY seq', now).toArray()) {
       this.countTry(row, 'its lease ran out');
@@ -72,7 +72,7 @@ export class TeamSpeakJobs extends DurableObject {
     const limit = Math.max(0, Math.min(Math.floor(max), MAX_PULL));
     const rows = this.sql.exec<JobRow>('SELECT job_id, body, tries FROM jobs WHERE leased_until = 0 ORDER BY seq LIMIT ?', limit).toArray();
     for (const row of rows) this.sql.exec('UPDATE jobs SET leased_until = ? WHERE job_id = ?', now + LEASE_MS, row.job_id);
-    return rows.map((row) => JSON.parse(row.body) as TsJob);
+    return rows.map((row) => JSON.parse(row.body) as TeamSpeakJob);
   }
 
   /** Deletes the jobs in `acks`; each in `retries` counts a try and can be pulled again. Unknown IDs are ignored. */
@@ -106,7 +106,7 @@ export function jobsStore(env: TeamSpeakJobsEnv) {
  * Queues a `set-groups` job: give TeamSpeak identity `uid` the server groups in `add` and take those in
  * `remove`. Returns the job's ID. Enqueue-only: the result comes back later on `teamspeak-results`.
  */
-export async function enqueueTsGroups(env: TeamSpeakJobsEnv, uid: string, add: number[], remove: number[]): Promise<string> {
+export async function enqueueTeamSpeakGroups(env: TeamSpeakJobsEnv, uid: string, add: number[], remove: number[]): Promise<string> {
   if (typeof uid !== 'string' || uid === '') throw new TypeError('uid must be a TeamSpeak unique identifier.');
   for (const groups of [add, remove]) {
     if (!Array.isArray(groups) || !groups.every((id) => Number.isInteger(id) && id > 0)) throw new TypeError('add and remove must be lists of server group IDs.');

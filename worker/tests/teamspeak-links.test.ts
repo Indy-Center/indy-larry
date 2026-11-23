@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { TeamSpeakJobs } from '../src/teamspeak-jobs';
-import type { TsJob, TsResult } from '../src/teamspeak-shape';
+import type { TeamSpeakJob, TeamSpeakResult } from '../src/teamspeak-shape';
 import { batchOf, fakeDurableObjects, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD } from './fake-discord';
 import { identityEnv, idUser, type FakeUser } from './fake-identity';
@@ -39,7 +39,7 @@ function makeEnv(mode: string, users: FakeUser[]) {
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
     TEAMSPEAK_BOT_SECRET: 'made-up-teamspeak-bot-secret',
-    TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
+    TEAMSPEAK_RESULTS: fakeQueue<TeamSpeakResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
   };
 }
@@ -69,14 +69,14 @@ const later = (minutes: number) => vi.setSystemTime(new Date(Date.now() + minute
 
 /** teamspeak-bot reporting a client entering, through the results consumer. */
 async function connect(uid: string, clientId = 5) {
-  const { batch, messages } = batchOf<TsResult>('teamspeak-results', [{ type: 'client-connected', uid, clientId, nickname: 'Jo' }]);
+  const { batch, messages } = batchOf<TeamSpeakResult>('teamspeak-results', [{ type: 'client-connected', uid, clientId, nickname: 'Jo' }]);
   await larry.queue(batch as never);
   return messages;
 }
 
 const store = () => env.TEAMSPEAK_JOBS.get(env.TEAMSPEAK_JOBS.idFromName('teamspeak-jobs'));
 /** Every job waiting in the jobs store, oldest first, taken as teamspeak-bot would (pulled and acked), so a later call sees only newer ones. */
-const tsJobs = async (): Promise<TsJob[]> => {
+const tsJobs = async (): Promise<TeamSpeakJob[]> => {
   const jobs = store().pull(10);
   store().ack(jobs.map((job) => job.jobId), []);
   return jobs;
@@ -84,7 +84,7 @@ const tsJobs = async (): Promise<TsJob[]> => {
 const texts = async () => (await tsJobs()).filter((job) => job.type === 'send-text');
 
 /** The token in a link message. */
-const tokenIn = (job: TsJob) => (job.type === 'send-text' ? /\?ts=([A-Za-z0-9_-]+) /.exec(job.text)?.[1] : undefined);
+const tokenIn = (job: TeamSpeakJob) => (job.type === 'send-text' ? /\?ts=([A-Za-z0-9_-]+) /.exec(job.text)?.[1] : undefined);
 
 /** Connect `uid` unlinked and return the token its message carries. */
 async function linkMessage(uid: string): Promise<string> {
@@ -274,7 +274,7 @@ describe('confirmTsLink', () => {
   it("removes the old UID's managed groups before writing the new one", async () => {
     start('live', [tsUser(1000001, JO_OLD_UID)]);
     const token = await linkMessage(JO_UID);
-    let jobsAtWrite: TsJob[] = [];
+    let jobsAtWrite: TeamSpeakJob[] = [];
     env.IDENTITY.beforePatch = () => void (jobsAtWrite = store().pull(10));
     await larry.confirmTsLink(1000001, token);
 
@@ -306,7 +306,7 @@ describe('confirmTsLink', () => {
 describe("unlink(cid, 'teamspeak')", () => {
   it('queues the removal of every managed group before clearing the link', async () => {
     start('live', [tsUser(1000001, JO_UID)]);
-    let jobsAtWrite: TsJob[] = [];
+    let jobsAtWrite: TeamSpeakJob[] = [];
     env.IDENTITY.beforePatch = () => void (jobsAtWrite = store().pull(10));
     await larry.unlink(1000001, 'teamspeak');
 
@@ -315,11 +315,11 @@ describe("unlink(cid, 'teamspeak')", () => {
     expect(await larry.getLinks(1000001)).toEqual({ discord: null, teamspeak: null });
   });
 
-  it("queues the member's sync on the account they still have", async () => {
+  it('leaves their Discord account alone: unlinking TeamSpeak queues no Discord sync', async () => {
     start('live', [tsUser(1000001, JO_UID, JO_DISCORD)]);
     await larry.unlink(1000001, 'teamspeak');
 
-    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JO_DISCORD }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 
   it('clears the link in dry-run, logging the removal instead of queueing it', async () => {

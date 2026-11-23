@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { TeamSpeakJobs } from '../src/teamspeak-jobs';
-import type { TsJob, TsResult } from '../src/teamspeak-shape';
+import type { TeamSpeakJob, TeamSpeakResult } from '../src/teamspeak-shape';
 import { batchOf, fakeDurableObjects, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, type Server, type Write } from './fake-discord';
 import { identityEnv, idUser, type FakeUser } from './fake-identity';
@@ -11,11 +11,12 @@ import { fakeVatusaAndDiscord } from './fake-vatusa';
 import { lists, record } from './vatusa-records';
 
 /**
- * Sync on TeamSpeak connect, a full sync on `reconnected`, and the quiet alert: driven through the
+ * Sync on TeamSpeak connect, TeamSpeak's run on `reconnected`, and the quiet alert: driven through the
  * results consumer and the cron. Made-up CIDs and UIDs throughout.
  */
 
 const JO_UID = 'joMadeUpUid00000000000000000=';
+const JO_DISCORD = '830000000000000001';
 const ALERTS = '300000000000000001';
 const MINUTE = 60_000;
 const START = new Date('2026-11-22T12:00:00Z');
@@ -37,7 +38,7 @@ function makeEnv(users: FakeUser[]) {
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
     TEAMSPEAK_BOT_SECRET: 'made-up-teamspeak-bot-secret',
-    TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
+    TEAMSPEAK_RESULTS: fakeQueue<TeamSpeakResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
   };
 }
@@ -80,8 +81,8 @@ const later = (minutes: number) => vi.setSystemTime(new Date(Date.now() + minute
 const cron = () => larry.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.now(), noRetry() {} } as ScheduledController);
 const alerts = () => writes.filter((write) => write.path === `/channels/${ALERTS}/messages`).map((write) => write.body?.content);
 
-async function receive(...results: TsResult[]) {
-  const { batch, messages } = batchOf<TsResult>('teamspeak-results', results);
+async function receive(...results: TeamSpeakResult[]) {
+  const { batch, messages } = batchOf<TeamSpeakResult>('teamspeak-results', results);
   await larry.queue(batch as never);
   return messages;
 }
@@ -105,17 +106,26 @@ describe('a linked member connecting', () => {
     await connect();
     expect(queuedFor(1000001)).toHaveLength(2);
   });
+
+  it('queues only their TeamSpeak job when they have Discord too', async () => {
+    env = makeEnv([{ ...tsUser(1000001, JO_UID), discord_id: JO_DISCORD }]);
+    larry = new Larry({} as ExecutionContext, env as never);
+    await connect();
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'ts-sync-cid', cid: 1000001, uid: JO_UID }]);
+  });
 });
 
 describe('reconnected', () => {
-  it('starts a full sync, as the cron does', async () => {
+  it("starts TeamSpeak's part of a run, and not Discord's", async () => {
+    fakeVatusaAndDiscord(goodLists(), { roles: [], members: [{ user: { id: JO_DISCORD }, roles: [] }] });
     const messages = await receive({ type: 'reconnected', at: '2026-11-22T12:00:00Z' });
 
     expect(messages[0]!.acked).toBe(true);
-    // The cron's TeamSpeak part: one report-accounts job asking teamspeak-bot for its accounts.
+    // One report-accounts job asking teamspeak-bot for its accounts, and no Discord run-member jobs.
     const store = env.TEAMSPEAK_JOBS.get(env.TEAMSPEAK_JOBS.idFromName('teamspeak-jobs'));
-    const jobs: TsJob[] = store.pull(10);
+    const jobs: TeamSpeakJob[] = store.pull(10);
     expect(jobs.map((job) => job.type)).toEqual(['report-accounts']);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([]);
   });
 });
 

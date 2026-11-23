@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Larry from '../src/index';
 import type { RoleSyncMessage } from '../src/role-sync';
 import { TeamSpeakJobs } from '../src/teamspeak-jobs';
-import type { TsJob, TsResult } from '../src/teamspeak-shape';
+import type { TeamSpeakJob, TeamSpeakResult } from '../src/teamspeak-shape';
 import type { VatusaRecord } from '../src/vatusa';
 import { batchOf, fakeDurableObjects, fakeKv, fakeQueue } from './fake-cloudflare';
 import { GUILD, type Server, type Write } from './fake-discord';
@@ -13,8 +13,8 @@ import { lists, record } from './vatusa-records';
 
 /**
  * TeamSpeak as the role sync's second platform: the cron asks teamspeak-bot for its accounts, the
- * `accounts` result queues their jobs, and each member's one job sets their groups with a `set-groups`
- * job (live only) beside their Discord roles. Made-up CIDs, UIDs and Discord IDs throughout.
+ * `accounts` result queues their jobs, and each identity's job sets its groups with a `set-groups` job
+ * (live only), on its own: never waiting on Discord's. Made-up CIDs, UIDs and Discord IDs throughout.
  */
 
 const JO_UID = 'joMadeUpUid00000000000000000=';
@@ -41,7 +41,7 @@ function makeEnv(mode: string, users: FakeUser[]) {
     ROLE_SYNC_QUEUE: fakeQueue<RoleSyncMessage>(),
     LARRY_QUEUE: fakeQueue<never>(),
     TEAMSPEAK_BOT_SECRET: 'made-up-teamspeak-bot-secret',
-    TEAMSPEAK_RESULTS: fakeQueue<TsResult>(),
+    TEAMSPEAK_RESULTS: fakeQueue<TeamSpeakResult>(),
     TEAMSPEAK_JOBS: fakeDurableObjects((ctx) => new TeamSpeakJobs(ctx, {})),
   };
 }
@@ -89,7 +89,7 @@ const cron = () => larry.scheduled({ cron: '*/15 * * * *', scheduledTime: Date.n
 
 /** What teamspeak-bot answers `report-accounts` with, through the results consumer. */
 async function report(holders: { uid: string; groups: number[] }[], connected: string[] = []) {
-  const { batch, messages } = batchOf<TsResult>('teamspeak-results', [{ type: 'accounts', holders, connected }]);
+  const { batch, messages } = batchOf<TeamSpeakResult>('teamspeak-results', [{ type: 'accounts', holders, connected }]);
   await larry.queue(batch as never);
   return messages;
 }
@@ -102,7 +102,7 @@ async function consume(bodies: RoleSyncMessage[] = env.ROLE_SYNC_QUEUE.sent.spli
 }
 
 /** Every job waiting in the TeamSpeak jobs store, oldest first. */
-const tsJobs = async (): Promise<TsJob[]> => {
+const tsJobs = async (): Promise<TeamSpeakJob[]> => {
   const store = env.TEAMSPEAK_JOBS.get(env.TEAMSPEAK_JOBS.idFromName('teamspeak-jobs'));
   return store.pull(10);
 };
@@ -260,19 +260,24 @@ describe('a member on Discord and TeamSpeak', () => {
     return fakeVatusaAndDiscord(listsWith(s3(1000001)), { roles: [], members: [{ user: { id: JO_DISCORD }, roles: [ROLE.member], nick: 'Test Person1000001' }] });
   };
 
-  it("gets one job in a run, which applies both: the TeamSpeak account's own job leaves them to Discord's", async () => {
+  it('gets a job on each platform in a run, each applying only its own', async () => {
     const { writes } = both();
     await cron();
-    await report([{ uid: JO_UID, groups: [GROUP.member] }]);
-    expect(env.ROLE_SYNC_QUEUE.sent.map((job) => job.type)).toEqual(['run-member', 'ts-run-account']);
+    expect(env.ROLE_SYNC_QUEUE.sent.map((job) => job.type)).toEqual(['run-member']);
     await consume();
-
     expect(roleWrites(writes)).toEqual([`PUT /guilds/${GUILD}/members/${JO_DISCORD}/roles/${ROLE.student3}`, `PUT /guilds/${GUILD}/members/${JO_DISCORD}/roles/${ROLE.atc}`]);
+    // Discord's job has run; TeamSpeak waits for nothing from it, only for the bot's answer.
+    expect(await setGroups()).toEqual([]);
+
+    writes.length = 0;
+    await report([{ uid: JO_UID, groups: [GROUP.member] }]);
+    expect(env.ROLE_SYNC_QUEUE.sent.map((job) => job.type)).toEqual(['ts-run-account']);
+    await consume();
+    expect(roleWrites(writes)).toEqual([]);
     expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [] }]);
-    expect(logs).toContain("Role sync: CID 1000001 is synced by this run's discord job, not again from teamspeak");
   });
 
-  it('gets one job from syncMembers, which applies both', async () => {
+  it('gets a job on each platform from syncMembers', async () => {
     const { writes } = both();
     await cron();
     await report([{ uid: JO_UID, groups: [GROUP.member] }]);
@@ -282,9 +287,38 @@ describe('a member on Discord and TeamSpeak', () => {
 
     env.KV.store.set('role-sync:teamspeak:accounts', JSON.stringify({ runId: 'r', groups: { [JO_UID]: [GROUP.member, GROUP.s1] } }));
     expect(await larry.syncMembers([1000001])).toEqual([{ cid: 1000001, queued: true }]);
-    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'sync-cid', cid: 1000001, discordId: JO_DISCORD }]);
+    expect(env.ROLE_SYNC_QUEUE.sent).toEqual([
+      { type: 'sync-cid', cid: 1000001, discordId: JO_DISCORD },
+      { type: 'ts-sync-cid', cid: 1000001, uid: JO_UID },
+    ]);
     await consume();
     expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [GROUP.s1] }]);
+  });
+
+  it("gets their TeamSpeak groups while their Discord account isn't in the server", async () => {
+    start('live', [tsUser(1000001, JO_UID, JO_DISCORD)]);
+    fakeVatusaAndDiscord(listsWith(s3(1000001)), emptyServer());
+    await cron();
+    await report([{ uid: JO_UID, groups: [GROUP.member] }]);
+    await consume();
+    expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [] }]);
+
+    env.KV.store.set('role-sync:teamspeak:accounts', JSON.stringify({ runId: 'r', groups: { [JO_UID]: [GROUP.member, GROUP.s1] } }));
+    await larry.syncMembers([1000001]);
+    await consume();
+    expect(logs).toContain(`Role sync: ${JO_DISCORD} isn't in the server`);
+    expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [GROUP.s1] }]);
+  });
+
+  it("still asks teamspeak-bot for its accounts when Discord's part of the run fails", async () => {
+    start('live', [tsUser(1000001, JO_UID, JO_DISCORD)]);
+    fakeVatusaAndDiscord(listsWith(s3(1000001)), { roles: [], members: null });
+    await expect(cron()).rejects.toThrow(/discord: .*Server Members intent/);
+    expect((await tsJobs()).map((job) => job.type)).toEqual(['report-accounts']);
+
+    await report([{ uid: JO_UID, groups: [GROUP.member] }]);
+    await consume();
+    expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [] }]);
   });
 });
 
