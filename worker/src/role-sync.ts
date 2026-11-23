@@ -7,7 +7,7 @@ import { refreshSource } from './groups';
 import { getUser, type IdentityEnv, type IdentityUser } from './identity';
 import { lookupVatusa } from './lookups';
 import { MAPPING, type MappingEntry } from './mapping';
-import { discordPlatform, type DiscordMessage, type DiscordPlatformEnv } from './platforms/discord';
+import { discordPlatform, inServer, type DiscordMessage, type DiscordPlatformEnv } from './platforms/discord';
 import { checkMode, type AnyPlatform, type JobRun, type MemberLookups, type Mode, type Resolution } from './platforms/platform';
 import { teamspeakPlatform, type TeamSpeakMessage, type TeamSpeakPlatformEnv } from './platforms/teamspeak';
 import { consumeEach, sendInBatches } from './queues';
@@ -308,7 +308,7 @@ export async function unlink(env: RoleSyncEnv, cid: number, service: keyof Links
   await queueMemberSync(env, cid, [platform]);
 }
 
-/** RPC: which account is in use for a member on each platform, and where it came from. */
+/** RPC: which account is in use for a member on each platform, where it came from, and whether the Discord one is in the server. */
 export async function getLinks(env: RoleSyncEnv, cid: number): Promise<Links> {
   const links: Links = { discord: null, teamspeak: null };
   const member = memberLookups(env, cid);
@@ -316,6 +316,7 @@ export async function getLinks(env: RoleSyncEnv, cid: number): Promise<Links> {
     const ref = await platform.findAccount(env, cid, member);
     Object.assign(links, { [platform.name]: ref && platform.linkOf(ref) });
   }
+  if (links.discord) links.discord = { ...links.discord, inServer: await inServer(env, links.discord.id) };
   return links;
 }
 

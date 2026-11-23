@@ -86,6 +86,16 @@ async function memberNow(env: GuildEnv, discordId: string): Promise<DiscordAccou
   return memberFrom(discordId, held);
 }
 
+/** Whether the account is in the server, for getLinks(); null (logged) when Discord can't be asked. */
+export async function inServer(env: GuildEnv, discordId: string): Promise<boolean | null> {
+  try {
+    return (await getMember(env.DISCORD_TOKEN, guildId(env), discordId)) !== null;
+  } catch (error) {
+    console.warn(`getLinks: couldn't ask Discord whether ${discordId} is in the server: ${String(error)}`);
+    return null;
+  }
+}
+
 type DiscordTypes = { ref: DiscordRef; account: DiscordAccount; found: DiscordFound; message: DiscordMessage; run: RunServer; id: string };
 
 export const discordPlatform: Platform<DiscordTypes> = {
