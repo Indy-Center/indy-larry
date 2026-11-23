@@ -3,15 +3,16 @@ import { syncOnConnect, type RoleSyncEnv } from '../role-sync';
 import { jobsStore } from '../teamspeak-jobs';
 import type { TeamSpeakResult } from '../teamspeak-shape';
 import { checkMode, type Mode } from './platform';
-import { removeManagedGroups, teamspeakPlatform } from './teamspeak';
+import { removeHeldManagedGroups, removeManagedGroups, teamspeakPlatform } from './teamspeak';
 
 /**
  * TeamSpeak links. A member links a TeamSpeak identity only by opening the link teamspeak-bot sends it
  * privately when it connects unlinked: no route or RPC lists connected clients or sends a link on request.
  *
- * On `client-connected` for a UID no member holds, larry makes a one-time token, keeps `token → uid` and
- * `uid → sent-at` in KV for 15 minutes, and queues a `send-text` job with the link. While that link is
- * unused and under 15 minutes old, a reconnect sends nothing. confirmTsLink() links the token's UID to the
+ * On `client-connected` for a UID no member holds, larry takes the managed groups it holds, makes a
+ * one-time token, keeps `token → uid` and `uid → token` in KV for 15 minutes, and queues a `send-text` job
+ * with the link. While that link is unused and under 15 minutes old, every reconnect is sent the same link
+ * again; after that, a fresh one. confirmTsLink() links the token's UID to the
  * CID that opens it, once. The link is written to identity's `teamspeak_uid` (identity.ts).
  */
 
@@ -41,21 +42,33 @@ export async function receiveConnect(env: RoleSyncEnv, result: Extract<TeamSpeak
     return;
   }
 
-  if (await env.KV.get(sentKey(result.uid))) {
-    console.log(`TeamSpeak ${result.uid} connected unlinked: the link sent in the last 15 minutes is still unused, so none is sent`);
-    return;
-  }
+  // No one knows who this is, so it keeps none of the groups the mapping hands out.
+  await removeHeldManagedGroups(env, mode, result.uid);
+
   // A message to the client is a TeamSpeak write, so `dry-run` only logs it, as it does the groups.
   if (mode !== 'live') {
     console.log(`Link TeamSpeak (dry run): would send TeamSpeak ${result.uid} a link`);
     return;
   }
-  const token = newToken();
-  await env.KV.put(tokenKey(token), result.uid, { expirationTtl: LINK_SECONDS });
-  await env.KV.put(sentKey(result.uid), new Date().toISOString(), { expirationTtl: LINK_SECONDS });
+  // Every connect gets the link, in case the last message was closed: the same one while it is unused
+  // and under 15 minutes old, so only one works at a time, else a fresh one.
+  const unused = await unusedToken(env, result.uid);
+  const token = unused ?? newToken();
+  if (!unused) {
+    await env.KV.put(tokenKey(token), result.uid, { expirationTtl: LINK_SECONDS });
+    await env.KV.put(sentKey(result.uid), token, { expirationTtl: LINK_SECONDS });
+  }
   await jobsStore(env).enqueue({ type: 'send-text', uid: result.uid, text: linkText(token) });
   // Never the token: whoever holds it can link the identity.
-  console.log(`Link TeamSpeak (live): sent TeamSpeak ${result.uid} a link`);
+  console.log(`Link TeamSpeak (live): sent TeamSpeak ${result.uid} ${unused ? 'its unused link again' : 'a link'}`);
+}
+
+/** The token last sent to this UID, while it is unused and under 15 minutes old. */
+async function unusedToken(env: RoleSyncEnv, uid: string): Promise<string | null> {
+  const sent = await env.KV.get(sentKey(uid));
+  // Before tokens were kept here the value was the time sent, which names no token.
+  if (!sent || !TOKEN.test(sent)) return null;
+  return (await env.KV.get(tokenKey(sent))) === uid ? sent : null;
 }
 
 /**
