@@ -277,6 +277,20 @@ describe('a member on Discord and TeamSpeak', () => {
     expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [] }]);
   });
 
+  it('compares a sync before the next run against the groups the last change left, not the stale report', async () => {
+    both();
+    await cron();
+    await report([{ uid: JO_UID, groups: [GROUP.member] }]);
+    await consume();
+    expect(await setGroups()).toEqual([{ uid: JO_UID, add: [GROUP.s3, GROUP.atc], remove: [] }]);
+    expect(JSON.parse(env.KV.store.get('role-sync:teamspeak:accounts')!).groups[JO_UID]).toEqual([GROUP.member, GROUP.s3, GROUP.atc]);
+
+    // Before, this compared against [member] again and queued the same add twice.
+    await larry.syncMembers([1000001]);
+    await consume();
+    expect(await setGroups()).toEqual([]);
+  });
+
   it('gets a job on each platform from syncMembers', async () => {
     const { writes } = both();
     await cron();
@@ -332,10 +346,11 @@ describe('a member only on TeamSpeak', () => {
     await tsJobs();
 
     expect(await larry.getLinks(1000002)).toEqual({ discord: null, teamspeak: { uid: SAM_UID } });
+    // A newer result: the run's add didn't stick (someone took the groups away by hand, say).
+    env.KV.store.set('role-sync:teamspeak:accounts', JSON.stringify({ runId: 'r', groups: { [SAM_UID]: [GROUP.member] } }));
     expect(await larry.syncMembers([1000002])).toEqual([{ cid: 1000002, queued: true }]);
     expect(env.ROLE_SYNC_QUEUE.sent).toEqual([{ type: 'ts-sync-cid', cid: 1000002, uid: SAM_UID }]);
     await consume();
-    // The kept accounts say they hold Member only; the job before this one's set-groups isn't seen yet.
     expect(await setGroups()).toEqual([{ uid: SAM_UID, add: [GROUP.s3, GROUP.atc], remove: [] }]);
   });
 });

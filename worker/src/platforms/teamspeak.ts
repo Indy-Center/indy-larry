@@ -56,7 +56,8 @@ const ACCOUNTS_KEY = 'role-sync:teamspeak:accounts';
 // As long as a run's lists are kept.
 const KEEP_SECONDS = 60 * 60;
 
-type KeptAccounts = { runId: string; groups: Record<string, number[]> };
+/** `expiresAt` (ms) is kept so a patch after a queued change doesn't extend the report's life. */
+type KeptAccounts = { runId: string; groups: Record<string, number[]>; expiresAt?: number };
 
 /** Every group the mapping names: the only ones the sync adds or removes. */
 const managedGroups = () => MAPPING.flatMap((entry) => (entry.teamspeakGroupId === undefined ? [] : [entry.teamspeakGroupId]));
@@ -140,7 +141,7 @@ async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakTypes>):
     return;
   }
   if (mode === 'live' && (add.length > 0 || remove.length > 0)) {
-    await enqueueTeamSpeakGroups(env, account.uid, add.map((entry) => entry.teamspeakGroupId!), remove.map((entry) => entry.teamspeakGroupId!));
+    await queueGroups(env, account.uid, add.map((entry) => entry.teamspeakGroupId!), remove.map((entry) => entry.teamspeakGroupId!));
   }
   const who = resolution.kind === 'person' ? `CID ${resolution.person.cid}: add ${names(add)};` : 'unresolved:';
   console.log(`Role sync (${label}): TeamSpeak ${account.uid} ${who} remove ${names(remove)}`);
@@ -150,12 +151,12 @@ async function applyTeamSpeak(env: RoleSyncEnv, change: Change<TeamSpeakTypes>):
  * Take every group the mapping names from a TeamSpeak identity that is losing its link (an unlink, or a
  * relink to another UID): one `set-groups` job in `live`, logged in `dry-run`, as the sync's own changes are.
  */
-export async function removeManagedGroups(env: TeamSpeakJobsEnv, mode: Mode, uid: string): Promise<void> {
+export async function removeManagedGroups(env: TeamSpeakJobsEnv & Pick<RoleSyncEnv, 'KV'>, mode: Mode, uid: string): Promise<void> {
   if (mode !== 'live') {
     console.log(`Link TeamSpeak (dry run): would remove every managed group from TeamSpeak ${uid}`);
     return;
   }
-  await enqueueTeamSpeakGroups(env, uid, [], managedGroups());
+  await queueGroups(env, uid, [], managedGroups());
   console.log(`Link TeamSpeak (live): removing every managed group from TeamSpeak ${uid}`);
 }
 
@@ -173,8 +174,26 @@ export async function removeHeldManagedGroups(env: TeamSpeakJobsEnv & Pick<RoleS
     console.log(`Link TeamSpeak (dry run): would remove groups ${held.join(', ')} from unlinked TeamSpeak ${uid}`);
     return;
   }
-  await enqueueTeamSpeakGroups(env, uid, [], held);
+  await queueGroups(env, uid, [], held);
   console.log(`Link TeamSpeak (live): removing groups ${held.join(', ')} from unlinked TeamSpeak ${uid}`);
+}
+
+/**
+ * Queue a `set-groups` job, and make the kept `accounts` result show the groups it leaves the identity
+ * with. Otherwise a sync before the next run compares against groups larry has already queued away (a
+ * member stripped on an unlinked connect who then links would be "add nothing"). Best effort: the next
+ * run's result replaces it whatever happens here.
+ */
+async function queueGroups(env: TeamSpeakJobsEnv & Pick<RoleSyncEnv, 'KV'>, uid: string, add: number[], remove: number[]): Promise<void> {
+  await enqueueTeamSpeakGroups(env, uid, add, remove);
+  const kept = await env.KV.get<KeptAccounts>(ACCOUNTS_KEY, 'json');
+  if (!kept) return;
+  const left = (kept.groups[uid] ?? []).filter((group) => !remove.includes(group));
+  const groups = { ...kept.groups, [uid]: [...left, ...add.filter((group) => !left.includes(group))] };
+  // KV wants an expiry at least 60 s ahead; a report closer to its end than that is left to expire.
+  const expiresAt = kept.expiresAt ?? Date.now() + KEEP_SECONDS * 1000;
+  if (expiresAt - Date.now() < 60_000) return;
+  await env.KV.put(ACCOUNTS_KEY, JSON.stringify({ ...kept, groups, expiresAt } satisfies KeptAccounts), { expiration: Math.floor(expiresAt / 1000) });
 }
 
 /**
@@ -211,7 +230,8 @@ export async function receiveAccounts(env: Pick<RoleSyncEnv, 'KV' | 'ROLE_SYNC_Q
   }
   const groups: Record<string, number[]> = {};
   for (const holder of result.holders) groups[holder.uid] = holder.groups;
-  await env.KV.put(ACCOUNTS_KEY, JSON.stringify({ runId, groups } satisfies KeptAccounts), { expirationTtl: KEEP_SECONDS });
+  const expiresAt = Date.now() + KEEP_SECONDS * 1000;
+  await env.KV.put(ACCOUNTS_KEY, JSON.stringify({ runId, groups, expiresAt } satisfies KeptAccounts), { expirationTtl: KEEP_SECONDS });
   await env.KV.delete(ASKED_KEY);
 
   const uids = [...new Set([...result.holders.map((holder) => holder.uid), ...result.connected])];
