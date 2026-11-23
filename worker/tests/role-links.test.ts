@@ -274,19 +274,30 @@ describe('unlink', () => {
 });
 
 describe('getLinks', () => {
-  it('reports a linked account, the VATUSA one, and none', async () => {
+  it('reports a linked account, the VATUSA one, and none, each with whether it is in the server', async () => {
     env.IDENTITY.users.push(idUser(1000020), idUser(1000021));
     fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [offList, record({ cid: 1000021, discord_id: null })] });
 
-    expect(await larry.getLinks(1000002)).toEqual({ discord: { id: OTHER_MEMBER_ACCOUNT, source: 'linked' }, teamspeak: null });
-    expect(await larry.getLinks(1000020)).toEqual({ discord: { id: '800000000000000020', source: 'vatusa' }, teamspeak: null });
+    expect(await larry.getLinks(1000002)).toEqual({ discord: { id: OTHER_MEMBER_ACCOUNT, source: 'linked', inServer: true }, teamspeak: null });
+    // VATUSA's account for 1000020 isn't in the server: the profile offers to join with it
+    expect(await larry.getLinks(1000020)).toEqual({ discord: { id: '800000000000000020', source: 'vatusa', inServer: false }, teamspeak: null });
     expect(await larry.getLinks(1000021)).toEqual({ discord: null, teamspeak: null });
   });
 
   it('prefers the link over the VATUSA Discord ID', async () => {
     env.IDENTITY.users[0]!.discord_id = NEW;
     fakeVatusaAndDiscord(vatusaLists(), server());
-    expect(await larry.getLinks(1000001)).toEqual({ discord: { id: NEW, source: 'linked' }, teamspeak: null });
+    expect(await larry.getLinks(1000001)).toEqual({ discord: { id: NEW, source: 'linked', inServer: true }, teamspeak: null });
+  });
+
+  it("reports inServer null, and still answers, when Discord can't be asked", async () => {
+    env.IDENTITY.users[0]!.discord_id = NEW;
+    fakeVatusaAndDiscord(vatusaLists(), server());
+    const fetched = globalThis.fetch;
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+      url.includes(`/guilds/${GUILD}/members/${NEW}`) ? Promise.resolve(new Response('Forbidden', { status: 403 })) : fetched(url, init),
+    );
+    expect(await larry.getLinks(1000001)).toEqual({ discord: { id: NEW, source: 'linked', inServer: null }, teamspeak: null });
   });
 });
 
@@ -329,7 +340,7 @@ describe('a VATUSA Discord ID another member has linked', () => {
   it("is not reported as the first member's account", async () => {
     fakeVatusaAndDiscord(vatusaLists(), server(), [], { users: [offList] });
     expect(await larry.getLinks(1000020)).toEqual({ discord: null, teamspeak: null });
-    expect(await larry.getLinks(1000030)).toEqual({ discord: { id: VATUSA_ACCOUNT, source: 'linked' }, teamspeak: null });
+    expect(await larry.getLinks(1000030)).toEqual({ discord: { id: VATUSA_ACCOUNT, source: 'linked', inServer: false }, teamspeak: null });
   });
 
   it('is not queued for syncMembers or unlink of the first member', async () => {

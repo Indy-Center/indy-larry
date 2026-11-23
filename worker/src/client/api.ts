@@ -381,8 +381,12 @@ export type SyncMembersResult = ({ cid: number } & SyncMemberResult)[];
 
 /** What `getLinks` reports for a member. */
 export type Links = {
-  /** The account the sync uses: `linked` when they linked it, `vatusa` when it is the one VATUSA holds. */
-  discord: { id: string; source: 'linked' | 'vatusa' } | null;
+  /**
+   * The account the sync uses: `linked` when they linked it, `vatusa` when it is the one VATUSA holds.
+   * `inServer` says whether that account is in the Indy Center server; null when Discord couldn't be
+   * asked. Absent from larry before 1.5.0.
+   */
+  discord: { id: string; source: 'linked' | 'vatusa'; inServer?: boolean | null } | null;
   /** The TeamSpeak identity (unique ID) linked to them in identity, or null. */
   teamspeak: { uid: string } | null;
 };
