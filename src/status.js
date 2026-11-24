@@ -44,6 +44,7 @@ class StatusBoard {
         facility: f,
         closingAt: closing && times.length ? new Date(Math.max(...times)) : null,
         topDown: topDownCoverage(f, online, facilityTree),
+        upcoming: this.upcomingBookings(f, bookings, now),
       });
     }
 
@@ -81,6 +82,17 @@ class StatusBoard {
     }
 
     return this.sort(entries);
+  }
+
+  /**
+   * Bookings at an online facility within the planned window, so a staffed facility still shows
+   * who's coming next. Leaves out bookings by anyone already on the facility (their own booking).
+   */
+  upcomingBookings(f, bookings, now) {
+    const onNow = new Set(f.controllers.map((c) => String(c.cid)));
+    return bookings
+      .filter((b) => b.key === f.key && !onNow.has(b.cid) && b.end > now && b.start - now <= this.plannedMs)
+      .sort((a, b) => a.start - b.start || a.callsign.localeCompare(b.callsign));
   }
 
   /** Returns { at: Date|null, source: 'info'|'booking' } if this controller is closing soon, else null. */

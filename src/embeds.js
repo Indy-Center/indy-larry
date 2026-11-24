@@ -58,6 +58,9 @@ function statusEmbed(entry, opts = {}) {
       const names = entry.topDown.map((f) => f.name.replace('ATCT/TRACON', 'TRACON')).sort();
       lines.push(`**Top-down:** ${names.join(' · ')}`);
     }
+    if (entry.upcoming?.length) {
+      lines.push(`**Upcoming:**\n${entry.upcoming.map(bookingLine).join('\n\n')}`);
+    }
     embed.setDescription(clip(lines.join('\n\n')));
   } else if (entry.status === 'planned') {
     embed.setDescription(clip(entry.bookings.map(bookingLine).join('\n\n')));

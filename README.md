@@ -13,6 +13,8 @@ One embed per facility (e.g. "Indianapolis ATCT/TRACON is online"), listing each
 - 🔵 **Planned**: nobody's on yet, but a VATSIM ATC booking starts within `PLANNED_HOURS` (default 3).
 - 🔴 **Offline**: the facility just closed. The embed is removed after `OFFLINE_MINUTES` (default 30).
 
+An online or closing embed also lists **Upcoming** bookings at that facility within `PLANNED_HOURS`, so a booking at a staffed facility isn't hidden until the current controller leaves. Bookings by someone already on the facility are left out, since that's the booking they're working.
+
 ### SOP: "Online until"
 
 Controllers add this line to their controller info, with your local time and the zulu time in brackets. Eastern, Central, Mountain and Pacific are understood (ET, CT, MT, PT, or the EST/CDT-style forms):
