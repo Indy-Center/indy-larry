@@ -214,6 +214,28 @@ test('the end time shows on its own line before the closing window', () => {
   assert.doesNotMatch(twr, /Online until/);
 });
 
+test('a staffed facility lists upcoming bookings, but not its controllers\' own', () => {
+  const { statusEmbed } = require('../src/embeds');
+  const now = new Date('2026-09-27T20:00:00Z');
+  const booking = (cid, callsign, startH, endH) => ({
+    key: 'ZID:IND', facilityName: 'IND ATCT/TRACON', positionType: 'Tracon', callsign, cid, type: 'booking',
+    start: new Date(+now + startH * 3600_000), end: new Date(+now + endH * 3600_000),
+  });
+  const bookings = [
+    booking('1', 'IND_N_APP', -1, 1), // the controller on now: their own booking
+    booking('9', 'IND_E_TWR', 2, 3), // someone coming next
+    booking('8', 'IND_GND', 4, 5), // past the 3-hour window
+    booking('7', 'IND_DEL', -3, -2), // already over
+  ];
+  const feed = { controllers: [controller('1', 'IND_N_APP', 'ApproachDeparture')] };
+  const [entry] = new StatusBoard().update(groupByFacility(feed), bookings, now);
+  assert.equal(entry.status, 'online');
+  assert.deepEqual(entry.upcoming.map((b) => b.cid), ['9']);
+  const description = statusEmbed(entry, { showNames: false }).data.description;
+  assert.match(description, /\*\*Upcoming:\*\*\n`IND_E_TWR`\n└ .* · CID 9$/);
+  assert.equal(entry.bookings, undefined); // not also a planned card
+});
+
 test('a center does not list also covering, but an approach does', () => {
   const { statusEmbed } = require('../src/embeds');
   const display = {
